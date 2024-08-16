@@ -82,15 +82,18 @@ public class AccessTokenValidator {
      * @return The user ID extracted from the token, or UNAUTHORIZED if verification fails or an exception occurs.
      */
     public String verifyUserToken(String token) {
+        logger.info("AccessTokenValidator :: verifyUserToken token {}",token);
         // Initialize user ID to UNAUTHORIZED
         String userId = Constants.UNAUTHORIZED;
         try {
             // Validate the token and obtain its payload
             Map<String, Object> payload = validateToken(token);
+            logger.info("AccessTokenValidator :: verifyUserToken payload {}",payload);
             // Check if payload is not empty and issuer is valid
             if (!payload.isEmpty() && checkIss((String) payload.get("iss"))) {
                 // Extract user ID from payload
                 userId = (String) payload.get(Constants.SUB);
+                logger.info("AccessTokenValidator :: verifyUserToken userId {}",userId);
                 // If user ID is not blank, extract the actual user ID
                 if (StringUtils.isNotBlank(userId)) {
                     userId = userId.substring(userId.lastIndexOf(":") + 1);
