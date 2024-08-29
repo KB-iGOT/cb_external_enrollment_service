@@ -165,7 +165,6 @@ public class KafkaConsumer {
         log.info("KafkaConsumer :: callExtApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getFixedUrl() + extCourseId;
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", cbServerProperties.getToken());
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<Object> response = restTemplate.exchange(
                 url,
