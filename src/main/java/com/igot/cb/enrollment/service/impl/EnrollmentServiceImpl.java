@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
+import com.igot.cb.enrollment.entity.ContentPartnerEntity;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
+import com.igot.cb.enrollment.repository.ContentPartnerRepository;
 import com.igot.cb.enrollment.service.EnrollmentService;
 import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.cache.CacheService;
@@ -50,6 +52,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     @Autowired
     private CiosContentRepository contentRepository;
+
+    @Autowired
+    private ContentPartnerRepository contentPartnerRepository;
 
 
     @Override
@@ -176,7 +181,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
 
-            String cacheResponse = cacheService.getCache(userId + courseid);
+//            String cacheResponse = cacheService.getCache(userId + courseid);
 //            if (cacheResponse != null) {
 //                log.info("EnrollmentServiceImpl :: readByUserIdAndCourseId :: Data reading from cache");
 //                response = objectMapper.readValue(cacheResponse, SBApiResponse.class);
@@ -214,7 +219,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return response;
         } catch (Exception e) {
             log.error("error while processing", e);
-            throw new RuntimeException(e);
+            throw new CustomException(Constants.ERROR,e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -259,5 +264,33 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
         }
         return response;
+    }
+
+    @Override
+    public ContentPartnerEntity getContentDetailsByPartnerName(String name) {
+        log.info("CiosContentService:: ContentPartnerEntity: getContentDetailsByPartnerName {}",name);
+        try {
+            ContentPartnerEntity entity=null;
+            String cachedJson = cacheService.getCache(Constants.CBPORES_REDIS_KEY_PREFIX+name);
+            if (StringUtils.isNotEmpty(cachedJson)) {
+                log.info("Record coming from redis cache");
+                entity=objectMapper.readValue(cachedJson, new TypeReference<ContentPartnerEntity>() {});
+                return entity;
+            } else {
+                Optional<ContentPartnerEntity> entityOptional = contentPartnerRepository.findByContentPartnerName(name);
+                if (entityOptional.isPresent()) {
+                    log.info("Record coming from postgres db");
+                    entity = entityOptional.get();
+                    cacheService.putCache(Constants.CBPORES_REDIS_KEY_PREFIX+name,entity);
+                    return entity;
+
+                } else {
+                    throw new CustomException(Constants.ERROR,"Content Partner Data not present in DB",HttpStatus.BAD_REQUEST);
+                }
+            }
+        } catch (Exception e) {
+            log.error("error while processing", e);
+            throw new CustomException(Constants.ERROR,e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 }
