@@ -39,4 +39,10 @@ public class EnrollmentController {
     SBApiResponse response = enrollmentService.readByUserIdAndCourseId(courseid,token);
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
+
+  @PostMapping("/v1/user/progressupdate")
+  public ResponseEntity<?> userProgressUpdate(@RequestBody JsonNode jsonNode, @RequestHeader(Constants.PARTNER_ID) String partnerid) {
+    SBApiResponse response = enrollmentService.userProgressUpdate(jsonNode,partnerid);
+    return new ResponseEntity<>(response, HttpStatus.OK);
+  }
 }

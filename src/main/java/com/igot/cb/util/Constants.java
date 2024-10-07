@@ -60,14 +60,8 @@ public class Constants {
     public static final String RECIPIENT_NAME="recipientName";
     public static final String PROGRESS="progress";
     public static final String COMPLETION_DATE="completiondate";
-
-
-
-
-
-
-
-
+    public static final String PARTNER_ID = "partnerId";
+    public static final String CIOS_ENROLLMENT_PREGRESS_UPDATE="ciosprogressupdate.v1.create";
 
 
 

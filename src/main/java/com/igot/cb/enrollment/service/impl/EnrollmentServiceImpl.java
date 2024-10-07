@@ -4,18 +4,20 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
-import com.igot.cb.enrollment.entity.ContentPartnerEntity;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
-import com.igot.cb.enrollment.repository.ContentPartnerRepository;
 import com.igot.cb.enrollment.service.EnrollmentService;
+import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
+import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.*;
 import com.igot.cb.util.Constants;
-import com.igot.cb.util.PayloadValidation;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
+
 import java.sql.Timestamp;
 import java.util.*;
 
@@ -24,16 +26,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.joda.time.DateTime;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 @Service
 @Slf4j
 public class EnrollmentServiceImpl implements EnrollmentService {
-
-    @Autowired
-    private PayloadValidation payloadValidation;
 
     @Autowired
     private AccessTokenValidator accessTokenValidator;
@@ -54,13 +52,15 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     private CiosContentRepository contentRepository;
 
     @Autowired
-    private ContentPartnerRepository contentPartnerRepository;
+    private TransformUtility transformUtility;
 
+    @Autowired
+    private Producer producer;
 
     @Override
     public SBApiResponse enrollUser(JsonNode userCourseEnroll, String token) {
         log.info("EnrollmentService::enrollUser:inside the method");
-        SBApiResponse response = createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
+        SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
         try {
             String userId = accessTokenValidator.verifyUserToken(token);
             log.info("UserId from auth token {}", userId);
@@ -71,7 +71,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
             if (userCourseEnroll.has(Constants.COURSE_ID_RQST) && !userCourseEnroll.get(
-                    Constants.COURSE_ID_RQST).isNull()) {
+                    Constants.COURSE_ID_RQST).isNull() && userCourseEnroll.has("partnerId") && !userCourseEnroll.get(
+                    "partnerId").isNull()) {
 
                 TimeZone timeZone = TimeZone.getTimeZone("Asia/Kolkata");
                 Timestamp timestamp = new Timestamp(System.currentTimeMillis());
@@ -80,6 +81,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 userCourseEnrollMap.put("userid", userId);
                 userCourseEnrollMap.put("courseid",
                         userCourseEnroll.get("courseId").asText());
+                userCourseEnrollMap.put("partnerid",
+                        userCourseEnroll.get(Constants.PARTNER_ID).asText());
                 userCourseEnrollMap.put("progress",
                         0);
                 userCourseEnrollMap.put("status",
@@ -100,7 +103,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResult(userCourseEnrollMap);
                 return response;
             } else {
-                response.getParams().setMsg("CourseId is missing");
+                response.getParams().setMsg("Both partnerId and CourseId is mandatory");
                 response.getParams().setStatus(Constants.FAILED);
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
@@ -119,7 +122,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     @Override
     public SBApiResponse readByUserId(String token) {
         log.info("EnrollmentService::readByUserId:inside the method");
-        SBApiResponse response = createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSELIST);
+        SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSELIST);
         try {
             String userId = accessTokenValidator.verifyUserToken(token);
             log.info("UserId from auth token {}", userId);
@@ -129,34 +132,34 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-                List<String> fields = Arrays.asList("userid", "courseid", "completedon","updatedon","completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
-                Map<String, Object> propertyMap = new HashMap<>();
-                propertyMap.put("userid", userId);
-                List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
-                        Constants.KEYSPACE_SUNBIRD_COURSES,
-                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                        propertyMap,
-                        fields
-                );
-            List<Map<String, Object>> courses=new ArrayList<>();
-                if (!userEnrollmentList.isEmpty()) {
-                    for (Map<String, Object> enrollment : userEnrollmentList) {
-                        // Extract the courseId from each map
-                        String courseId = (String) enrollment.get("courseid");
-                        Map<String, Object> data= (Map<String, Object>) fetchDataByContentId(courseId);
-                        enrollment.put("content",data.get("content"));
-                        courses.add(enrollment);
-                        response.put("courses", courses);
-                    }
-                    response.setResponseCode(HttpStatus.OK);
-                    response.setResult(response.getResult());
-                } else {
-                    response.getParams().setMsg("User is not enrolled into any courses");
-                    response.getParams().setStatus(Constants.SUCCESS);
-                    response.setResponseCode(HttpStatus.OK);
-                    return response;
-
+            List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
+            Map<String, Object> propertyMap = new HashMap<>();
+            propertyMap.put("userid", userId);
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                    propertyMap,
+                    fields
+            );
+            List<Map<String, Object>> courses = new ArrayList<>();
+            if (!userEnrollmentList.isEmpty()) {
+                for (Map<String, Object> enrollment : userEnrollmentList) {
+                    // Extract the courseId from each map
+                    String courseId = (String) enrollment.get("courseid");
+                    Map<String, Object> data = (Map<String, Object>) fetchDataByContentId(courseId);
+                    enrollment.put("content", data.get("content"));
+                    courses.add(enrollment);
+                    response.put("courses", courses);
                 }
+                response.setResponseCode(HttpStatus.OK);
+                response.setResult(response.getResult());
+            } else {
+                response.getParams().setMsg("User is not enrolled into any courses");
+                response.getParams().setStatus(Constants.SUCCESS);
+                response.setResponseCode(HttpStatus.OK);
+                return response;
+
+            }
             return response;
         } catch (Exception e) {
             String errMsg = "Error while performing operation." + e.getMessage();
@@ -171,7 +174,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     @Override
     public SBApiResponse readByUserIdAndCourseId(String courseid, String token) {
         log.info("EnrollmentService::readByUserIdAndCourseId:inside the method");
-        SBApiResponse response = createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSEID);
+        SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSEID);
         try {
             String userId = accessTokenValidator.verifyUserToken(token);
             if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
@@ -180,60 +183,64 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-
-//            String cacheResponse = cacheService.getCache(userId + courseid);
-//            if (cacheResponse != null) {
-//                log.info("EnrollmentServiceImpl :: readByUserIdAndCourseId :: Data reading from cache");
-//                response = objectMapper.readValue(cacheResponse, SBApiResponse.class);
-//            } else {
-                List<String> fields = Arrays.asList("userid", "courseid", "completedon","updatedon","completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
-                Map<String, Object> propertyMap = new HashMap<>();
-                propertyMap.put("userid", userId);
-                propertyMap.put("courseid", courseid);
-                List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
-                        Constants.KEYSPACE_SUNBIRD_COURSES,
-                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                        propertyMap,
-                        fields
-                );
-                if (!userEnrollmentList.isEmpty()) {
-                    for (Map<String, Object> enrollment : userEnrollmentList) {
-                        if (!enrollment.isEmpty()) {
-                            response.setResponseCode(HttpStatus.OK);
-                            response.setResult(enrollment);
-                       //     cacheService.putCache(userId + courseid, response);
-                        } else {
-                            response.getParams().setMsg("courseId is not matching");
-                            response.getParams().setStatus(Constants.FAILED);
-                            response.setResponseCode(HttpStatus.BAD_REQUEST);
-                            return response;
-                        }
+            List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
+            Map<String, Object> propertyMap = new HashMap<>();
+            propertyMap.put("userid", userId);
+            propertyMap.put("courseid", courseid);
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                    propertyMap,
+                    fields
+            );
+            if (!userEnrollmentList.isEmpty()) {
+                for (Map<String, Object> enrollment : userEnrollmentList) {
+                    if (!enrollment.isEmpty()) {
+                        response.setResponseCode(HttpStatus.OK);
+                        response.setResult(enrollment);
+                        //     cacheService.putCache(userId + courseid, response);
+                    } else {
+                        response.getParams().setMsg("courseId is not matching");
+                        response.getParams().setStatus(Constants.FAILED);
+                        response.setResponseCode(HttpStatus.BAD_REQUEST);
+                        return response;
                     }
-                } else {
-                    response.getParams().setMsg("User not enrolled into the course");
-                    response.getParams().setStatus(Constants.SUCCESS);
-                    response.setResponseCode(HttpStatus.OK);
-                    return response;
                 }
-//            }
+            } else {
+                response.getParams().setMsg("User not enrolled into the course");
+                response.getParams().setStatus(Constants.SUCCESS);
+                response.setResponseCode(HttpStatus.OK);
+                return response;
+            }
             return response;
         } catch (Exception e) {
             log.error("error while processing", e);
-            throw new CustomException(Constants.ERROR,e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
+            throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
-    private SBApiResponse createDefaultResponse(String api) {
-        SBApiResponse response = new SBApiResponse();
-        response.setId(api);
-        response.setVer(Constants.API_VERSION_1);
-        response.setParams(new SunbirdApiRespParam(UUID.randomUUID().toString()));
-        response.getParams().setStatus(Constants.SUCCESS);
-        response.setResponseCode(HttpStatus.OK);
-        response.setTs(DateTime.now().toString());
-        return response;
+    @Override
+    public SBApiResponse userProgressUpdate(JsonNode jsonNode, String partnerid) {
+        try {
+            SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_PREGRESS_UPDATE);
+            JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadApi(partnerid);
+            if (!partnerReadApiResponse.path("transformProgressJson").isMissingNode()) {
+                ArrayNode arrayNode = objectMapper.createArrayNode();
+                arrayNode.add(partnerReadApiResponse.get("transformProgressJson"));
+                List<Object> contentJson = objectMapper.convertValue(arrayNode, new TypeReference<List<Object>>() {
+                                            });
+                JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
+                ((ObjectNode) transformData).put("partnerId", partnerid);
+                producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
+            }
+            Map<String, Object> result = new HashMap<>();
+            result.put("response", "Progress Updated Successfully");
+            response.setResult(result);
+            return response;
+        }catch (Exception e) {
+           throw new CustomException(Constants.ERROR,e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
-
     public Object fetchDataByContentId(String contentId) {
         log.debug("getting content by id: " + contentId);
         if (StringUtils.isEmpty(contentId)) {
@@ -266,31 +273,4 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return response;
     }
 
-    @Override
-    public ContentPartnerEntity getContentDetailsByPartnerName(String name) {
-        log.info("CiosContentService:: ContentPartnerEntity: getContentDetailsByPartnerName {}",name);
-        try {
-            ContentPartnerEntity entity=null;
-            String cachedJson = cacheService.getCache(Constants.CBPORES_REDIS_KEY_PREFIX+name);
-            if (StringUtils.isNotEmpty(cachedJson)) {
-                log.info("Record coming from redis cache");
-                entity=objectMapper.readValue(cachedJson, new TypeReference<ContentPartnerEntity>() {});
-                return entity;
-            } else {
-                Optional<ContentPartnerEntity> entityOptional = contentPartnerRepository.findByContentPartnerName(name);
-                if (entityOptional.isPresent()) {
-                    log.info("Record coming from postgres db");
-                    entity = entityOptional.get();
-                    cacheService.putCache(Constants.CBPORES_REDIS_KEY_PREFIX+name,entity);
-                    return entity;
-
-                } else {
-                    throw new CustomException(Constants.ERROR,"Content Partner Data not present in DB",HttpStatus.BAD_REQUEST);
-                }
-            }
-        } catch (Exception e) {
-            log.error("error while processing", e);
-            throw new CustomException(Constants.ERROR,e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
 }

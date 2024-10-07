@@ -3,33 +3,23 @@ package com.igot.cb.consumer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.igot.cb.enrollment.entity.ContentPartnerEntity;
-import com.igot.cb.enrollment.service.EnrollmentService;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
-import com.igot.cb.util.cache.CacheService;
+import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
-import java.io.InputStream;
 import java.sql.Timestamp;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-
+import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.WordUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.ResourceLoader;
-import org.springframework.web.client.RestTemplate;
-
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -40,25 +30,16 @@ public class KafkaConsumer {
     private ObjectMapper mapper = new ObjectMapper();
 
     @Autowired
-    RestTemplate restTemplate;
-
-    @Autowired
     private CassandraOperation cassandraOperation;
-
-    @Autowired
-    CacheService cacheService;
 
     @Autowired
     private Producer producer;
 
     @Autowired
-    private ResourceLoader resourceLoader;
-
-    @Autowired
     private CbServerProperties cbServerProperties;
 
     @Autowired
-    private EnrollmentService enrollmentService;
+    TransformUtility transformUtility;
 
     @KafkaListener(topics = "${spring.kafka.cornell.topic.name}", groupId = "${spring.kafka.consumer.group.id}")
     public void enrollUpdateConsumer(ConsumerRecord<String, String> data) {
@@ -69,24 +50,13 @@ public class KafkaConsumer {
             timestamp.setTime(timestamp.getTime() + timeZone.getOffset(timestamp.getTime()));
             Map<String, Object> userCourseEnrollMap = mapper.readValue(data.value(), HashMap.class);
             if (userCourseEnrollMap.containsKey(Constants.USER_ID) && userCourseEnrollMap.get(Constants.USER_ID) instanceof String && userCourseEnrollMap.containsKey(Constants.COURSE_ID) && userCourseEnrollMap.get(Constants.COURSE_ID) instanceof String) {
-                String courseId = null;
-                String contentPartnerName = null;
-                String courseName = null;
-                String coursePosterImage = null;
-//                String providerName = userCourseEnrollMap.get("providerName").toString();
-                //ContentPartnerEntity entity=enrollmentService.getContentDetailsByPartnerName(providerName);
+                String courseId = "";
+                String partnerId = userCourseEnrollMap.get("partnerId").toString();
                 String extCourseId = userCourseEnrollMap.get("courseid").toString();
-//                JsonNode result = callExtApi(extCourseId,entity.getId());
-                JsonNode result = callExtApi(extCourseId);
+                JsonNode result = transformUtility.callCiosReadAPi(extCourseId, partnerId);
                 JsonNode contentNode = result.path("content");
-                if (!contentNode.isMissingNode()) {
-                    courseId = contentNode.path("contentId").asText(null);
-                    courseName = contentNode.path("name").asText(null);
-                    JsonNode contentPartnerNode = contentNode.path("contentPartner");
-                    if (!contentPartnerNode.isMissingNode()) {
-                        contentPartnerName = contentPartnerNode.path("contentPartnerName").asText(null);
-                        coursePosterImage = contentPartnerNode.path("thumbnailUrl").asText(null);
-                    }
+                if (!contentNode.isMissingNode() && !contentNode.isNull()) {
+                    courseId = contentNode.get("contentId").asText();
                 }
                 log.info("KafkaConsumer :: enrollUpdateConsumer ::courseId from cios api {} userid {}", courseId, userCourseEnrollMap.get(Constants.USER_ID));
                 String[] parts = ((String) userCourseEnrollMap.get(Constants.USER_ID)).split("@");
@@ -106,21 +76,7 @@ public class KafkaConsumer {
                         updatedMap.put(Constants.COMPLETION_PERCENTAGE, 100);
                         updatedMap.put(Constants.UPDATED_ON, timestamp);
                         cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, updatedMap, propertyMap);
-                        Resource resource = resourceLoader.getResource("classpath:certificateTemplate.json");
-                        InputStream inputStream = resource.getInputStream();
-                        JsonNode jsonNode = mapper.readTree(inputStream);
-                        Map<String, Object> certificateRequest = new HashMap<>();
-                        certificateRequest.put(Constants.USER_ID, userCourseEnrollMap.get(Constants.USER_ID));
-                        certificateRequest.put(Constants.COURSE_ID, courseId);
-                        certificateRequest.put(Constants.COMPLETION_DATE, userCourseEnrollMap.get("completedon"));
-                        certificateRequest.put(Constants.PROVIDER_NAME,contentPartnerName );
-                        certificateRequest.put(Constants.COURSE_NAME, courseName);
-                        certificateRequest.put(Constants.COURSE_POSTER_IMAGE, coursePosterImage);
-                        certificateRequest.put(Constants.RECIPIENT_NAME, readUserName(userCourseEnrollMap.get(Constants.USER_ID).toString()));
-                        replacePlaceholders(jsonNode, certificateRequest);
-                        producer.push(cbServerProperties.getCertificateTopic(), jsonNode);
-                        inputStream.close();
-                        log.info("KafkaConsumer::enrollUpdateConsumer:updated");
+                        sendUpdatedRecordDataToKafkaToGenerateCertificate(userCourseEnrollMap, result);
                     } else {
                         Map<String, Object> updatedMap = new HashMap<>();
                         updatedMap.put(Constants.PROGRESS, userCourseEnrollMap.get("progress_percetage"));
@@ -139,6 +95,47 @@ public class KafkaConsumer {
 
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
+        }
+    }
+
+    private void sendUpdatedRecordDataToKafkaToGenerateCertificate(Map<String, Object> userCourseEnrollMap, JsonNode result) {
+        try {
+            String courseId = "";
+            String courseName = "";
+            String contentPartnerName = "";
+            String coursePosterImage = "";
+            String partnerId = "";
+            JsonNode contentNode = result.path("content");
+            if (!contentNode.isMissingNode() && !contentNode.isNull()) {
+                courseId = contentNode.get("contentId").asText();
+                courseName = contentNode.path("name").asText(null);
+                JsonNode contentPartnerNode = contentNode.path("contentPartner");
+                if (!contentPartnerNode.isMissingNode() && !contentPartnerNode.isNull()) {
+                    contentPartnerName = contentPartnerNode.path("contentPartnerName").asText(null);
+                    coursePosterImage = contentPartnerNode.path("thumbnailUrl").asText(null);
+                    partnerId=contentPartnerNode.path("id").asText(null);
+                }
+            }
+            JsonNode partnerApiResponse = transformUtility.callContentPartnerReadApi(partnerId);
+            if (!partnerApiResponse.path("trasformCertificateJson").isMissingNode() && !partnerApiResponse.path("trasformCertificateJson").isNull()) {
+                JsonNode jsonNode = partnerApiResponse.get("trasformCertificateJson");
+                Map<String, Object> certificateRequest = new HashMap<>();
+                certificateRequest.put(Constants.USER_ID, userCourseEnrollMap.get(Constants.USER_ID));
+                certificateRequest.put(Constants.COURSE_ID, courseId);
+                certificateRequest.put(Constants.COMPLETION_DATE, userCourseEnrollMap.get("completedon"));
+                certificateRequest.put(Constants.PROVIDER_NAME, contentPartnerName);
+                certificateRequest.put(Constants.COURSE_NAME, courseName);
+                certificateRequest.put(Constants.COURSE_POSTER_IMAGE, coursePosterImage);
+                certificateRequest.put(Constants.RECIPIENT_NAME, readUserName(userCourseEnrollMap.get(Constants.USER_ID).toString()));
+                replacePlaceholders(jsonNode, certificateRequest);
+                producer.push(cbServerProperties.getCertificateTopic(), jsonNode);
+                log.info("KafkaConsumer::enrollUpdateConsumer:updated");
+            } else {
+                throw new CustomException(Constants.ERROR, "Certificate JsonData not found in Content Partner Response", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -161,25 +158,7 @@ public class KafkaConsumer {
         return fullname;
     }
 
-    private JsonNode callExtApi(String extCourseId) {
-        log.info("KafkaConsumer :: callExtApi");
-        String url = cbServerProperties.getBaseUrl() + cbServerProperties.getFixedUrl() + extCourseId;
-        HttpHeaders headers = new HttpHeaders();
-        HttpEntity<String> entity = new HttpEntity<>(headers);
-        ResponseEntity<Object> response = restTemplate.exchange(
-                url,
-                HttpMethod.GET,
-                entity,
-                Object.class
-        );
-        if (response.getStatusCode().is2xxSuccessful()) {
-            JsonNode jsonNode = mapper.valueToTree(response.getBody());
-            return jsonNode;
-        } else {
-            throw new RuntimeException("Failed to retrieve externalId. Status code: " + response.getStatusCodeValue());
-        }
 
-    }
 
     public static Timestamp convertToTimestamp(String dateString) {
         SimpleDateFormat dateFormat = new SimpleDateFormat("MM/dd/yyyy");
@@ -260,8 +239,6 @@ public class KafkaConsumer {
                 return (String) certificateRequest.get("recipientName");
             case "course.poster.image":
                 return (String) certificateRequest.get("coursePosterImage");
-            case "svgTemplate":
-                return cbServerProperties.getSvgTemplate();
             default:
                 return "";
         }
