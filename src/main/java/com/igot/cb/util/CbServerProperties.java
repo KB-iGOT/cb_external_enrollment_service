@@ -20,7 +20,7 @@ public class CbServerProperties {
     private String baseUrl;
 
     @Value("${cios.read.api.fixed.url}")
-    private String fixedUrl;
+    private String ciosReadApiUrl;
 
     @Value("${kong.api.auth.token}")
     private String token;
@@ -30,4 +30,10 @@ public class CbServerProperties {
 
     @Value("${certificate.char.length}")
     private int certificateCharLength;
+
+    @Value("${content.partner.read.api.url}")
+    private String contentPartnerReadApiUrl;
+
+    @Value("${spring.kafka.cornell.topic.name}")
+    private String userProgressUpdateTopic;
 }
