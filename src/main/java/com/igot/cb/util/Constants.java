@@ -62,7 +62,7 @@ public class Constants {
     public static final String COMPLETION_DATE="completiondate";
     public static final String PARTNER_ID = "partnerId";
     public static final String CIOS_ENROLLMENT_PREGRESS_UPDATE="ciosprogressupdate.v1.create";
-
+    public static final String PARTNER_CODE = "partnerCode";
 
 
     private Constants() {
