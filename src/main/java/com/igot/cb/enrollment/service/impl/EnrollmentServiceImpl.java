@@ -220,19 +220,20 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     @Override
-    public SBApiResponse userProgressUpdate(JsonNode jsonNode, String partnerid) {
+    public SBApiResponse userProgressUpdate(JsonNode jsonNode, String partnercode) {
         try {
             SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_PREGRESS_UPDATE);
-            JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadApi(partnerid);
-            if (!partnerReadApiResponse.path("transformProgressJson").isMissingNode()) {
-                ArrayNode arrayNode = objectMapper.createArrayNode();
-                arrayNode.add(partnerReadApiResponse.get("transformProgressJson"));
-                List<Object> contentJson = objectMapper.convertValue(arrayNode, new TypeReference<List<Object>>() {
-                                            });
-                JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
-                ((ObjectNode) transformData).put("partnerId", partnerid);
-                producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
-            }
+            log.info("Payload received for userProgressUpdate: {} and partnerCode: {}", jsonNode.toString(),partnercode);
+//            JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadApi(partnerid);
+//            if (!partnerReadApiResponse.path("transformProgressJson").isMissingNode()) {
+//                ArrayNode arrayNode = objectMapper.createArrayNode();
+//                arrayNode.add(partnerReadApiResponse.get("transformProgressJson"));
+//                List<Object> contentJson = objectMapper.convertValue(arrayNode, new TypeReference<List<Object>>() {
+//                                            });
+//                JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
+//                ((ObjectNode) transformData).put("partnerId", partnerid);
+//                producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
+//            }
             Map<String, Object> result = new HashMap<>();
             result.put("response", "Progress Updated Successfully");
             response.setResult(result);
