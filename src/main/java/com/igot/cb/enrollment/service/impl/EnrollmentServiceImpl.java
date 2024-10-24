@@ -146,7 +146,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 for (Map<String, Object> enrollment : userEnrollmentList) {
                     // Extract the courseId from each map
                     String courseId = (String) enrollment.get("courseid");
-                    Map<String, Object> data = (Map<String, Object>) fetchDataByContentId(courseId);
+                    Map<String, Object> data = fetchDataByContentId(courseId);
                     enrollment.put("content", data.get("content"));
                     courses.add(enrollment);
                     response.put("courses", courses);
@@ -242,19 +242,18 @@ public class EnrollmentServiceImpl implements EnrollmentService {
            throw new CustomException(Constants.ERROR,e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
-    public Object fetchDataByContentId(String contentId) {
+    public Map<String, Object> fetchDataByContentId(String contentId) {
         log.debug("getting content by id: " + contentId);
         if (StringUtils.isEmpty(contentId)) {
             log.error("CiosContentServiceImpl::read:Id not found");
             throw new CustomException(Constants.ERROR, "contentId is mandatory", HttpStatus.BAD_REQUEST);
         }
         String cachedJson = cacheService.getCache(contentId);
-        Object response = null;
+        Map<String, Object> response = new HashMap<>();
         if (StringUtils.isNotEmpty(cachedJson)) {
             log.info("CiosContentServiceImpl::read:Record coming from redis cache");
             try {
-                response = objectMapper.readValue(cachedJson, new TypeReference<Object>() {
-                });
+               return objectMapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {});
             } catch (JsonProcessingException e) {
                 throw new RuntimeException(e);
             }
@@ -264,14 +263,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 CiosContentEntity ciosContentEntity = optionalJsonNodeEntity.get();
                 cacheService.putCache(contentId, ciosContentEntity.getCiosData());
                 log.info("CiosContentServiceImpl::read:Record coming from postgres db");
-                response = objectMapper.convertValue(ciosContentEntity.getCiosData(), new TypeReference<Object>() {
-                });
-            } else {
-                log.error("Invalid Id: {}", contentId);
-                throw new CustomException(Constants.ERROR, "No data found for given Id", HttpStatus.BAD_REQUEST);
+                return objectMapper.convertValue(ciosContentEntity.getCiosData(), new TypeReference<Map<String, Object>>() {});
             }
         }
-        return response;
+    return response;
     }
 
 }
