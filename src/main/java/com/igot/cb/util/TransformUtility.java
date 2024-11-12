@@ -70,6 +70,25 @@ public class TransformUtility {
         }
     }
 
+    public JsonNode callContentPartnerReadByPartnerCodeApi(String partnerCode) {
+        log.info("KafkaConsumer :: callExtApi");
+        String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl() + partnerCode;
+        HttpHeaders headers = new HttpHeaders();
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+        ResponseEntity<JsonNode> response = restTemplate.exchange(
+                url,
+                HttpMethod.GET,
+                entity,
+                JsonNode.class
+        );
+        if (response.getStatusCode().is2xxSuccessful()) {
+            JsonNode jsonNode = response.getBody();
+            return jsonNode.path("result");
+        } else {
+            throw new CustomException(Constants.ERROR,"Failed to retrieve externalId. Status code: " + response.getStatusCodeValue(),HttpStatus.BAD_REQUEST);
+        }
+    }
+
     public JsonNode transformData(Object jsonNode, List<Object> contentJson) {
         log.debug("TransformUtility::transformData");
         try {

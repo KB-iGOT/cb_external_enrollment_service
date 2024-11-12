@@ -224,6 +224,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         try {
             SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_PREGRESS_UPDATE);
             log.info("Payload received for userProgressUpdate: {} and partnerCode: {}", jsonNode.toString(),partnercode);
+            ((ObjectNode)jsonNode).put("partnerCode",partnercode);
+            producer.push(cbServerProperties.getUserProgressSendFromPartner(), jsonNode);
 //            JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadApi(partnerid);
 //            if (!partnerReadApiResponse.path("transformProgressJson").isMissingNode()) {
 //                ArrayNode arrayNode = objectMapper.createArrayNode();

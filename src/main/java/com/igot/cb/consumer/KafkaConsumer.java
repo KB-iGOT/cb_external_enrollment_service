@@ -1,7 +1,9 @@
 package com.igot.cb.consumer;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
@@ -93,6 +95,27 @@ public class KafkaConsumer {
                 log.error("Unable to get userid and courseid from kafka consumer");
             }
 
+        } catch (Exception e) {
+            log.error("Failed to read enroll Request. Message received : " + data.value(), e);
+        }
+    }
+
+    @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.enrollment.progress.send.from.partner}")
+    public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data) {
+        log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
+        try {
+            JsonNode jsonNode = mapper.readTree(data.value());
+            JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadByPartnerCodeApi(jsonNode.get("partnerCode").asText());
+            if (!partnerReadApiResponse.path(Constants.TRANSFORM_PROGRESS_JSON).isMissingNode()) {
+                String partnerid=partnerReadApiResponse.get("id").asText();
+                ArrayNode arrayNode = mapper.createArrayNode();
+                arrayNode.add(partnerReadApiResponse.get(Constants.TRANSFORM_PROGRESS_JSON));
+                List<Object> contentJson = mapper.convertValue(arrayNode, new TypeReference<List<Object>>() {
+                                            });
+                JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
+                ((ObjectNode) transformData).put(Constants.PARTNER_ID, partnerid);
+                producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
+            }
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
         }
