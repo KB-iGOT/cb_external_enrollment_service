@@ -55,6 +55,29 @@ public class TransformUtility {
         log.info("KafkaConsumer :: callExtApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
         HttpHeaders headers = new HttpHeaders();
+        headers.set("Accept", "application/json"); // Indicate JSON response
+        headers.set("Content-Type", "application/json");
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+        ResponseEntity<JsonNode> response = restTemplate.exchange(
+                url,
+                HttpMethod.GET,
+                entity,
+                JsonNode.class
+        );
+        if (response.getStatusCode().is2xxSuccessful()) {
+            JsonNode jsonNode = response.getBody();
+            return jsonNode.path("result");
+        } else {
+            throw new CustomException(Constants.ERROR,"Failed to retrieve externalId. Status code: " + response.getStatusCodeValue(),HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    public JsonNode callContentPartnerReadByPartnerCodeApi(String partnerCode) {
+        log.info("KafkaConsumer :: callExtApi");
+        String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl() + partnerCode;
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Accept", "application/json"); // Indicate JSON response
+        headers.set("Content-Type", "application/json");
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<JsonNode> response = restTemplate.exchange(
                 url,
