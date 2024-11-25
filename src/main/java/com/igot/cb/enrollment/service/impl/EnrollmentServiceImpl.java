@@ -19,6 +19,8 @@ import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 
 import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 import com.igot.cb.util.exceptions.CustomException;
@@ -224,25 +226,25 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         try {
             SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_PREGRESS_UPDATE);
             log.info("Payload received for userProgressUpdate: {} and partnerCode: {}", jsonNode.toString(),partnercode);
+            String inputDate=jsonNode.get("completion_date").asText();
+            String formatedDate=updateDateFormatFromInputDate(inputDate);
+            ((ObjectNode)jsonNode).put("completion_date",formatedDate);
             ((ObjectNode)jsonNode).put("partnerCode",partnercode);
             producer.push(cbServerProperties.getUserProgressSendFromPartner(), jsonNode);
-//            JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadApi(partnerid);
-//            if (!partnerReadApiResponse.path("transformProgressJson").isMissingNode()) {
-//                ArrayNode arrayNode = objectMapper.createArrayNode();
-//                arrayNode.add(partnerReadApiResponse.get("transformProgressJson"));
-//                List<Object> contentJson = objectMapper.convertValue(arrayNode, new TypeReference<List<Object>>() {
-//                                            });
-//                JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
-//                ((ObjectNode) transformData).put("partnerId", partnerid);
-//                producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
-//            }
             Map<String, Object> result = new HashMap<>();
-            result.put("response", "Progress Updated Successfully");
+            result.put("response", "Progress report sent uccessfully");
             response.setResult(result);
             return response;
         }catch (Exception e) {
            throw new CustomException(Constants.ERROR,e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private String updateDateFormatFromInputDate(String inputDate) {
+        DateTimeFormatter originalFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        LocalDate date = LocalDate.parse(inputDate, originalFormatter);
+        DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        return date.format(outputFormatter);
     }
     public Map<String, Object> fetchDataByContentId(String contentId) {
         log.debug("getting content by id: " + contentId);

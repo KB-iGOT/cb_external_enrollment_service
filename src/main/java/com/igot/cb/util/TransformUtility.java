@@ -55,6 +55,8 @@ public class TransformUtility {
         log.info("KafkaConsumer :: callExtApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
         HttpHeaders headers = new HttpHeaders();
+        headers.set("Accept", "application/json"); // Indicate JSON response
+        headers.set("Content-Type", "application/json");
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<JsonNode> response = restTemplate.exchange(
                 url,
@@ -74,6 +76,8 @@ public class TransformUtility {
         log.info("KafkaConsumer :: callExtApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl() + partnerCode;
         HttpHeaders headers = new HttpHeaders();
+        headers.set("Accept", "application/json"); // Indicate JSON response
+        headers.set("Content-Type", "application/json");
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<JsonNode> response = restTemplate.exchange(
                 url,

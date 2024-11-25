@@ -100,7 +100,7 @@ public class KafkaConsumer {
         }
     }
 
-    @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.enrollment.progress.send.from.partner}")
+    @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.progress.send.from.partner.consumer.group.id}")
     public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data) {
         log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
@@ -108,13 +108,13 @@ public class KafkaConsumer {
             JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadByPartnerCodeApi(jsonNode.get("partnerCode").asText());
             if (!partnerReadApiResponse.path(Constants.TRANSFORM_PROGRESS_JSON).isMissingNode()) {
                 String partnerid=partnerReadApiResponse.get("id").asText();
-                ArrayNode arrayNode = mapper.createArrayNode();
-                arrayNode.add(partnerReadApiResponse.get(Constants.TRANSFORM_PROGRESS_JSON));
-                List<Object> contentJson = mapper.convertValue(arrayNode, new TypeReference<List<Object>>() {
-                                            });
+                List<Object> contentJson = mapper.convertValue(partnerReadApiResponse.path(Constants.TRANSFORM_PROGRESS_JSON), new TypeReference<List<Object>>() {
+                });
                 JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
                 ((ObjectNode) transformData).put(Constants.PARTNER_ID, partnerid);
                 producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
+            }else{
+                log.error("Partner Transform progress json is missing in content partner db, please update");
             }
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
@@ -184,7 +184,7 @@ public class KafkaConsumer {
 
 
     public static Timestamp convertToTimestamp(String dateString) {
-        SimpleDateFormat dateFormat = new SimpleDateFormat("MM/dd/yyyy");
+        SimpleDateFormat dateFormat = new SimpleDateFormat("dd/MM/yyyy");
         dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
         try {
             Date parsedDate = dateFormat.parse(dateString);
@@ -268,7 +268,7 @@ public class KafkaConsumer {
     }
 
     private static String convertDateFormat(String originalDate) {
-        DateTimeFormatter originalFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+        DateTimeFormatter originalFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         LocalDate date = LocalDate.parse(originalDate, originalFormatter);
         DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         return date.format(outputFormatter);
