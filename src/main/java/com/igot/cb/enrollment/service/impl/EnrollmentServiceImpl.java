@@ -232,7 +232,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             ((ObjectNode)jsonNode).put("partnerCode",partnercode);
             producer.push(cbServerProperties.getUserProgressSendFromPartner(), jsonNode);
             Map<String, Object> result = new HashMap<>();
-            result.put("response", "Progress report sent uccessfully");
+            result.put("response", "Progress report sent successfully");
             response.setResult(result);
             return response;
         }catch (Exception e) {
