@@ -1,7 +1,9 @@
 package com.igot.cb.consumer;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
@@ -98,6 +100,27 @@ public class KafkaConsumer {
         }
     }
 
+    @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.progress.send.from.partner.consumer.group.id}")
+    public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data) {
+        log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
+        try {
+            JsonNode jsonNode = mapper.readTree(data.value());
+            JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadByPartnerCodeApi(jsonNode.get("partnerCode").asText());
+            if (!partnerReadApiResponse.path(Constants.TRANSFORM_PROGRESS_JSON).isMissingNode()) {
+                String partnerid=partnerReadApiResponse.get("id").asText();
+                List<Object> contentJson = mapper.convertValue(partnerReadApiResponse.path(Constants.TRANSFORM_PROGRESS_JSON), new TypeReference<List<Object>>() {
+                });
+                JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
+                ((ObjectNode) transformData).put(Constants.PARTNER_ID, partnerid);
+                producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
+            }else{
+                log.error("Partner Transform progress json is missing in content partner db, please update");
+            }
+        } catch (Exception e) {
+            log.error("Failed to read enroll Request. Message received : " + data.value(), e);
+        }
+    }
+
     private void sendUpdatedRecordDataToKafkaToGenerateCertificate(Map<String, Object> userCourseEnrollMap, JsonNode result) {
         try {
             String courseId = "";
@@ -161,7 +184,7 @@ public class KafkaConsumer {
 
 
     public static Timestamp convertToTimestamp(String dateString) {
-        SimpleDateFormat dateFormat = new SimpleDateFormat("MM/dd/yyyy");
+        SimpleDateFormat dateFormat = new SimpleDateFormat("dd/MM/yyyy");
         dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
         try {
             Date parsedDate = dateFormat.parse(dateString);
@@ -245,7 +268,7 @@ public class KafkaConsumer {
     }
 
     private static String convertDateFormat(String originalDate) {
-        DateTimeFormatter originalFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+        DateTimeFormatter originalFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         LocalDate date = LocalDate.parse(originalDate, originalFormatter);
         DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         return date.format(outputFormatter);
