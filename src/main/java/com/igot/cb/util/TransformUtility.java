@@ -33,7 +33,7 @@ public class TransformUtility {
     private ObjectMapper mapper;
 
     public JsonNode callCiosReadAPi(String extCourseId, String partnerId) {
-        log.info("KafkaConsumer :: callExtApi");
+        log.info("KafkaConsumer :: callCiosReadAPi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getCiosReadApiUrl() + extCourseId + "/" + partnerId;
         HttpHeaders headers = new HttpHeaders();
         HttpEntity<String> entity = new HttpEntity<>(headers);
@@ -52,7 +52,7 @@ public class TransformUtility {
     }
 
     public JsonNode callContentPartnerReadApi(String partnerId) {
-        log.info("KafkaConsumer :: callExtApi");
+        log.info("KafkaConsumer :: callContentPartnerReadApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
         HttpHeaders headers = new HttpHeaders();
         headers.set("Accept", "application/json"); // Indicate JSON response
@@ -73,7 +73,7 @@ public class TransformUtility {
     }
 
     public JsonNode callContentPartnerReadByPartnerCodeApi(String partnerCode) {
-        log.info("KafkaConsumer :: callExtApi");
+        log.info("KafkaConsumer :: callContentPartnerReadByPartnerCodeApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl() + partnerCode;
         HttpHeaders headers = new HttpHeaders();
         headers.set("Accept", "application/json"); // Indicate JSON response
