@@ -3,13 +3,13 @@ package com.igot.cb.consumer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
+import java.io.InputStream;
 import java.sql.Timestamp;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -25,6 +25,7 @@ import org.springframework.util.CollectionUtils;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import org.springframework.core.io.*;
 
 @Component
 @Slf4j
@@ -43,6 +44,9 @@ public class KafkaConsumer {
     @Autowired
     TransformUtility transformUtility;
 
+    @Autowired
+    private ResourceLoader resourceLoader;
+
     @KafkaListener(topics = "${spring.kafka.cornell.topic.name}", groupId = "${spring.kafka.consumer.group.id}")
     public void enrollUpdateConsumer(ConsumerRecord<String, String> data) {
         log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
@@ -60,7 +64,7 @@ public class KafkaConsumer {
                 if (!contentNode.isMissingNode() && !contentNode.isNull()) {
                     courseId = contentNode.get("contentId").asText();
                 }
-                log.info("KafkaConsumer :: enrollUpdateConsumer ::courseId from cios api {} userid {}", courseId, userCourseEnrollMap.get(Constants.USER_ID));
+                log.debug("KafkaConsumer :: enrollUpdateConsumer ::courseId from cios api {} userid {}", courseId, userCourseEnrollMap.get(Constants.USER_ID));
                 String[] parts = ((String) userCourseEnrollMap.get(Constants.USER_ID)).split("@");
                 userCourseEnrollMap.put(Constants.USER_ID, parts[0]);
                 Map<String, Object> propertyMap = new HashMap<>();
@@ -68,8 +72,8 @@ public class KafkaConsumer {
                 propertyMap.put(Constants.COURSE_ID, courseId);
                 List<Map<String, Object>> listOfMasterData = cassandraOperation.getRecordsByPropertiesWithoutFiltering(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, propertyMap, null, 1);
                 if (!CollectionUtils.isEmpty(listOfMasterData)) {
-                    String Status = userCourseEnrollMap.get("status").toString();
-                    log.info("status {}", Status);
+                    String Status = userCourseEnrollMap.get(Constants.STATUS).toString();
+                    log.debug("status {}", Status);
                     if (Status.equalsIgnoreCase("complete")) {
                         Map<String, Object> updatedMap = new HashMap<>();
                         updatedMap.put(Constants.PROGRESS, 100);
@@ -81,9 +85,9 @@ public class KafkaConsumer {
                         sendUpdatedRecordDataToKafkaToGenerateCertificate(userCourseEnrollMap, result);
                     } else {
                         Map<String, Object> updatedMap = new HashMap<>();
-                        updatedMap.put(Constants.PROGRESS, userCourseEnrollMap.get("progress_percetage"));
-                        updatedMap.put(Constants.STATUS, 0);
-                        updatedMap.put(Constants.COMPLETION_PERCENTAGE, userCourseEnrollMap.get("progress_percetage"));
+                        updatedMap.put(Constants.PROGRESS,50);
+                        updatedMap.put(Constants.STATUS, 1);
+                        updatedMap.put(Constants.COMPLETION_PERCENTAGE, 50);
                         updatedMap.put(Constants.UPDATED_ON, timestamp);
                         cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, updatedMap, propertyMap);
                     }
@@ -102,7 +106,7 @@ public class KafkaConsumer {
 
     @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.progress.send.from.partner.consumer.group.id}")
     public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data) {
-        log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
+        log.info("KafkaConsumer::receiveProgressUpdateFromPartner:topic name: {} and recievedData: {}", data.topic());
         try {
             JsonNode jsonNode = mapper.readTree(data.value());
             JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadByPartnerCodeApi(jsonNode.get("partnerCode").asText());
@@ -122,6 +126,7 @@ public class KafkaConsumer {
     }
 
     private void sendUpdatedRecordDataToKafkaToGenerateCertificate(Map<String, Object> userCourseEnrollMap, JsonNode result) {
+        log.info("KafkaConsumer::sendUpdatedRecordDataToKafkaToGenerateCertificate:inside method");
         try {
             String courseId = "";
             String courseName = "";
@@ -140,8 +145,11 @@ public class KafkaConsumer {
                 }
             }
             JsonNode partnerApiResponse = transformUtility.callContentPartnerReadApi(partnerId);
-            if (!partnerApiResponse.path("trasformCertificateJson").isMissingNode() && !partnerApiResponse.path("trasformCertificateJson").isNull()) {
-                JsonNode jsonNode = partnerApiResponse.get("trasformCertificateJson");
+            if (!partnerApiResponse.path("certificateTemplateUrl").isMissingNode() && !partnerApiResponse.path("certificateTemplateUrl").isNull()) {
+                String svgTemplate = partnerApiResponse.get("certificateTemplateUrl").asText();
+                Resource resource = resourceLoader.getResource("classpath:certificateTemplate.json");
+                InputStream inputStream = resource.getInputStream();
+                JsonNode jsonNode = mapper.readTree(inputStream);
                 Map<String, Object> certificateRequest = new HashMap<>();
                 certificateRequest.put(Constants.USER_ID, userCourseEnrollMap.get(Constants.USER_ID));
                 certificateRequest.put(Constants.COURSE_ID, courseId);
@@ -150,6 +158,7 @@ public class KafkaConsumer {
                 certificateRequest.put(Constants.COURSE_NAME, courseName);
                 certificateRequest.put(Constants.COURSE_POSTER_IMAGE, coursePosterImage);
                 certificateRequest.put(Constants.RECIPIENT_NAME, readUserName(userCourseEnrollMap.get(Constants.USER_ID).toString()));
+                certificateRequest.put(Constants.SVG_TEMPLATE,svgTemplate);
                 replacePlaceholders(jsonNode, certificateRequest);
                 producer.push(cbServerProperties.getCertificateTopic(), jsonNode);
                 log.info("KafkaConsumer::enrollUpdateConsumer:updated");
@@ -223,14 +232,14 @@ public class KafkaConsumer {
 
     private String getReplacementValue(String placeholder, Map<String, Object> certificateRequest) {
         log.debug("KafkaConsumer :: getReplacementValue");
-        String value = WordUtils.wrap((String) certificateRequest.get("courseName"), cbServerProperties.getCertificateCharLength(), "\n", false);
+        String value = WordUtils.wrap((String) certificateRequest.get(Constants.COURSE_NAME), cbServerProperties.getCertificateCharLength(), "\n", false);
         switch (placeholder) {
             case "user.id":
-                return (String) certificateRequest.get("userid");
+                return (String) certificateRequest.get(Constants.USER_ID);
             case "course.id":
-                return (String) certificateRequest.get("courseid");
+                return (String) certificateRequest.get(Constants.COURSE_ID);
             case "today.date":
-                return convertDateFormat((String) certificateRequest.get("completiondate"));
+                return convertDateFormat((String) certificateRequest.get(Constants.COMPLETION_DATE));
             case "time.ms":
                 return String.valueOf(System.currentTimeMillis());
             case "unique.id":
@@ -257,11 +266,13 @@ public class KafkaConsumer {
                     return "";
                 }
             case "provider.name":
-                return (String) certificateRequest.get("providerName");
+                return (String) certificateRequest.get(Constants.PROVIDER_NAME);
             case "user.name":
-                return (String) certificateRequest.get("recipientName");
+                return (String) certificateRequest.get(Constants.RECIPIENT_NAME);
             case "course.poster.image":
-                return (String) certificateRequest.get("coursePosterImage");
+                return (String) certificateRequest.get(Constants.COURSE_POSTER_IMAGE);
+            case "svgTemplate":
+                return (String) certificateRequest.get(Constants.SVG_TEMPLATE);
             default:
                 return "";
         }
