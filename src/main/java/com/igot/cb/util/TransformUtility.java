@@ -44,6 +44,7 @@ public class TransformUtility {
                 Object.class
         );
         if (response.getStatusCode().is2xxSuccessful()) {
+            log.info("got successful response from cios read api by extCourseId and partnerId");
             return mapper.valueToTree(response.getBody());
         } else {
             throw new RuntimeException("Failed to retrieve externalId. Status code: " + response.getStatusCodeValue());

@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
@@ -75,7 +74,22 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if (userCourseEnroll.has(Constants.COURSE_ID_RQST) && !userCourseEnroll.get(
                     Constants.COURSE_ID_RQST).isNull() && userCourseEnroll.has("partnerId") && !userCourseEnroll.get(
                     "partnerId").isNull()) {
-
+                Map<String, Object> propertyMap = new HashMap<>();
+                propertyMap.put("userid", userId);
+                propertyMap.put("courseid", userCourseEnroll.get("courseId").asText());
+                List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                        Constants.KEYSPACE_SUNBIRD_COURSES,
+                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                        propertyMap,
+                        null,
+                        1
+                );
+                if(!userEnrollmentList.isEmpty()){
+                    response.getParams().setMsg("User already enrolled to the course");
+                    response.getParams().setStatus(Constants.FAILED);
+                    response.setResponseCode(HttpStatus.BAD_REQUEST);
+                    return response;
+                }
                 TimeZone timeZone = TimeZone.getTimeZone("Asia/Kolkata");
                 Timestamp timestamp = new Timestamp(System.currentTimeMillis());
                 timestamp.setTime(timestamp.getTime() + timeZone.getOffset(timestamp.getTime()));
@@ -134,14 +148,15 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-            List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
+            //List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put("userid", userId);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                     Constants.KEYSPACE_SUNBIRD_COURSES,
                     Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
                     propertyMap,
-                    fields
+                    null,
+                    null
             );
             List<Map<String, Object>> courses = new ArrayList<>();
             if (!userEnrollmentList.isEmpty()) {
@@ -185,15 +200,16 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-            List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
+            //List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put("userid", userId);
             propertyMap.put("courseid", courseid);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                     Constants.KEYSPACE_SUNBIRD_COURSES,
                     Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
                     propertyMap,
-                    fields
+                    null,
+                    1
             );
             if (!userEnrollmentList.isEmpty()) {
                 for (Map<String, Object> enrollment : userEnrollmentList) {
