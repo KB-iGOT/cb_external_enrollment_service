@@ -33,7 +33,7 @@ public class TransformUtility {
     private ObjectMapper mapper;
 
     public JsonNode callCiosReadAPi(String extCourseId, String partnerId) {
-        log.info("KafkaConsumer :: callExtApi");
+        log.info("KafkaConsumer :: callCiosReadAPi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getCiosReadApiUrl() + extCourseId + "/" + partnerId;
         HttpHeaders headers = new HttpHeaders();
         HttpEntity<String> entity = new HttpEntity<>(headers);
@@ -44,6 +44,7 @@ public class TransformUtility {
                 Object.class
         );
         if (response.getStatusCode().is2xxSuccessful()) {
+            log.info("got successful response from cios read api by extCourseId and partnerId");
             return mapper.valueToTree(response.getBody());
         } else {
             throw new RuntimeException("Failed to retrieve externalId. Status code: " + response.getStatusCodeValue());
@@ -55,6 +56,29 @@ public class TransformUtility {
         log.info("KafkaConsumer :: callExtApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
         HttpHeaders headers = new HttpHeaders();
+        headers.set("Accept", "application/json"); // Indicate JSON response
+        headers.set("Content-Type", "application/json");
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+        ResponseEntity<JsonNode> response = restTemplate.exchange(
+                url,
+                HttpMethod.GET,
+                entity,
+                JsonNode.class
+        );
+        if (response.getStatusCode().is2xxSuccessful()) {
+            JsonNode jsonNode = response.getBody();
+            return jsonNode.path("result");
+        } else {
+            throw new CustomException(Constants.ERROR,"Failed to retrieve externalId. Status code: " + response.getStatusCodeValue(),HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    public JsonNode callContentPartnerReadByPartnerCodeApi(String partnerCode) {
+        log.info("KafkaConsumer :: callContentPartnerReadByPartnerCodeApi");
+        String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl() + partnerCode;
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Accept", "application/json"); // Indicate JSON response
+        headers.set("Content-Type", "application/json");
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<JsonNode> response = restTemplate.exchange(
                 url,
