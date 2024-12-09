@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
@@ -19,6 +18,8 @@ import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 
 import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 import com.igot.cb.util.exceptions.CustomException;
@@ -73,7 +74,22 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if (userCourseEnroll.has(Constants.COURSE_ID_RQST) && !userCourseEnroll.get(
                     Constants.COURSE_ID_RQST).isNull() && userCourseEnroll.has("partnerId") && !userCourseEnroll.get(
                     "partnerId").isNull()) {
-
+                Map<String, Object> propertyMap = new HashMap<>();
+                propertyMap.put("userid", userId);
+                propertyMap.put("courseid", userCourseEnroll.get("courseId").asText());
+                List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                        Constants.KEYSPACE_SUNBIRD_COURSES,
+                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                        propertyMap,
+                        null,
+                        1
+                );
+                if(!userEnrollmentList.isEmpty()){
+                    response.getParams().setMsg("User already enrolled to the course");
+                    response.getParams().setStatus(Constants.FAILED);
+                    response.setResponseCode(HttpStatus.BAD_REQUEST);
+                    return response;
+                }
                 TimeZone timeZone = TimeZone.getTimeZone("Asia/Kolkata");
                 Timestamp timestamp = new Timestamp(System.currentTimeMillis());
                 timestamp.setTime(timestamp.getTime() + timeZone.getOffset(timestamp.getTime()));
@@ -132,14 +148,15 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-            List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
+            //List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put("userid", userId);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                     Constants.KEYSPACE_SUNBIRD_COURSES,
                     Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
                     propertyMap,
-                    fields
+                    null,
+                    null
             );
             List<Map<String, Object>> courses = new ArrayList<>();
             if (!userEnrollmentList.isEmpty()) {
@@ -183,15 +200,16 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-            List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
+            //List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put("userid", userId);
             propertyMap.put("courseid", courseid);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                     Constants.KEYSPACE_SUNBIRD_COURSES,
                     Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
                     propertyMap,
-                    fields
+                    null,
+                    1
             );
             if (!userEnrollmentList.isEmpty()) {
                 for (Map<String, Object> enrollment : userEnrollmentList) {
@@ -224,23 +242,25 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         try {
             SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_PREGRESS_UPDATE);
             log.info("Payload received for userProgressUpdate: {} and partnerCode: {}", jsonNode.toString(),partnercode);
-//            JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadApi(partnerid);
-//            if (!partnerReadApiResponse.path("transformProgressJson").isMissingNode()) {
-//                ArrayNode arrayNode = objectMapper.createArrayNode();
-//                arrayNode.add(partnerReadApiResponse.get("transformProgressJson"));
-//                List<Object> contentJson = objectMapper.convertValue(arrayNode, new TypeReference<List<Object>>() {
-//                                            });
-//                JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
-//                ((ObjectNode) transformData).put("partnerId", partnerid);
-//                producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
-//            }
+            String inputDate=jsonNode.get("completion_date").asText();
+            String formatedDate=updateDateFormatFromInputDate(inputDate);
+            ((ObjectNode)jsonNode).put("completion_date",formatedDate);
+            ((ObjectNode)jsonNode).put("partnerCode",partnercode);
+            producer.push(cbServerProperties.getUserProgressSendFromPartner(), jsonNode);
             Map<String, Object> result = new HashMap<>();
-            result.put("response", "Progress Updated Successfully");
+            result.put("response", "Progress report sent successfully");
             response.setResult(result);
             return response;
         }catch (Exception e) {
            throw new CustomException(Constants.ERROR,e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private String updateDateFormatFromInputDate(String inputDate) {
+        DateTimeFormatter originalFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        LocalDate date = LocalDate.parse(inputDate, originalFormatter);
+        DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        return date.format(outputFormatter);
     }
     public Map<String, Object> fetchDataByContentId(String contentId) {
         log.debug("getting content by id: " + contentId);
