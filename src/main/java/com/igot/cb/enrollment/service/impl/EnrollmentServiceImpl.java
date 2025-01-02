@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
+import com.igot.cb.enrollment.entity.CiosEnrolmentStatus;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
 import com.igot.cb.enrollment.service.EnrollmentService;
 import com.igot.cb.producer.Producer;
@@ -21,11 +22,13 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.joda.time.DateTime;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -57,6 +60,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     @Autowired
     private Producer producer;
+
+    private final Map<String, Integer> statusMap = CiosEnrolmentStatus.toMap();
 
     @Override
     public SBApiResponse enrollUser(JsonNode userCourseEnroll, String token) {
@@ -136,10 +141,31 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     @Override
-    public SBApiResponse readByUserId(String token) {
+    public SBApiResponse readByUserId(Map<String, Object> searchRequest, String token) {
         log.info("EnrollmentService::readByUserId:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSELIST);
         try {
+            Map<String, Object> request = (Map<String, Object>)searchRequest.get(Constants.REQUEST);
+            if (MapUtils.isEmpty(request)) {
+                response.getParams().setMsg("Request is not proper, please include request body.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+            String status = (String) request.get(Constants.STATUS);
+            if (StringUtils.isEmpty(status)) {
+                response.getParams().setMsg("Request is not proper, please provide status in request body.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+            if (statusMap.get(status) == null) {
+                response.getParams().setMsg("Request is not proper, please provide proper value of status.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+
             String userId = accessTokenValidator.verifyUserToken(token);
             log.info("UserId from auth token {}", userId);
             if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
@@ -158,6 +184,31 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     null,
                     null
             );
+            if (request.get(Constants.LIMIT) != null) {
+                int limit = (int)request.get(Constants.LIMIT);
+                if (cbServerProperties.getMaximumAllowedLimit() < limit) {
+                    limit = cbServerProperties.getMaximumAllowedLimit();
+                }
+                userEnrollmentList = userEnrollmentList.stream()
+                        .filter(enrollment -> {
+                            Date updatedOn = (Date) enrollment.get(Constants.UPDATED_ON); // Cast to Date
+                            if (updatedOn == null) {
+                                System.out.println("Invalid or missing updatedOn value: " + updatedOn);
+                                return false;
+                            }
+                            return true;
+                        })
+                        .sorted(Comparator.comparing(enrollment -> ((Date) (((Map<String, Object>) enrollment).get(Constants.UPDATED_ON)))).reversed())
+                        .collect(Collectors.toList());
+                if (CollectionUtils.isNotEmpty(userEnrollmentList) && userEnrollmentList.size() > limit) {
+                    userEnrollmentList = userEnrollmentList.subList(0, limit);
+                }
+            }
+
+            Integer statusValue = statusMap.get(status);
+            if (statusValue != -1) {
+                userEnrollmentList = userEnrollmentList.stream().filter(enrolment -> (int)enrolment.get(Constants.STATUS) == statusValue).collect(Collectors.toList());
+            }
             List<Map<String, Object>> courses = new ArrayList<>();
             if (!userEnrollmentList.isEmpty()) {
                 for (Map<String, Object> enrollment : userEnrollmentList) {
@@ -175,7 +226,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.getParams().setStatus(Constants.SUCCESS);
                 response.setResponseCode(HttpStatus.OK);
                 return response;
-
             }
             return response;
         } catch (Exception e) {

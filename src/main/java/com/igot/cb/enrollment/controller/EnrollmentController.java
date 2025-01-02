@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/cios-enroll")
 public class EnrollmentController {
@@ -28,9 +30,9 @@ public class EnrollmentController {
     return new ResponseEntity<>(response, response.getResponseCode());
   }
 
-  @GetMapping("/v1/courselist/byuserid")
-  public ResponseEntity<?> readByUserId(@RequestHeader(Constants.X_AUTH_TOKEN) String token) {
-    SBApiResponse response = enrollmentService.readByUserId(token);
+  @PostMapping("/v1/courselist/byuserid")
+  public ResponseEntity<?> readByUserId(@RequestBody Map<String, Object> searchRequest, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
+    SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
