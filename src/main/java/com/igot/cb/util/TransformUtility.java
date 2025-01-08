@@ -11,11 +11,12 @@ import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.dto.SunbirdApiRespParam;
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
-import org.joda.time.DateTime;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -52,6 +53,26 @@ public class TransformUtility {
 
     }
 
+    public JsonNode callCiosReadAPiByContentId(String contentId) {
+        log.info("KafkaConsumer :: callCiosReadAPi");
+        String url = cbServerProperties.getBaseUrl() + cbServerProperties.getCiosReadApiByContentId() + contentId;
+        HttpHeaders headers = new HttpHeaders();
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+        ResponseEntity<Object> response = restTemplate.exchange(
+                url,
+                HttpMethod.GET,
+                entity,
+                Object.class
+        );
+        if (response.getStatusCode().is2xxSuccessful()) {
+            log.info("got successful response from cios read api by extCourseId and partnerId");
+            return mapper.valueToTree(response.getBody());
+        } else {
+            throw new CustomException(Constants.ERROR,"Failed to retrieve data by contentId " + contentId,HttpStatus.BAD_REQUEST);
+        }
+
+    }
+
     public JsonNode callContentPartnerReadApi(String partnerId) {
         log.info("KafkaConsumer :: callExtApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
@@ -69,7 +90,7 @@ public class TransformUtility {
             JsonNode jsonNode = response.getBody();
             return jsonNode.path("result");
         } else {
-            throw new CustomException(Constants.ERROR,"Failed to retrieve externalId. Status code: " + response.getStatusCodeValue(),HttpStatus.BAD_REQUEST);
+            throw new CustomException(Constants.ERROR,"Failed to retrieve externalId. Status code: " + response.getStatusCode(),HttpStatus.BAD_REQUEST);
         }
     }
 
@@ -114,7 +135,7 @@ public class TransformUtility {
         response.setParams(new SunbirdApiRespParam(UUID.randomUUID().toString()));
         response.getParams().setStatus(Constants.SUCCESS);
         response.setResponseCode(HttpStatus.OK);
-        response.setTs(DateTime.now().toString());
+        response.setTs(LocalDateTime.now().toString());
         return response;
     }
 }

@@ -1,13 +1,11 @@
 package com.igot.cb.enrollment.service.impl;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
-import com.igot.cb.enrollment.entity.CiosContentEntity;
-import com.igot.cb.enrollment.repository.CiosContentRepository;
 import com.igot.cb.enrollment.service.EnrollmentService;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
@@ -25,7 +23,6 @@ import java.util.*;
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.joda.time.DateTime;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -48,9 +45,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     @Autowired
     private CbServerProperties cbServerProperties;
-
-    @Autowired
-    private CiosContentRepository contentRepository;
 
     @Autowired
     private TransformUtility transformUtility;
@@ -268,25 +262,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             log.error("CiosContentServiceImpl::read:Id not found");
             throw new CustomException(Constants.ERROR, "contentId is mandatory", HttpStatus.BAD_REQUEST);
         }
-        String cachedJson = cacheService.getCache(contentId);
-        Map<String, Object> response = new HashMap<>();
-        if (StringUtils.isNotEmpty(cachedJson)) {
-            log.info("CiosContentServiceImpl::read:Record coming from redis cache");
-            try {
-               return objectMapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {});
-            } catch (JsonProcessingException e) {
-                throw new RuntimeException(e);
-            }
-        } else {
-            Optional<CiosContentEntity> optionalJsonNodeEntity = contentRepository.findByContentIdAndIsActive(contentId, true);
-            if (optionalJsonNodeEntity.isPresent()) {
-                CiosContentEntity ciosContentEntity = optionalJsonNodeEntity.get();
-                cacheService.putCache(contentId, ciosContentEntity.getCiosData());
-                log.info("CiosContentServiceImpl::read:Record coming from postgres db");
-                return objectMapper.convertValue(ciosContentEntity.getCiosData(), new TypeReference<Map<String, Object>>() {});
-            }
-        }
-    return response;
+        JsonNode response = transformUtility.callCiosReadAPiByContentId(contentId);
+        return objectMapper.convertValue(response, new TypeReference<Map<String, Object>>() {});
     }
 
 }

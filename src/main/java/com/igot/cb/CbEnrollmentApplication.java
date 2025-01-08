@@ -1,8 +1,13 @@
 package com.igot.cb;
 
-import org.apache.http.client.config.RequestConfig;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
+import org.apache.hc.core5.util.Timeout;
+
+
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
@@ -12,6 +17,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
+
 
 
 /**
@@ -35,13 +41,20 @@ public class CbEnrollmentApplication {
 
     private ClientHttpRequestFactory getClientHttpRequestFactory() {
         int timeout = 45000;
-        RequestConfig config = RequestConfig.custom().setConnectTimeout(timeout).setConnectionRequestTimeout(timeout)
-                .setSocketTimeout(timeout).build();
-        CloseableHttpClient client = HttpClientBuilder.create().setMaxConnTotal(2000).setMaxConnPerRoute(500)
-                .setDefaultRequestConfig(config).build();
-        HttpComponentsClientHttpRequestFactory cRequestFactory = new HttpComponentsClientHttpRequestFactory(client);
-        cRequestFactory.setReadTimeout(timeout);
-        return cRequestFactory;
+
+        RequestConfig config = RequestConfig.custom()
+                .setResponseTimeout(Timeout.ofMilliseconds(timeout))
+                .build();
+
+        PoolingHttpClientConnectionManager cm = new PoolingHttpClientConnectionManager();
+        cm.setMaxTotal(2000);
+        cm.setDefaultMaxPerRoute(500);
+
+        CloseableHttpClient client = HttpClients.custom()
+                .setDefaultRequestConfig(config)
+                .setConnectionManager(cm)
+                .build();
+        return new HttpComponentsClientHttpRequestFactory(client);
     }
 
 }
