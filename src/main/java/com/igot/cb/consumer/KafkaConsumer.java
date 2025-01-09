@@ -100,7 +100,7 @@ public class KafkaConsumer {
 
     @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.progress.send.from.partner.consumer.group.id}")
     public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data) {
-        log.info("KafkaConsumer::receiveProgressUpdateFromPartner:topic name: {} and recievedData: {}", data.topic());
+        log.info("KafkaConsumer::receiveProgressUpdateFromPartner:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
             JsonNode jsonNode = mapper.readTree(data.value());
             JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadByPartnerCodeApi(jsonNode.get("partnerCode").asText());
