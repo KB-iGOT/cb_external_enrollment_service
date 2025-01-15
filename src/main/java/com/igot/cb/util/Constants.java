@@ -65,6 +65,7 @@ public class Constants {
     public static final String PARTNER_CODE = "partnerCode";
     public static final String TRANSFORM_PROGRESS_JSON = "transformProgressJson";
     public static final String SVG_TEMPLATE = "svgTemplate";
+    public static final String LOCAL_DATACENTER = "spring.cassandra.local-datacenter";
 
 
     private Constants() {
