@@ -28,5 +28,4 @@ COPY cb-enrollment-service-0.0.1-SNAPSHOT.jar /opt/
 # Set the command to run the Java application
 CMD ["/bin/bash", "-c", "java -XX:+PrintFlagsFinal $JAVA_OPTIONS -XX:+UnlockExperimentalVMOptions -jar /opt/cb-enrollment-service-0.0.1-SNAPSHOT.jar"]
 
-CMD ["/bin/bash", "-c", "java -XX:+PrintFlagsFinal", "$JAVA_OPTIONS", "-XX:+UnlockExperimentalVMOptions", "-jar", "/opt/cb-enrollment-service-0.0.1-SNAPSHOT.jar"]
 
