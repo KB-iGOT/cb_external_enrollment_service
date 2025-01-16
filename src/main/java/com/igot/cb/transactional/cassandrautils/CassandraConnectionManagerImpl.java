@@ -75,6 +75,7 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
         try {
             PropertiesCache cache = PropertiesCache.getInstance();
             String cassandraHost = cache.getProperty(Constants.CASSANDRA_CONFIG_HOST);
+            log.info("CassandraConeectionManagerImpl :: Cassandra host: {}", cassandraHost);
             if (StringUtils.isBlank(cassandraHost)) {
                 throw new CustomException(
                         Constants.ERROR,
