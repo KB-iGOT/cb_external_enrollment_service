@@ -2,14 +2,15 @@ package com.igot.cb.transactional.cassandrautils;
 
 
 
-import com.datastax.oss.driver.api.core.CqlSession;
-import com.datastax.oss.driver.api.core.CqlSessionBuilder;
+import com.datastax.oss.driver.api.core.*;
 import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
 import com.datastax.oss.driver.api.core.metadata.Metadata;
 import com.datastax.oss.driver.internal.core.retry.DefaultRetryPolicy;
+import com.datastax.oss.driver.internal.core.time.AtomicTimestampGenerator;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.PropertiesCache;
+import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
@@ -25,6 +26,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 
 /**
@@ -72,16 +74,42 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
     public void createCassandraConnection() {
         try {
             PropertiesCache cache = PropertiesCache.getInstance();
+            String cassandraHost = cache.getProperty(Constants.CASSANDRA_CONFIG_HOST);
+            if (StringUtils.isBlank(cassandraHost)) {
+                throw new CustomException(
+                        Constants.ERROR,
+                        "Cassandra host is not configured",
+                        HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            List<String> hosts = Arrays.asList(cassandraHost.split(","));
+            List<InetSocketAddress> contactPoints = hosts.stream()
+                    .map(host -> new InetSocketAddress(host.trim(), 9042)) // Assuming default port 9042
+                    .collect(Collectors.toList());
             String localDatacenter = cache.getProperty(Constants.LOCAL_DATACENTER);
             DriverConfigLoader loader = DriverConfigLoader.programmaticBuilder()
-                    .withStringList(DefaultDriverOption.CONTACT_POINTS, Arrays.stream(StringUtils.split(cache.getProperty(Constants.CASSANDRA_CONFIG_HOST), ","))
-                            .map(host -> host + ":9042").toList())
-                    .withInt(DefaultDriverOption.CONNECTION_POOL_LOCAL_SIZE, Integer.parseInt(cache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_LOCAL)))
-                    .withInt(DefaultDriverOption.CONNECTION_POOL_REMOTE_SIZE, Integer.parseInt(cache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_REMOTE)))
-                    .withInt(DefaultDriverOption.CONNECTION_MAX_REQUESTS, Integer.parseInt(cache.getProperty(Constants.MAX_REQUEST_PER_CONNECTION)))
-                    .withInt(DefaultDriverOption.HEARTBEAT_INTERVAL, Integer.parseInt(cache.getProperty(Constants.HEARTBEAT_INTERVAL))).build();
-            CqlSessionBuilder builder = CqlSession.builder().withConfigLoader(loader).withLocalDatacenter(localDatacenter);
-            session = builder.build();
+                    .withStringList(DefaultDriverOption.CONTACT_POINTS, hosts)
+                    .withString(DefaultDriverOption.REQUEST_CONSISTENCY, getConsistencyLevel().name())
+                    .withString(DefaultDriverOption.LOAD_BALANCING_LOCAL_DATACENTER, "datacenter1")
+                    // Local host connection pooling
+                    .withInt(DefaultDriverOption.CONNECTION_POOL_LOCAL_SIZE,
+                            Integer.parseInt(cache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_LOCAL)))
+                    // Remote host connection pooling
+                    .withInt(DefaultDriverOption.CONNECTION_POOL_REMOTE_SIZE,
+                            Integer.parseInt(cache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_REMOTE)))
+                    // Heartbeat and timeout settings
+                    .withInt(DefaultDriverOption.HEARTBEAT_INTERVAL,
+                            Integer.parseInt(cache.getProperty(Constants.HEARTBEAT_INTERVAL)))
+                    .withInt(DefaultDriverOption.CONNECTION_INIT_QUERY_TIMEOUT, 10000)
+                    .withInt(DefaultDriverOption.REQUEST_TIMEOUT, 10000)
+                    .withString(DefaultDriverOption.PROTOCOL_VERSION, ProtocolVersion.V4.toString())
+                    .withClass(DefaultDriverOption.RETRY_POLICY_CLASS, DefaultRetryPolicy.class)
+                    .withClass(DefaultDriverOption.TIMESTAMP_GENERATOR_CLASS, AtomicTimestampGenerator.class)
+                    .build();
+            session = CqlSession.builder()
+                    .addContactPoints(contactPoints)
+                    .withLocalDatacenter(localDatacenter)
+                    .withConfigLoader(loader)
+                    .build();
             logClusterDetails(session.getMetadata());
         } catch (Exception e) {
             log.error("Error creating Cassandra connection", e);
@@ -130,4 +158,16 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
                         node.getRack() != null ? node.getRack() : "Unknown"));
     }
 
+    private static ConsistencyLevel getConsistencyLevel() {
+        String consistency = PropertiesCache.getInstance().readProperty(Constants.SUNBIRD_CASSANDRA_CONSISTENCY_LEVEL);
+        if (StringUtils.isBlank(consistency)) return null;
+
+        try {
+            return DefaultConsistencyLevel.valueOf(consistency.toUpperCase());
+        } catch (IllegalArgumentException exception) {
+            log.info("CassandraConnectionManagerImpl:getConsistencyLevel: Exception occurred with error message = "
+                    + exception.getMessage());
+        }
+        return null;
+    }
 }
