@@ -39,7 +39,7 @@ public class CassandraOperationImpl implements CassandraOperation {
     CassandraConnectionManager connectionManager;
 
     @Override
-    public Object insertRecord(String keyspaceName, String tableName, Map<String, Object> request) {
+    public ApiResponse insertRecord(String keyspaceName, String tableName, Map<String, Object> request) {
         ApiResponse response = new ApiResponse();
         try {
             String query = CassandraUtil.getPreparedStatement(keyspaceName, tableName, request);
@@ -122,7 +122,7 @@ public class CassandraOperationImpl implements CassandraOperation {
     private Select processQuery(String keyspaceName, String tableName, Map<String, Object> propertyMap,
                                List<String> fields) {
         Select select;
-        if (org.apache.commons.collections4.CollectionUtils.isNotEmpty(fields)) {
+        if (CollectionUtils.isNotEmpty(fields)) {
             select = QueryBuilder.selectFrom(keyspaceName, tableName).columns(fields);
         } else {
 
