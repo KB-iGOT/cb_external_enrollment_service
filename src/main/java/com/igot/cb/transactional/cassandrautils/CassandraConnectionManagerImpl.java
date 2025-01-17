@@ -44,7 +44,6 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
     /**
      * Method invoked after bean creation for initialization
      */
-    @PostConstruct
     private void initialize() {
         log.info("Initializing CassandraConnectionManager...");
         registerShutdownHook();
