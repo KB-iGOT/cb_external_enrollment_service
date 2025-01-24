@@ -16,12 +16,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
-import org.springframework.stereotype.Service;
-
-import javax.annotation.PostConstruct;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,13 +42,13 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
     public CqlSession getSession(String keyspaceName) {
         // Check if session for keyspace already exists
         CqlSession currentSession = cassandraSessionMap.get(keyspaceName);
-        if (currentSession != null) {
+        if (currentSession != null&& !currentSession.isClosed()) {
             return currentSession;
         } else {
             // Create new session scoped to keyspace using the USE command
-            session.execute("USE " + keyspaceName);
-            cassandraSessionMap.put(keyspaceName, session);
-            return session;
+            CqlSession newSession = createCassandraConnectionWithKeySpaces(keyspaceName);
+            cassandraSessionMap.put(keyspaceName, newSession);
+            return newSession;
         }
     }
 
@@ -64,6 +60,18 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
 
     private void createCassandraConnection() {
         try {
+            session = createCassandraConnectionWithKeySpaces(null);
+        } catch (Exception e) {
+            log.error("Error while creating Cassandra connection", e);
+            throw new CustomException(
+                    Constants.ERROR,
+                    e.getMessage(),
+                    HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private CqlSession createCassandraConnectionWithKeySpaces(String keySpaceName) {
+        try {
             // Load the properties required for connection
             PropertiesCache cache = PropertiesCache.getInstance();
             String cassandraHost = cache.getProperty(Constants.CASSANDRA_CONFIG_HOST);
@@ -73,23 +81,21 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
                         "Cassandra host is not configured",
                         HttpStatus.INTERNAL_SERVER_ERROR);
             }
-
             List<String> hosts = Arrays.asList(cassandraHost.split(","));
             List<InetSocketAddress> contactPoints = hosts.stream()
                     .map(host -> new InetSocketAddress(host.trim(), 9042)) // Assuming default port 9042
                     .collect(Collectors.toList());
-
+            List<String> contactPointsString = hosts.stream()
+                    .map(host -> host.trim() + ":9042") // Ensure proper host:port format
+                    .collect(Collectors.toList());
             DriverConfigLoader loader = DriverConfigLoader.programmaticBuilder()
-                    .withStringList(DefaultDriverOption.CONTACT_POINTS, hosts)
+                    .withStringList(DefaultDriverOption.CONTACT_POINTS, contactPointsString)
                     .withString(DefaultDriverOption.REQUEST_CONSISTENCY, getConsistencyLevel().name())
                     .withString(DefaultDriverOption.LOAD_BALANCING_LOCAL_DATACENTER, "datacenter1")
-                    // Local host connection pooling
                     .withInt(DefaultDriverOption.CONNECTION_POOL_LOCAL_SIZE,
                             Integer.parseInt(cache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_LOCAL)))
-                    // Remote host connection pooling
                     .withInt(DefaultDriverOption.CONNECTION_POOL_REMOTE_SIZE,
                             Integer.parseInt(cache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_REMOTE)))
-                    // Heartbeat and timeout settings
                     .withInt(DefaultDriverOption.HEARTBEAT_INTERVAL,
                             Integer.parseInt(cache.getProperty(Constants.HEARTBEAT_INTERVAL)))
                     .withInt(DefaultDriverOption.CONNECTION_INIT_QUERY_TIMEOUT, 10000)
@@ -98,22 +104,30 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
                     .withClass(DefaultDriverOption.RETRY_POLICY_CLASS, DefaultRetryPolicy.class)
                     .withClass(DefaultDriverOption.TIMESTAMP_GENERATOR_CLASS, AtomicTimestampGenerator.class)
                     .build();
-
-            // Create the CqlSession with the configuration loader
-            session = CqlSession.builder()
-                    .addContactPoints(contactPoints)
-                    .withLocalDatacenter("datacenter1")
-                    .withConfigLoader(loader)
-                    .build();
-
+            CqlSession sessionWithKeyspaces;
+            if (StringUtils.isNotBlank(keySpaceName)) {
+                sessionWithKeyspaces = CqlSession.builder()
+                        .addContactPoints(contactPoints)
+                        .withLocalDatacenter("datacenter1")
+                        .withKeyspace(keySpaceName)
+                        .withConfigLoader(loader)
+                        .build();
+            } else {
+                sessionWithKeyspaces = CqlSession.builder()
+                        .addContactPoints(contactPoints)
+                        .withLocalDatacenter("datacenter1")
+                        .withConfigLoader(loader)
+                        .build();
+            }
+            log.info("Connected to the keyspaces: " + keySpaceName);
             // Get metadata and log cluster information
-            final Metadata metadata = session.getMetadata();
+            final Metadata metadata = sessionWithKeyspaces.getMetadata();
             log.info(String.format("Connected to cluster: %s", metadata.getClusterName()));
-
             // Log nodes in the cluster
             for (Node host : metadata.getNodes().values()) {
                 log.info(String.format("Datacenter: %s; Host: %s; Rack: %s", host.getDatacenter(), host.getEndPoint(), host.getRack()));
             }
+            return sessionWithKeyspaces;
         } catch (Exception e) {
             log.error("Error while creating Cassandra connection", e);
             throw new CustomException(
