@@ -41,9 +41,10 @@ public class CassandraOperationImpl implements CassandraOperation {
     @Override
     public ApiResponse insertRecord(String keyspaceName, String tableName, Map<String, Object> request) {
         ApiResponse response = new ApiResponse();
+        CqlSession session = null;
         try {
+            session = connectionManager.getSession(keyspaceName);
             String query = CassandraUtil.getPreparedStatement(keyspaceName, tableName, request);
-            CqlSession session = connectionManager.getSession(keyspaceName);
             PreparedStatement statement = session.prepare(query);
             BoundStatement boundStatement = statement.bind(request.values().toArray());
             session.execute(boundStatement);
@@ -59,14 +60,16 @@ public class CassandraOperationImpl implements CassandraOperation {
     @Override
     public List<Map<String, Object>> getRecordsByPropertiesWithoutFiltering(String keyspaceName, String tableName, Map<String, Object> propertyMap, List<String> fields, Integer limit) {
         List<Map<String, Object>> response = new ArrayList<>();
+        CqlSession session = null;
         try {
+            session = connectionManager.getSession(keyspaceName);
             Select selectQuery = null;
             selectQuery = processQuery(keyspaceName, tableName, propertyMap, fields);
 
             if (limit != null) selectQuery = selectQuery.limit(limit);
             String queryString = selectQuery.toString();
             SimpleStatement statement = SimpleStatement.newInstance(queryString);
-            ResultSet results = connectionManager.getSession(keyspaceName).execute(statement);
+            ResultSet results = session.execute(statement);
             response = CassandraUtil.createResponse(results);
         } catch (Exception e) {
             log.error("Error fetching records from {}: {}", tableName, e.getMessage());
@@ -77,12 +80,14 @@ public class CassandraOperationImpl implements CassandraOperation {
     @Override
     public List<Map<String, Object>> getRecordsByProperties(String keyspaceName, String tableName, Map<String, Object> propertyMap, List<String> fields) {
         List<Map<String, Object>> response = new ArrayList<>();
+        CqlSession session = null;
         try {
+            session = connectionManager.getSession(keyspaceName);
             Select selectQuery = null;
             selectQuery = processQuery(keyspaceName, tableName, propertyMap, fields);
             String queryString = selectQuery.toString();
             SimpleStatement statement = SimpleStatement.newInstance(queryString);
-            ResultSet results = connectionManager.getSession(keyspaceName).execute(statement);
+            ResultSet results = session.execute(statement);
             response = CassandraUtil.createResponse(results);
         } catch (Exception e) {
             log.error("Error fetching records from {}: {}", tableName, e.getMessage());
@@ -94,8 +99,9 @@ public class CassandraOperationImpl implements CassandraOperation {
     public Map<String, Object> updateRecord(String keyspaceName, String tableName, Map<String, Object> updateAttributes,
                                             Map<String, Object> compositeKey) {
         Map<String, Object> response = new HashMap<>();
+        CqlSession session = null;
         try {
-            CqlSession session = connectionManager.getSession(keyspaceName);
+            session = connectionManager.getSession(keyspaceName);
             UpdateStart updateStart = QueryBuilder.update(keyspaceName, tableName);
             UpdateWithAssignments updateWithAssignments = updateStart.set(
                     updateAttributes.entrySet().stream()
