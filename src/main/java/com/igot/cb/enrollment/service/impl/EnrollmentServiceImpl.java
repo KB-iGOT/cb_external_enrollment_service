@@ -18,7 +18,10 @@ import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
@@ -90,9 +93,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     response.setResponseCode(HttpStatus.BAD_REQUEST);
                     return response;
                 }
-                TimeZone timeZone = TimeZone.getTimeZone("Asia/Kolkata");
-                Timestamp timestamp = new Timestamp(System.currentTimeMillis());
-                timestamp.setTime(timestamp.getTime() + timeZone.getOffset(timestamp.getTime()));
+                ZoneId zoneId = ZoneId.of("UTC");
+                Instant instant = LocalDateTime.now().atZone(zoneId).toInstant();
                 Map<String, Object> userCourseEnrollMap = new HashMap<>();
                 userCourseEnrollMap.put("userid", userId);
                 userCourseEnrollMap.put("courseid",
@@ -110,9 +112,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 userCourseEnrollMap.put("issued_certificates",
                         new ArrayList<>());
                 userCourseEnrollMap.put(Constants.ENROLLED_DATE,
-                        timestamp);
+                        instant);
                 userCourseEnrollMap.put("updatedon",
-                        timestamp);
+                        instant);
                 cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD_COURSES,
                         Constants.TABLE_USER_EXTERNAL_ENROLMENTS, userCourseEnrollMap);
                 response.setResponseCode(HttpStatus.OK);

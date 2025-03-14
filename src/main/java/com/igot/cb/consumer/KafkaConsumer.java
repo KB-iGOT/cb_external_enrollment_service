@@ -11,9 +11,7 @@ import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 
 import java.io.InputStream;
-import java.sql.Timestamp;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
+
 
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
@@ -25,8 +23,9 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
-import java.time.LocalDate;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 import org.springframework.core.io.*;
@@ -55,9 +54,8 @@ public class KafkaConsumer {
     public void enrollUpdateConsumer(ConsumerRecord<String, String> data) {
         log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
-            TimeZone timeZone = TimeZone.getTimeZone("Asia/Kolkata");
-            Timestamp timestamp = new Timestamp(System.currentTimeMillis());
-            timestamp.setTime(timestamp.getTime() + timeZone.getOffset(timestamp.getTime()));
+            ZoneId zoneId = ZoneId.of("UTC");
+            Instant instant = LocalDateTime.now().atZone(zoneId).toInstant();
             Map<String, Object> userCourseEnrollMap = mapper.readValue(data.value(), HashMap.class);
             if (userCourseEnrollMap.containsKey(Constants.USER_ID) && userCourseEnrollMap.get(Constants.USER_ID) instanceof String && userCourseEnrollMap.containsKey(Constants.COURSE_ID) && userCourseEnrollMap.get(Constants.COURSE_ID) instanceof String) {
                 String courseId = "";
@@ -82,7 +80,7 @@ public class KafkaConsumer {
                     updatedMap.put(Constants.STATUS, 2);
                     updatedMap.put(Constants.COMPLETED_ON, convertToTimestamp((String) userCourseEnrollMap.get("completedon")));
                     updatedMap.put(Constants.COMPLETION_PERCENTAGE, 100);
-                    updatedMap.put(Constants.UPDATED_ON, timestamp);
+                    updatedMap.put(Constants.UPDATED_ON, instant);
                     cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, updatedMap, propertyMap);
                     sendUpdatedRecordDataToKafkaToGenerateCertificate(userCourseEnrollMap, result);
                 } else {
@@ -100,7 +98,7 @@ public class KafkaConsumer {
 
     @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.progress.send.from.partner.consumer.group.id}")
     public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data) {
-        log.info("KafkaConsumer::receiveProgressUpdateFromPartner:topic name: {} and recievedData: {}", data.topic());
+        log.info("KafkaConsumer::receiveProgressUpdateFromPartner:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
             JsonNode jsonNode = mapper.readTree(data.value());
             JsonNode partnerReadApiResponse = transformUtility.callContentPartnerReadByPartnerCodeApi(jsonNode.get("partnerCode").asText());
@@ -185,13 +183,16 @@ public class KafkaConsumer {
     }
 
 
-    public static Timestamp convertToTimestamp(String dateString) {
-        SimpleDateFormat dateFormat = new SimpleDateFormat("dd/MM/yyyy");
-        dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
-        try {
-            Date parsedDate = dateFormat.parse(dateString);
-            return new Timestamp(parsedDate.getTime());
-        } catch (ParseException e) {
+    private static Instant convertToTimestamp(String dateString) {
+        try{
+            DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+            LocalDate localDate = LocalDate.parse(dateString, dateFormatter);
+            LocalTime currentTime = LocalTime.now();
+            LocalDateTime localDateTime = LocalDateTime.of(localDate, currentTime);
+            ZonedDateTime zonedDateTime = localDateTime.atZone(ZoneId.systemDefault())
+                    .withZoneSameInstant(ZoneId.of("UTC"));
+            return zonedDateTime.toInstant();
+        } catch (DateTimeParseException e) {
             e.printStackTrace();
             return null;
         }

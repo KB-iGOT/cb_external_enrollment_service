@@ -1,6 +1,8 @@
 package com.igot.cb.transactional.cassandrautils;
 
-import com.datastax.driver.core.Session;
+import com.datastax.oss.driver.api.core.CqlSession;
+
+import java.util.List;
 
 /**
  * @author Mahesh RV
@@ -14,6 +16,8 @@ public interface CassandraConnectionManager {
      * @param keyspaceName The name of the keyspace for which to retrieve the session.
      * @return A Cassandra Session object for interacting with the specified keyspace.
      */
-    Session getSession(String keyspaceName);
+    CqlSession getSession(String keyspaceName);
+
+    List<String> getTableList(String keyspacename);
 
 }
