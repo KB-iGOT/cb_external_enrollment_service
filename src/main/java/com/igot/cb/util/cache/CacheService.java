@@ -1,39 +1,31 @@
 package com.igot.cb.util.cache;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.igot.cb.util.Constants;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
-import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPool;
+
+
+import java.util.concurrent.TimeUnit;
 
 @Service
 @Slf4j
 public class CacheService {
 
   @Autowired
-  private JedisPool jedisPool;
+  private RedisTemplate<String, String> redisTemplate;
   @Autowired
   private ObjectMapper objectMapper;
 
   @Value("${spring.redis.cacheTtl}")
   private long cacheTtl;
 
-  public Jedis getJedis() {
-    try (Jedis jedis = jedisPool.getResource()) {
-      return jedis;
-    }
-  }
-
   public void putCache(String key, Object object) {
     try {
       String data = objectMapper.writeValueAsString(object);
-      try (Jedis jedis = jedisPool.getResource()) {
-        jedis.set(Constants.REDIS_KEY_PREFIX + key, data);
-        jedis.expire(Constants.REDIS_KEY_PREFIX + key, cacheTtl);
-      }
+      redisTemplate.opsForValue().set(key, data, cacheTtl, TimeUnit.SECONDS);
     } catch (Exception e) {
       log.error("Error while putting data in Redis cache: {} ", e.getMessage());
     }
@@ -41,17 +33,20 @@ public class CacheService {
 
   public String getCache(String key) {
     try {
-      return getJedis().get(Constants.REDIS_KEY_PREFIX + key);
+      return redisTemplate.opsForValue().get(key);
     } catch (Exception e) {
+      log.error("Error while getting data from Redis cache: {} ", e.getMessage());
       return null;
     }
   }
 
-  public void deleteCache(String key) {
-    try (Jedis jedis = jedisPool.getResource()) {
-      jedis.del(Constants.REDIS_KEY_PREFIX + key);
-    } catch (Exception e) {
-      log.error("Error while deleting data from Redis cache: {} ", e.getMessage());
+  public Boolean deleteCache(String key) {
+    boolean result = redisTemplate.delete(key);
+    if(result) {
+      log.info("Field {} deleted successfully from key {}.", key);
+    } else {
+      log.warn("Field {} not found in key {}.", key);
     }
+    return null;
   }
 }
