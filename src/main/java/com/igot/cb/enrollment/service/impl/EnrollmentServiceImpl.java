@@ -193,14 +193,14 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 }
                 userEnrollmentList = userEnrollmentList.stream()
                         .filter(enrollment -> {
-                            Date updatedOn = (Date) enrollment.get(Constants.UPDATED_ON); // Cast to Date
+                            Instant updatedOn = (Instant) enrollment.get(Constants.UPDATED_ON); // Cast to Date
                             if (updatedOn == null) {
-                                System.out.println("Invalid or missing updatedOn value: " + updatedOn);
+                                log.error("Invalid or missing updatedOn value: " + updatedOn);
                                 return false;
                             }
                             return true;
                         })
-                        .sorted(Comparator.comparing(enrollment -> ((Date) (((Map<String, Object>) enrollment).get(Constants.UPDATED_ON)))).reversed())
+                        .sorted(Comparator.comparing(enrollment -> ((Instant) (((Map<String, Object>) enrollment).get(Constants.UPDATED_ON)))).reversed())
                         .collect(Collectors.toList());
                 if (CollectionUtils.isNotEmpty(userEnrollmentList) && userEnrollmentList.size() > limit) {
                     userEnrollmentList = userEnrollmentList.subList(0, limit);
