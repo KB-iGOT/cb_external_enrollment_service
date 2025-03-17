@@ -43,4 +43,7 @@ public class CbServerProperties {
 
     @Value("${user.progress.send.from.partner.topic.name}")
     private String userProgressSendFromPartner;
+
+    @Value("${maximum.allowed.limit}")
+    private int maximumAllowedLimit;
 }
