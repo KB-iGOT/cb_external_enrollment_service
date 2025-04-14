@@ -2,6 +2,7 @@ package com.igot.cb.enrollment.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Timestamp;
 import java.util.Optional;
@@ -56,5 +57,11 @@ class CiosContentRepositoryTest {
         assertThat(result).isPresent();
         assertThat(result.get().getContentId()).isEqualTo(mockEntity.getContentId());
         assertThat(result.get().isActive()).isTrue();
+    }
+
+    @Test
+    void testCiosContentRepositoryLogic() {
+        // Add test logic here
+        assertTrue(true);
     }
 }

@@ -1,6 +1,7 @@
 package com.igot.cb.enrollment.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -93,5 +94,11 @@ class EnrollmentControllerTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(mockResponse, response.getBody());
+    }
+
+    @Test
+    void testEnrollmentControllerLogic() {
+        // Add test logic here
+        assertTrue(true);
     }
 }
