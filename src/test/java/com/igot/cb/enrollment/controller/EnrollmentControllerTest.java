@@ -1,9 +1,11 @@
-package com.igot.cb.controller;
+package com.igot.cb.enrollment.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.igot.cb.enrollment.controller.EnrollmentController;
-import com.igot.cb.enrollment.service.EnrollmentService;
-import com.igot.cb.util.dto.SBApiResponse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.util.Map;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -12,10 +14,9 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.igot.cb.enrollment.service.EnrollmentService;
+import com.igot.cb.util.dto.SBApiResponse;
 
 class EnrollmentControllerTest {
 

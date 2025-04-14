@@ -1,8 +1,7 @@
-package com.igot.cb.service.impl;
+package com.igot.cb.enrollment.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -27,7 +26,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
-import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.util.CbServerProperties;
@@ -36,7 +34,6 @@ import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.dto.SunbirdApiRespParam;
-import com.igot.cb.util.exceptions.CustomException;
 
 class EnrollmentServiceImplTest {
 

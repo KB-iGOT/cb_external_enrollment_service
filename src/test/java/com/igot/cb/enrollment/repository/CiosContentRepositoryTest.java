@@ -1,20 +1,20 @@
-package com.igot.cb.repository;
+package com.igot.cb.enrollment.repository;
 
-import com.igot.cb.enrollment.entity.CiosContentEntity;
-import com.igot.cb.enrollment.repository.CiosContentRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
+
+import java.sql.Timestamp;
+import java.util.Optional;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
-import java.sql.Timestamp;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.when;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.igot.cb.enrollment.entity.CiosContentEntity;
 
 class CiosContentRepositoryTest {
 
