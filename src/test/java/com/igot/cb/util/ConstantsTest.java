@@ -10,4 +10,12 @@ class ConstantsTest {
         // Add test logic here
         assertTrue(true);
     }
+
+    @Test
+    void testConstantValues() {
+        assertEquals("success", Constants.SUCCESS);
+        assertEquals("Failed", Constants.FAILED);
+        assertEquals("Unauthorized", Constants.UNAUTHORIZED);
+        // Add more assertions for other constants
+    }
 }

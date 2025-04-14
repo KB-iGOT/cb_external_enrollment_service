@@ -64,4 +64,26 @@ class CiosContentRepositoryTest {
         // Add test logic here
         assertTrue(true);
     }
+
+    // Enhanced test cases for `CiosContentRepository`
+    @Test
+    void testFindByContentIdAndIsActive_NotFound() {
+        when(ciosContentRepository.findByContentIdAndIsActive("nonexistentId", true))
+                .thenReturn(Optional.empty());
+
+        Optional<CiosContentEntity> result = ciosContentRepository.findByContentIdAndIsActive("nonexistentId", true);
+
+        assertThat(result).isNotPresent();
+    }
+
+    @Test
+    void testFindByContentIdAndIsActive_InactiveContent() {
+        mockEntity.setActive(false);
+        when(ciosContentRepository.findByContentIdAndIsActive("33333333", true))
+                .thenReturn(Optional.empty());
+
+        Optional<CiosContentEntity> result = ciosContentRepository.findByContentIdAndIsActive("33333333", true);
+
+        assertThat(result).isNotPresent();
+    }
 }
