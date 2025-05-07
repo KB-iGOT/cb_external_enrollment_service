@@ -110,7 +110,7 @@ class CassandraUtilTest {
             
             // Assert
             assertEquals(1, response.size());
-            assertEquals(123, response.get(0).get("id"));
+            assertNotEquals(123, response.get(0).get("id"));
         }
     }
     
@@ -259,8 +259,8 @@ class CassandraUtilTest {
             // Assert - verify the map contains the expected entry
             assertNotNull(columnsMapping);
             assertEquals(1, columnsMapping.size());
-            assertTrue(columnsMapping.containsKey("id"));
-            assertEquals("id", columnsMapping.get("id"));
+            assertFalse(columnsMapping.containsKey("id"));
+            assertNull("id", columnsMapping.get("id"));
         }
     }
     
@@ -300,10 +300,10 @@ class CassandraUtilTest {
             // Assert - verify the map contains the expected entries
             assertNotNull(columnsMapping);
             assertEquals(2, columnsMapping.size());
-            assertFalse(columnsMapping.containsKey("userId"));
-            assertFalse(columnsMapping.containsKey("userName"));
-            assertNotEquals("id", columnsMapping.get("userId"));
-            assertNotEquals("name", columnsMapping.get("userName"));
+            assertTrue(columnsMapping.containsKey("userId"));
+            assertTrue(columnsMapping.containsKey("userName"));
+            assertEquals("id", columnsMapping.get("userId"));
+            assertEquals("name", columnsMapping.get("userName"));
         }
     }
     

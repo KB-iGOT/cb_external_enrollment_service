@@ -423,7 +423,7 @@ class KafkaConsumerTest {
     @Test
     void testConvertToTimestamp_InvalidFormat() {
         // Act
-        Object result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertToTimestamp", "invalid-date");
+        Object result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertToTimestamp", "01-01-2023");
 
         // Assert
         assertNull(result);
