@@ -1,43 +1,74 @@
 package com.igot.cb.producer;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.web.server.ResponseStatusException;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class ProducerTest {
 
-    @Mock
+    @InjectMocks
     private Producer producer;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
     }
 
-    @Test
-    void testPushMessage_Success() {
-        String topic = "test-topic";
-        String message = "test-message";
-        doNothing().when(producer).push(topic, message);
+    static class TestData {
+        public String name;
+        public int value;
 
-        producer.push(topic, message);
-
-        verify(producer, times(1)).push(topic, message);
+        public TestData(String name, int value) {
+            this.name = name;
+            this.value = value;
+        }
     }
 
     @Test
-    void testPushMessage_NullMessage() {
+    void testPush_success() throws Exception {
+        // Arrange
+        TestData data = new TestData("test", 123);
         String topic = "test-topic";
-        String message = null;
-        doThrow(new IllegalArgumentException("Message cannot be null")).when(producer).push(topic, message);
+        String json = "{\"name\":\"test\",\"value\":123}";
 
-        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
-            producer.push(topic, message);
+        when(objectMapper.writeValueAsString(data)).thenReturn(json);
+
+        // Act
+        producer.push(topic, data);
+
+        // Assert
+        verify(kafkaTemplate, times(1)).send(topic, json);
+    }
+
+    @Test
+    void testPush_exception() throws Exception {
+        // Arrange
+        TestData data = new TestData("error", 456);
+        String topic = "error-topic";
+
+        when(objectMapper.writeValueAsString(data)).thenThrow(new RuntimeException("Serialization failed"));
+
+        // Act & Assert
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () -> {
+            producer.push(topic, data);
         });
 
-        assertEquals("Message cannot be null", exception.getMessage());
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        assertTrue(exception.getReason().contains("Serialization failed"));
+
+        verify(kafkaTemplate, never()).send(any(), any());
     }
 }
