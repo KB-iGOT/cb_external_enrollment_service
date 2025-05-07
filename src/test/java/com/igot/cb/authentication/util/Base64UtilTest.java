@@ -36,4 +36,50 @@ public class Base64UtilTest {
         byte[] decoded = Base64Util.decode(encoded, 0);
         assertArrayEquals("Test".getBytes(StandardCharsets.UTF_8), decoded);
     }
+
+    @Test
+    public void testEncodeWithFlags() {
+        byte[] input = "Test with flags".getBytes(StandardCharsets.UTF_8);
+        String encoded = Base64Util.encodeToString(input, Base64Util.NO_PADDING);
+        assertEquals("VGVzdCB3aXRoIGZsYWdz", encoded.trim());
+
+        encoded = Base64Util.encodeToString(input, Base64Util.NO_WRAP);
+        assertEquals("VGVzdCB3aXRoIGZsYWdz", encoded.trim());
+
+        encoded = Base64Util.encodeToString(input, Base64Util.CRLF);
+        assertEquals("VGVzdCB3aXRoIGZsYWdz", encoded.trim());
+
+        encoded = Base64Util.encodeToString(input, Base64Util.URL_SAFE);
+        assertEquals("VGVzdCB3aXRoIGZsYWdz", encoded.trim());
+    }
+
+    @Test
+    public void testDecodeWithFlags() {
+        String encoded = "VGVzdCB3aXRoIGZsYWdz";
+        byte[] decoded = Base64Util.decode(encoded, Base64Util.NO_PADDING);
+        assertArrayEquals("Test with flags".getBytes(StandardCharsets.UTF_8), decoded);
+
+        decoded = Base64Util.decode(encoded, Base64Util.NO_WRAP);
+        assertArrayEquals("Test with flags".getBytes(StandardCharsets.UTF_8), decoded);
+
+        decoded = Base64Util.decode(encoded, Base64Util.CRLF);
+        assertArrayEquals("Test with flags".getBytes(StandardCharsets.UTF_8), decoded);
+
+        decoded = Base64Util.decode(encoded, Base64Util.URL_SAFE);
+        assertArrayEquals("Test with flags".getBytes(StandardCharsets.UTF_8), decoded);
+    }
+
+    @Test
+    public void testEncodeDecodeConsistency() {
+        byte[] input = "Consistency Test".getBytes(StandardCharsets.UTF_8);
+        String encoded = Base64Util.encodeToString(input, Base64Util.DEFAULT);
+        byte[] decoded = Base64Util.decode(encoded, Base64Util.DEFAULT);
+        assertArrayEquals(input, decoded);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testDecodeInvalidInput() {
+        String invalidEncoded = "Invalid===";
+        Base64Util.decode(invalidEncoded, Base64Util.DEFAULT);
+    }
 }
