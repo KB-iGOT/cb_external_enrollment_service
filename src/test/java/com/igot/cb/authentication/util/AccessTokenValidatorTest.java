@@ -1,4 +1,4 @@
-package com.igot.cb.authentication;
+package com.igot.cb.authentication.util;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,7 +10,7 @@ import com.igot.cb.authentication.util.AccessTokenValidator;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-class AuthenticationTest {
+class AccessTokenValidatorTest {
 
     @Mock
     private AccessTokenValidator accessTokenValidator;
