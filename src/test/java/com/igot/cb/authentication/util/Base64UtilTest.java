@@ -2,9 +2,12 @@ package com.igot.cb.authentication.util;
 
 import static org.junit.Assert.*;
 import org.junit.Test;
-import java.nio.charset.StandardCharsets;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-public class Base64UtilTest {
+import java.nio.charset.StandardCharsets;
+@ExtendWith(MockitoExtension.class)
+class Base64UtilTest {
 
     @Test
     public void testEncodeToString() {
