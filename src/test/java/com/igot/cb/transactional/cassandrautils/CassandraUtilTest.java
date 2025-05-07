@@ -260,7 +260,7 @@ class CassandraUtilTest {
             assertNotNull(columnsMapping);
             assertEquals(1, columnsMapping.size());
             assertFalse(columnsMapping.containsKey("id"));
-            assertEquals("id", columnsMapping.get("id"));
+            assertNull(columnsMapping.get("id"));
         }
     }
     
