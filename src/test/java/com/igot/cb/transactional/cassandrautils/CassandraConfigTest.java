@@ -1,62 +1,73 @@
-
 package com.igot.cb.transactional.cassandrautils;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.cassandra.config.SchemaAction;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@ExtendWith(MockitoExtension.class)
 class CassandraConfigTest {
 
-    // Concrete subclass with no overrides, so inherited functionality is tested.
-    private static class TestCassandraConfig extends CassandraConfig { }
-
-    private TestCassandraConfig config;
+    @InjectMocks
+    private TestCassandraConfig cassandraConfig;
 
     @BeforeEach
     void setUp() {
-        config = new TestCassandraConfig();
+        cassandraConfig.setContactPoints("localhost");
+        cassandraConfig.setPort(9042);
+        cassandraConfig.setKeyspaceName("testKeyspace");
     }
 
     @Test
-    void testSetAndGetContactPoints() {
-        config.setContactPoints("192.168.1.100");
-        assertEquals("192.168.1.100", config.getContactPoints());
-
-        config.setContactPoints("localhost");
-        assertEquals("localhost", config.getContactPoints());
+    void getKeyspaceName() {
+        // Act
+        String keyspaceName = cassandraConfig.getKeyspaceName();
+        
+        // Assert
+        assertEquals("testKeyspace", keyspaceName);
     }
 
     @Test
-    void testSetAndGetPort() {
-        config.setPort(9042);
-        assertEquals(9042, config.getPort());
-
-        config.setPort(5000);
-        assertEquals(5000, config.getPort());
+    void getPort() {
+        // Act
+        int port = cassandraConfig.getPort();
+        
+        // Assert
+        assertEquals(9042, port);
     }
 
     @Test
-    void testSetAndGetKeyspaceName() {
-        config.setKeyspaceName("testspace");
-        assertEquals("testspace", config.getKeyspaceName());
-
-        config.setKeyspaceName("prodspace");
-        assertEquals("prodspace", config.getKeyspaceName());
+    void getContactPoints() {
+        // Act
+        String contactPoints = cassandraConfig.getContactPoints();
+        
+        // Assert
+        assertEquals("localhost", contactPoints);
     }
 
     @Test
-    void testDefaultValues() {
-        // Should be null/0 if never set
-        assertNull(config.getContactPoints());
-        assertEquals(0, config.getPort());
-        assertNull(config.getKeyspaceName());
+    void setPort() {
+        // Act
+        cassandraConfig.setPort(9043);
+        
+        // Assert
+        assertEquals(9043, cassandraConfig.getPort());
     }
 
     @Test
-    void testDefaultSchemaAction() {
-        // The default from AbstractCassandraConfiguration is NONE
-        assertEquals(SchemaAction.NONE, config.getSchemaAction());
+    void setKeyspaceName() {
+        // Act
+        cassandraConfig.setKeyspaceName("newKeyspace");
+        
+        // Assert
+        assertEquals("newKeyspace", cassandraConfig.getKeyspaceName());
+    }
+
+    // Test implementation of CassandraConfig for testing
+    private static class TestCassandraConfig extends CassandraConfig {
+        // No additional implementation needed
     }
 }

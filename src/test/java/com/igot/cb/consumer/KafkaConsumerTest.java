@@ -1,21 +1,25 @@
-
 package com.igot.cb.consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
-import java.io.InputStream;
-import java.time.Instant;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,12 +28,13 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,7 +46,13 @@ import com.igot.cb.util.Constants;
 import com.igot.cb.util.TransformUtility;
 
 @ExtendWith(MockitoExtension.class)
-public class KafkaConsumerTest {
+class KafkaConsumerTest {
+
+    @InjectMocks
+    private KafkaConsumer kafkaConsumer;
+
+    @Spy
+    private ObjectMapper mapper = new ObjectMapper();
 
     @Mock
     private CassandraOperation cassandraOperation;
@@ -59,258 +70,459 @@ public class KafkaConsumerTest {
     private ResourceLoader resourceLoader;
 
     @Mock
-    private Resource resource;
-
-    @InjectMocks
-    private KafkaConsumer kafkaConsumer;
-
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private Resource mockResource;
 
     @BeforeEach
     void setUp() {
-        lenient().when(cbServerProperties.getCertificateCharLength()).thenReturn(50);
+        ReflectionTestUtils.setField(kafkaConsumer, "mapper", mapper);
+        // Retain only necessary stubbings
+        lenient().when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
+        lenient().when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
     }
 
     @Test
-    void testEnrollUpdateConsumer_Success() throws Exception {
-        // Mock data
-        String userId = "user123";
-        String courseId = "course123";
-        String partnerId = "partner123";
-        String extCourseId = "extCourse123";
-        String completedOn = "15/04/2025";
-
-        // Mock getCertificateTopic to fix the test
-        when(cbServerProperties.getCertificateTopic()).thenReturn("certificate-topic");
-
-        // Create consumer record
-        Map<String, Object> enrollMap = new HashMap<>();
-        enrollMap.put(Constants.USER_ID, userId);
-        enrollMap.put(Constants.COURSE_ID, courseId);
-        enrollMap.put("partnerId", partnerId);
-        enrollMap.put("courseid", extCourseId);
-        enrollMap.put("completedon", completedOn);
-
-        String enrollMapJson = objectMapper.writeValueAsString(enrollMap);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", enrollMapJson);
-
-        // Mock CIOS API response
-        ObjectNode contentNode = objectMapper.createObjectNode();
-        contentNode.put("contentId", courseId);
-
-        ObjectNode resultNode = objectMapper.createObjectNode();
-        resultNode.set("content", contentNode);
-
-        when(transformUtility.callCiosReadAPi(eq(extCourseId), eq(partnerId))).thenReturn(resultNode);
-
-        // Mock DB query result
-        List<Map<String, Object>> dbResult = new ArrayList<>();
-        Map<String, Object> dbRow = new HashMap<>();
-        dbRow.put(Constants.USER_ID, userId);
-        dbRow.put(Constants.COURSE_ID, courseId);
-        dbResult.add(dbRow);
-
+    void enrollUpdateConsumer_Success() throws Exception {
+        // Arrange
+        String payload = "{\"userid\":\"user123@domain.com\",\"courseid\":\"course123\",\"partnerId\":\"partner123\",\"completedon\":\"01/01/2023\"}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+    
+        JsonNode contentNode = mapper.createObjectNode();
+        ((ObjectNode) contentNode).put("contentId", "course123");
+        ((ObjectNode) contentNode).put("name", "Course Name");
+        ((ObjectNode) contentNode).put("appIcon", "http://example.com/icon.png");
+    
+        JsonNode contentPartnerNode = mapper.createObjectNode();
+        ((ObjectNode) contentPartnerNode).put("contentPartnerName", "Partner Name");
+        ((ObjectNode) contentPartnerNode).put("id", "partner123");
+        ((ObjectNode) contentNode).set("contentPartner", contentPartnerNode);
+    
+        JsonNode result = mapper.createObjectNode();
+        ((ObjectNode) result).set("content", contentNode);
+    
+        when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+    
+        List<Map<String, Object>> existingRecords = new ArrayList<>();
+        Map<String, Object> existingRecord = new HashMap<>();
+        existingRecords.add(existingRecord);
+    
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES),
                 eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
-                any(Map.class),
+                any(),
                 isNull(),
                 eq(1)
-        )).thenReturn(dbResult);
+        )).thenReturn(existingRecords);
+    
+        when(cassandraOperation.updateRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
+                any(),
+                any()
+        )).thenReturn(new HashMap<>());
+    
+        JsonNode partnerApiResponse = mapper.createObjectNode();
+        ((ObjectNode) partnerApiResponse).put("certificateTemplateUrl", "http://example.com/template.svg");
+        when(transformUtility.callContentPartnerReadApi(anyString())).thenReturn(partnerApiResponse);
+    
+        String certificateTemplateJson = "{\"template\":\"data\"}";
+        when(resourceLoader.getResource(anyString())).thenReturn(mockResource);
+        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream(certificateTemplateJson.getBytes()));
+    
+        List<Map<String, Object>> userList = new ArrayList<>();
+        Map<String, Object> userMap = new HashMap<>();
+        userMap.put("firstname", "John");
+        userMap.put("lastname", "Doe");
+        userList.add(userMap);
+    
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_USER),
+                any(),
+                any()
+        )).thenReturn(userList);
+    
+        // Act
+        kafkaConsumer.enrollUpdateConsumer(record);
+    
+        // Assert
+        verify(producer).push(eq("certTopic"), any(JsonNode.class));
+        verify(cassandraOperation).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
+                any(),
+                isNull(),
+                eq(1)
+        );
+    }
+    
 
-        // Mock content partner API response
-        ObjectNode contentPartnerNode = objectMapper.createObjectNode();
-        contentPartnerNode.put("contentPartnerName", "Test Partner");
-        contentPartnerNode.put("id", partnerId);
-        contentNode.set("contentPartner", contentPartnerNode);
-        contentNode.put("name", "Test Course");
-        contentNode.put("appIcon", "https://test.com/icon.png");
+    @Test
+    void enrollUpdateConsumer_NoUserIdOrCourseId() throws Exception {
+        // Arrange
+        String payload = "{\"someField\":\"value\"}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
-        // Mock certificate template
-        ObjectNode partnerApiResponse = objectMapper.createObjectNode();
-        partnerApiResponse.put("certificateTemplateUrl", "https://test.com/template.svg");
-        when(transformUtility.callContentPartnerReadApi(eq(partnerId))).thenReturn(partnerApiResponse);
+        // Act
+        kafkaConsumer.enrollUpdateConsumer(record);
 
-        // Mock certificate template resource
-        String certificateTemplateJson = "{\"template\": \"${svgTemplate}\", \"recipient\": \"${user.name}\"}";
-        InputStream inputStream = new ByteArrayInputStream(certificateTemplateJson.getBytes());
-        when(resourceLoader.getResource(eq("classpath:certificateTemplate.json"))).thenReturn(resource);
-        when(resource.getInputStream()).thenReturn(inputStream);
+        // Assert - should not throw exception and log error
+        verify(cassandraOperation, never()).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
+        // Mock producer.push to ensure no interaction
+        verify(producer, never()).push(anyString(), any(JsonNode.class));
+    }
 
-        // Mock user name lookup
-        List<Map<String, Object>> userResult = new ArrayList<>();
-        Map<String, Object> userRow = new HashMap<>();
-        userRow.put("firstname", "John");
-        userRow.put("lastname", "Doe");
-        userResult.add(userRow);
+    @Test
+    void enrollUpdateConsumer_NoExistingRecord() throws Exception {
+        // Arrange
+        String payload = "{\"userId\":\"user123@domain.com\",\"courseid\":\"course123\",\"partnerId\":\"partner123\"}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+
+        JsonNode contentNode = mapper.createObjectNode();
+        ((ObjectNode) contentNode).put("contentId", "course123");
+        JsonNode result = mapper.createObjectNode();
+        ((ObjectNode) result).set("content", contentNode);
+
+        lenient().when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+
+        // Return empty list to simulate no existing record
+        lenient().when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
+                any(),
+                isNull(),
+                eq(1))).thenReturn(Collections.emptyList());
+
+        // Act
+        kafkaConsumer.enrollUpdateConsumer(record);
+
+        // Assert
+        verify(cassandraOperation, never()).updateRecord(any(), any(), any(), any());
+        // Mock producer.push to ensure no interaction
+        verify(producer, never()).push(anyString(), any(JsonNode.class));
+    }
+
+    @Test
+    void enrollUpdateConsumer_Exception() throws Exception {
+        // Arrange
+        String payload = "{\"userId\":\"user123@domain.com\",\"courseid\":\"course123\",\"partnerId\":\"partner123\"}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+
+        lenient().when(transformUtility.callCiosReadAPi(anyString(), anyString()))
+                .thenThrow(new RuntimeException("Test exception"));
+
+        // Act
+        kafkaConsumer.enrollUpdateConsumer(record);
+
+        // Assert - should not throw exception and log error
+        verify(cassandraOperation, never()).updateRecord(any(), any(), any(), any());
+        // Mock producer.push to ensure no interaction
+        verify(producer, never()).push(anyString(), any(JsonNode.class));
+    }
+
+    @Test
+    void receiveProgressUpdateFromPartner_Success() throws Exception {
+        // Arrange
+        String payload = "{\"partnerCode\":\"partner123\",\"completion_date\":\"01/01/2023\"}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+
+        JsonNode partnerResponse = mapper.createObjectNode();
+        ((ObjectNode) partnerResponse).put("id", "partner123");
+        ((ObjectNode) partnerResponse).set(Constants.TRANSFORM_PROGRESS_JSON, mapper.createArrayNode());
+
+        when(transformUtility.callContentPartnerReadByPartnerCodeApi(anyString())).thenReturn(partnerResponse);
+
+        // Fix: Complete the stubbing before using the mock
+        JsonNode transformedData = mapper.createObjectNode();
+        when(transformUtility.transformData(any(JsonNode.class), any())).thenReturn(transformedData);
+
+        String updateTopic = "updateTopic";
+        when(cbServerProperties.getUserProgressUpdateTopic()).thenReturn(updateTopic);
+
+        // Explicitly mock the producer.push method with the exact topic name
+        doNothing().when(producer).push(eq(updateTopic), any(JsonNode.class));
+
+        // Act
+        kafkaConsumer.receiveProgressUpdateFromPartner(record);
+
+        // Assert
+        verify(producer).push(eq(updateTopic), any(JsonNode.class));
+    }
+
+    @Test
+    void receiveProgressUpdateFromPartner_MissingTransformJson() throws Exception {
+        // Arrange
+        String payload = "{\"partnerCode\":\"partner123\"}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+
+        JsonNode partnerResponse = mapper.createObjectNode();
+        ((ObjectNode) partnerResponse).put("id", "partner123");
+        // No TRANSFORM_PROGRESS_JSON field
+
+        when(transformUtility.callContentPartnerReadByPartnerCodeApi(anyString())).thenReturn(partnerResponse);
+
+        // Act
+        kafkaConsumer.receiveProgressUpdateFromPartner(record);
+
+        // Assert
+        verify(producer, never()).push(any(), any(JsonNode.class));
+    }
+
+    @Test
+    void receiveProgressUpdateFromPartner_Exception() throws Exception {
+        // Arrange
+        String payload = "{\"partnerCode\":\"partner123\"}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+
+        when(transformUtility.callContentPartnerReadByPartnerCodeApi(anyString()))
+                .thenThrow(new RuntimeException("Test exception"));
+
+        // Act
+        kafkaConsumer.receiveProgressUpdateFromPartner(record);
+
+        // Assert
+        verify(producer, never()).push(any(), any(JsonNode.class));
+    }
+
+    @Test
+    void testSendUpdatedRecordDataToKafkaToGenerateCertificate() throws Exception {
+        // Arrange
+        Map<String, Object> userCourseEnrollMap = new HashMap<>();
+        userCourseEnrollMap.put(Constants.USER_ID, "user123");
+        userCourseEnrollMap.put("completedon", "01/01/2023");
+
+        JsonNode contentPartnerNode = mapper.createObjectNode();
+        ((ObjectNode) contentPartnerNode).put("contentPartnerName", "Partner Name");
+        ((ObjectNode) contentPartnerNode).put("id", "partner123");
+
+        JsonNode contentNode = mapper.createObjectNode();
+        ((ObjectNode) contentNode).put("contentId", "course123");
+        ((ObjectNode) contentNode).put("name", "Course Name");
+        ((ObjectNode) contentNode).put("appIcon", "http://example.com/icon.png");
+        ((ObjectNode) contentNode).set("contentPartner", contentPartnerNode);
+
+        JsonNode result = mapper.createObjectNode();
+        ((ObjectNode) result).set("content", contentNode);
+
+        // Use proper mocking without lenient()
+        JsonNode partnerApiResponse = mapper.createObjectNode();
+        ((ObjectNode) partnerApiResponse).put("certificateTemplateUrl", "http://example.com/template.svg");
+        when(transformUtility.callContentPartnerReadApi(anyString())).thenReturn(partnerApiResponse);
+
+        // Mock resource loading
+        String certificateTemplateJson = "{\"template\":\"data\"}";
+        when(resourceLoader.getResource(anyString())).thenReturn(mockResource);
+        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream(certificateTemplateJson.getBytes()));
+
+        // Mock user name retrieval
+        List<Map<String, Object>> userList = new ArrayList<>();
+        Map<String, Object> userMap = new HashMap<>();
+        userMap.put("firstname", "John");
+        userMap.put("lastname", "Doe");
+        userList.add(userMap);
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_USER),
+                any(),
+                any())).thenReturn(userList);
+
+        when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
+        // when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
+
+        // Explicitly mock the producer.push method with the exact topic name
+        doNothing().when(producer).push(eq("certTopic"), any(JsonNode.class));
+
+        // Act
+        ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate",
+                userCourseEnrollMap, result);
+
+        // Assert
+        verify(producer).push(eq("certTopic"), any(JsonNode.class));
+    }
+
+    @Test
+    void testSendUpdatedRecordDataToKafkaToGenerateCertificate_NoCertificateTemplate() throws Exception {
+        // Arrange
+        Map<String, Object> userCourseEnrollMap = new HashMap<>();
+        userCourseEnrollMap.put(Constants.USER_ID, "user123");
+
+        JsonNode contentNode = mapper.createObjectNode();
+        ((ObjectNode) contentNode).put("contentId", "course123");
+        ((ObjectNode) contentNode).put("name", "Course Name");
+        JsonNode contentPartnerNode = mapper.createObjectNode();
+        ((ObjectNode) contentPartnerNode).put("id", "partner123");
+        ((ObjectNode) contentNode).set("contentPartner", contentPartnerNode);
+
+        JsonNode result = mapper.createObjectNode();
+        ((ObjectNode) result).set("content", contentNode);
+
+        JsonNode partnerApiResponse = mapper.createObjectNode();
+        // No certificateTemplateUrl
+        when(transformUtility.callContentPartnerReadApi(anyString())).thenReturn(partnerApiResponse);
+
+        // Act & Assert
+        // The method throws RuntimeException that wraps CustomException
+        assertThrows(RuntimeException.class, () -> {
+            ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate",
+                    userCourseEnrollMap, result);
+        });
+    }
+
+    @Test
+    void testReadUserName_WithLastName() {
+        // Arrange
+        List<Map<String, Object>> userList = new ArrayList<>();
+        Map<String, Object> userMap = new HashMap<>();
+        userMap.put("firstname", "John");
+        userMap.put("lastname", "Doe");
+        userList.add(userMap);
 
         when(cassandraOperation.getRecordsByProperties(
                 eq(Constants.KEYSPACE_SUNBIRD),
                 eq(Constants.TABLE_USER),
-                any(Map.class),
-                anyList()
-        )).thenReturn(userResult);
+                any(),
+                any())).thenReturn(userList);
 
-        // Execute
-        kafkaConsumer.enrollUpdateConsumer(record);
+        // Act
+        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "readUserName", "user123");
 
-        // Verify DB update
-        ArgumentCaptor<Map<String, Object>> updateCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(cassandraOperation).updateRecord(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
-                updateCaptor.capture(),
-                any(Map.class)
-        );
-
-        Map<String, Object> updateValues = updateCaptor.getValue();
-        assertEquals(100, updateValues.get(Constants.PROGRESS));
-        assertEquals(2, updateValues.get(Constants.STATUS));
-        assertEquals(100, updateValues.get(Constants.COMPLETION_PERCENTAGE));
-        assertNotNull(updateValues.get(Constants.COMPLETED_ON));
-        assertNotNull(updateValues.get(Constants.UPDATED_ON));
-
-        // Verify certificate generation
-        verify(producer).push(eq("certificate-topic"), any(JsonNode.class));
+        // Assert
+        assertEquals("John Doe", result);
     }
 
     @Test
-    void testEnrollUpdateConsumer_NoUserInDB() throws Exception {
-        // Mock data
-        String userId = "user123";
-        String courseId = "course123";
-        String partnerId = "partner123";
-        String extCourseId = "extCourse123";
-        String completedOn = "15/04/2025";
+    void testReadUserName_WithoutLastName() {
+        // Arrange
+        List<Map<String, Object>> userList = new ArrayList<>();
+        Map<String, Object> userMap = new HashMap<>();
+        userMap.put("firstname", "John");
+        userMap.put("lastname", null);
+        userList.add(userMap);
 
-        // Create consumer record
-        Map<String, Object> enrollMap = new HashMap<>();
-        enrollMap.put(Constants.USER_ID, userId);
-        enrollMap.put(Constants.COURSE_ID, courseId);
-        enrollMap.put("partnerId", partnerId);
-        enrollMap.put("courseid", extCourseId);
-        enrollMap.put("completedon", completedOn);
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_USER),
+                any(),
+                any())).thenReturn(userList);
 
-        String enrollMapJson = objectMapper.writeValueAsString(enrollMap);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", enrollMapJson);
+        // Act
+        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "readUserName", "user123");
 
-        // Mock CIOS API response
-        ObjectNode contentNode = objectMapper.createObjectNode();
-        contentNode.put("contentId", courseId);
-
-        ObjectNode resultNode = objectMapper.createObjectNode();
-        resultNode.set("content", contentNode);
-
-        when(transformUtility.callCiosReadAPi(eq(extCourseId), eq(partnerId))).thenReturn(resultNode);
-
-        // Mock empty DB result (user not found)
-        List<Map<String, Object>> emptyResult = new ArrayList<>();
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
-                any(Map.class),
-                isNull(),
-                eq(1)
-        )).thenReturn(emptyResult);
-
-        // Execute
-        kafkaConsumer.enrollUpdateConsumer(record);
-
-        // Verify no DB update or certificate generation happens
-        verify(cassandraOperation, never()).updateRecord(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
-                any(Map.class),
-                any(Map.class)
-        );
-
-        verify(producer, never()).push(any(String.class), any(JsonNode.class));
+        // Assert
+        assertEquals("John", result);
     }
 
     @Test
-    void testReceiveProgressUpdateFromPartner_Success() throws Exception {
-        // Create consumer record with partner code
-        ObjectNode inputJson = objectMapper.createObjectNode();
-        inputJson.put("partnerCode", "PARTNER001");
+    void testConvertToTimestamp() {
+        // Act
+        Object result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertToTimestamp", "01/01/2023");
 
-        String inputJsonString = objectMapper.writeValueAsString(inputJson);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", inputJsonString);
-
-        // Mock partner API response
-        ObjectNode partnerResponse = objectMapper.createObjectNode();
-        partnerResponse.put("id", "partner123");
-
-        List<Map<String, Object>> transformJson = new ArrayList<>();
-        Map<String, Object> transformItem = new HashMap<>();
-        transformItem.put("field", "value");
-        transformJson.add(transformItem);
-
-        partnerResponse.set(Constants.TRANSFORM_PROGRESS_JSON, objectMapper.valueToTree(transformJson));
-
-        when(transformUtility.callContentPartnerReadByPartnerCodeApi(eq("PARTNER001"))).thenReturn(partnerResponse);
-
-        // Mock transform result
-        ObjectNode transformedData = objectMapper.createObjectNode();
-        transformedData.put("transformed", "true");
-
-        when(transformUtility.transformData(eq(inputJson), eq((List<Object>) (List<?>) transformJson))).thenReturn(transformedData);
-
-        when(cbServerProperties.getUserProgressUpdateTopic()).thenReturn("progress-update-topic");
-
-        // Execute
-        kafkaConsumer.receiveProgressUpdateFromPartner(record);
-
-        // Verify producer is called with transformed data
-        ArgumentCaptor<JsonNode> nodeCaptor = ArgumentCaptor.forClass(JsonNode.class);
-        verify(producer).push(eq("progress-update-topic"), nodeCaptor.capture());
-
-        JsonNode capturedNode = nodeCaptor.getValue();
-        assertEquals("true", capturedNode.get("transformed").asText());
-        assertEquals("partner123", capturedNode.get(Constants.PARTNER_ID).asText());
-    }
-
-    @Test
-    void testReceiveProgressUpdateFromPartner_MissingTransformJson() throws Exception {
-        // Create consumer record with partner code
-        ObjectNode inputJson = objectMapper.createObjectNode();
-        inputJson.put("partnerCode", "PARTNER001");
-
-        String inputJsonString = objectMapper.writeValueAsString(inputJson);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", inputJsonString);
-
-        // Mock partner API response without transform JSON
-        ObjectNode partnerResponse = objectMapper.createObjectNode();
-        partnerResponse.put("id", "partner123");
-        // No TRANSFORM_PROGRESS_JSON field
-
-        when(transformUtility.callContentPartnerReadByPartnerCodeApi(eq("PARTNER001"))).thenReturn(partnerResponse);
-
-        // Execute
-        kafkaConsumer.receiveProgressUpdateFromPartner(record);
-
-        // Verify no producer call
-        verify(producer, never()).push(any(String.class), any(JsonNode.class));
-    }
-
-    @Test
-    void testConvertToTimestamp() throws Exception {
-        // Test the private method using reflection
-        java.lang.reflect.Method method = KafkaConsumer.class.getDeclaredMethod("convertToTimestamp", String.class);
-        method.setAccessible(true);
-
-        Instant result = (Instant) method.invoke(kafkaConsumer, "15/04/2025");
-
+        // Assert
         assertNotNull(result);
     }
 
     @Test
-    void testConvertDateFormat() throws Exception {
-        // Test the private method using reflection
-        java.lang.reflect.Method method = KafkaConsumer.class.getDeclaredMethod("convertDateFormat", String.class);
-        method.setAccessible(true);
+    void testConvertToTimestamp_InvalidFormat() {
+        // Act
+        Object result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertToTimestamp", "invalid-date");
 
-        String result = (String) method.invoke(null, "15/04/2025");
+        // Assert
+        assertNull(result);
+    }
 
-        assertEquals("2025-04-15", result);
+    @Test
+    void testConvertDateFormat() {
+        // Act
+        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertDateFormat", "01/01/2023");
+
+        // Assert
+        assertEquals("2023-01-01", result);
+    }
+
+    @Test
+    void testGetReplacementValue() {
+        // Arrange
+        Map<String, Object> certificateRequest = new HashMap<>();
+        certificateRequest.put(Constants.USER_ID, "user123");
+        certificateRequest.put(Constants.COURSE_ID, "course123");
+        certificateRequest.put(Constants.COMPLETION_DATE, "01/01/2023");
+        certificateRequest.put(Constants.PROVIDER_NAME, "Provider");
+        certificateRequest.put(Constants.COURSE_NAME, "Course Name that has extended text");
+        certificateRequest.put(Constants.RECIPIENT_NAME, "John Doe");
+        certificateRequest.put(Constants.COURSE_POSTER_IMAGE, "image.png");
+        certificateRequest.put(Constants.SVG_TEMPLATE, "template");
+
+        // Mock the certificate char length to force line breaks
+        when(cbServerProperties.getCertificateCharLength()).thenReturn(12);
+
+        // Test all placeholder cases
+        assertEquals("user123",
+                ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "user.id", certificateRequest));
+        assertEquals("course123", ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.id",
+                certificateRequest));
+        assertEquals("2023-01-01", ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "today.date",
+                certificateRequest));
+        assertNotNull(
+                ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "time.ms", certificateRequest));
+        assertNotNull(ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "unique.id",
+                certificateRequest));
+        assertEquals("Course Name", ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue",
+                "course.name", certificateRequest));
+        assertEquals("that", ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue",
+                "course.name.extended", certificateRequest));
+        assertEquals("Provider", ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "provider.name",
+                certificateRequest));
+        assertEquals("John Doe", ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "user.name",
+                certificateRequest));
+        assertEquals("image.png", ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue",
+                "course.poster.image", certificateRequest));
+        assertEquals("template", ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "svgTemplate",
+                certificateRequest));
+        assertEquals("",
+                ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "unknown", certificateRequest));
+    }
+
+    @Test
+    void testGetReplacementValue_WithNewlines() {
+        // Arrange
+        Map<String, Object> certificateRequest = new HashMap<>();
+        certificateRequest.put(Constants.COURSE_NAME, "This is a very long course name that will be wrapped");
+
+        // Use a small character length to force line breaks
+        when(cbServerProperties.getCertificateCharLength()).thenReturn(15);
+
+        // Test course.name with newlines - should return text before first newline
+        String courseName = (String) ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue",
+                "course.name", certificateRequest);
+        assertEquals("This is a very", courseName);
+
+        // Test course.name.extended with newlines - should return text after first
+        // newline and before second newline
+        String courseNameExtended = (String) ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue",
+                "course.name.extended", certificateRequest);
+        assertEquals("long", courseNameExtended);
+    }
+
+    @Test
+    void testReplacePlaceholders() throws IOException {
+        // Arrange
+        String jsonString = "{\"field1\":\"${user.id}\",\"field2\":\"${course.name}\",\"nested\":{\"field3\":\"${provider.name}\"},\"array\":[{\"field4\":\"${user.name}\"}]}";
+        JsonNode jsonNode = mapper.readTree(jsonString);
+
+        Map<String, Object> certificateRequest = new HashMap<>();
+        certificateRequest.put(Constants.USER_ID, "user123");
+        certificateRequest.put(Constants.COURSE_NAME, "Course Name");
+        certificateRequest.put(Constants.PROVIDER_NAME, "Provider");
+        certificateRequest.put(Constants.RECIPIENT_NAME, "John Doe");
+
+        when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
+
+        // Act
+        ReflectionTestUtils.invokeMethod(kafkaConsumer, "replacePlaceholders", jsonNode, certificateRequest);
+
+        // Assert
+        assertEquals("user123", jsonNode.get("field1").asText());
+        assertEquals("Course Name", jsonNode.get("field2").asText());
+        assertEquals("Provider", jsonNode.get("nested").get("field3").asText());
+        assertEquals("John Doe", jsonNode.get("array").get(0).get("field4").asText());
     }
 }

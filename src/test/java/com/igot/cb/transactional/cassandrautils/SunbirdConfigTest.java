@@ -1,98 +1,92 @@
+package com.igot.cb.transactional.cassandrautils;
 
-// package com.igot.cb.transactional.cassandrautils;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
 
-// import com.datastax.oss.driver.api.core.CqlSession;
-// import org.junit.jupiter.api.BeforeEach;
-// import org.junit.jupiter.api.Test;
-// import org.junit.jupiter.api.extension.ExtendWith;
-// import org.mockito.Mockito;
-// import org.springframework.data.cassandra.core.CassandraAdminTemplate;
-// import org.springframework.data.cassandra.core.convert.CassandraConverter;
-// import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.cassandra.core.CassandraAdminTemplate;
+import org.springframework.data.cassandra.core.convert.CassandraConverter;
+import org.springframework.data.cassandra.core.mapping.CassandraMappingContext;
+import org.springframework.data.projection.SpelAwareProxyProjectionFactory;
+import org.springframework.test.util.ReflectionTestUtils;
 
-// import java.lang.reflect.Field;
+import com.datastax.oss.driver.api.core.CqlSession;
 
-// import static org.junit.jupiter.api.Assertions.*;
-// import static org.mockito.Mockito.*;
+@ExtendWith(MockitoExtension.class)
+class SunbirdConfigTest {
 
-// @ExtendWith(SpringExtension.class)
-// class SunbirdConfigTest {
+    @InjectMocks
+    private SunbirdConfig sunbirdConfig;
 
-//     private SunbirdConfig sunbirdConfig;
+    @Mock
+    private CqlSession mockSession;
 
-//     @BeforeEach
-//     void setUp() {
-//         sunbirdConfig = Mockito.spy(new SunbirdConfig());
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(sunbirdConfig, "contactPoints", "localhost");
+        ReflectionTestUtils.setField(sunbirdConfig, "port", 9042);
+        ReflectionTestUtils.setField(sunbirdConfig, "keyspaceName", "sunbird");
+        ReflectionTestUtils.setField(sunbirdConfig, "sunbirdUser", "user");
+        ReflectionTestUtils.setField(sunbirdConfig, "sunbirdPassword", "password");
+    }
 
-//         // Inject property values using reflection (since @Value will not inject in a plain unit test)
-//         setPrivateField(sunbirdConfig, "sunbirdUser", "user1");
-//         setPrivateField(sunbirdConfig, "sunbirdPassword", "pass1");
+    @Test
+    void cassandraTemplate() {
+        // Arrange
+        SunbirdConfig spyConfig = spy(sunbirdConfig);
 
-//         // Mock inherited/getter methods for config
-//         doReturn("localhost,127.0.0.1").when(sunbirdConfig).getContactPoints();
-//         doReturn(9042).when(sunbirdConfig).getPort();
-//         doReturn("datacenter1").when(sunbirdConfig).getLocalDataCenter();
-//         doReturn("keyspace1").when(sunbirdConfig).getKeyspaceName();
-//     }
+        // Mock dependencies
+        CassandraConverter mockConverter = mock(CassandraConverter.class);
+        CassandraMappingContext mockMappingContext = mock(CassandraMappingContext.class);
+        SpelAwareProxyProjectionFactory mockProjectionFactory = new SpelAwareProxyProjectionFactory();
 
-//     // Utility to set private fields via reflection
-//     private void setPrivateField(Object object, String fieldName, Object value) {
-//         try {
-//             Field field = object.getClass().getDeclaredField(fieldName);
-//             field.setAccessible(true);
-//             field.set(object, value);
-//         } catch (Exception e) {
-//             throw new RuntimeException(e);
-//         }
-//     }
+        // Return the mocks when required
+        when(mockConverter.getMappingContext()).thenReturn(mockMappingContext);
+        when(mockConverter.getProjectionFactory()).thenReturn(mockProjectionFactory); // ✅ fix
 
-//     @Test
-//     void testCassandraTemplateBeanCreation() {
-//         // Arrange
-//         CqlSession mockSession = mock(CqlSession.class);
-//         CassandraConverter mockConverter = mock(CassandraConverter.class);
-//         doReturn(mockConverter).when(sunbirdConfig).cassandraConverter();
+        // Spy config to return our mocked converter
+        doReturn(mockConverter).when(spyConfig).cassandraConverter();
 
-//         // Act
-//         CassandraAdminTemplate template = sunbirdConfig.cassandraTemplate(mockSession);
+        // Act
+        CassandraAdminTemplate template = spyConfig.cassandraTemplate(mockSession);
 
-//         // Assert
-//         assertNotNull(template);
-//     }
+        // Assert
+        assertNotNull(template);
+    }
 
-//     @Test
-//     void testBeansAreAnnotated() throws Exception {
-//         assertTrue(sunbirdConfig.getClass().getMethod("cassandraTemplate", CqlSession.class)
-//                 .isAnnotationPresent(org.springframework.context.annotation.Bean.class));
-//         assertTrue(sunbirdConfig.getClass().getMethod("cqlSession")
-//                 .isAnnotationPresent(org.springframework.context.annotation.Bean.class));
-//     }
+    @Test
+    void getKeyspaceName() {
+        // Act
+        String keyspaceName = sunbirdConfig.getKeyspaceName();
 
-//     @Test
-//     void testCqlSessionBeanCreationWithAuthCredentials() {
-//         // This test can only partially execute without refactor or PowerMock, but we want to ensure that logic paths are covered
+        // Assert
+        assertEquals("sunbird", keyspaceName);
+    }
 
-//         // With populated username/password fields logic should enter the if block – but actual session creation with CqlSession.builder is not tested
-//         setPrivateField(sunbirdConfig, "sunbirdUser", "user1");
-//         setPrivateField(sunbirdConfig, "sunbirdPassword", "pass1");
+    @Test
+    void getPort() {
+        // Act
+        int port = sunbirdConfig.getPort();
 
-//         // call methods up to the build step; let any exception go as it's not a real integration test
-//         try {
-//             sunbirdConfig.cqlSession();
-//         } catch (Exception ignored) {
-//             // Expected since we are not connecting to a real Cassandra instance
-//         }
-//     }
+        // Assert
+        assertEquals(9042, port);
+    }
 
-//     @Test
-//     void testCqlSessionBeanCreationWithoutAuthCredentials() {
-//         setPrivateField(sunbirdConfig, "sunbirdUser", "");
-//         setPrivateField(sunbirdConfig, "sunbirdPassword", "");
+    @Test
+    void getContactPoints() {
+        // Act
+        String contactPoints = sunbirdConfig.getContactPoints();
 
-//         try {
-//             sunbirdConfig.cqlSession();
-//         } catch (Exception ignored) {
-//             // Expected since we are not connecting to a real Cassandra instance
-//         }
-//     }
-// }
+        // Assert
+        assertEquals("localhost", contactPoints);
+    }
+}
