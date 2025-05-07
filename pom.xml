@@ -301,9 +301,7 @@
                 <version>0.8.8</version>
                 <configuration>
                     <includes>
-                    <include>com/igot/cb/enrollment/service/impl/*</include>
-                    <include>com/igot/cb/enrollment/controller/*</include>
-                    <include>com/igot/cb/enrollment/repository/*</include>
+                    <include>com/igot/cb/**/*</include>
                     </includes>
                     <rules>
                         <rule>
