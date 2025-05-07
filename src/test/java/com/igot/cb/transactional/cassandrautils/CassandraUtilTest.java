@@ -101,7 +101,6 @@ class CassandraUtilTest {
         
         try (MockedStatic<CassandraPropertyReader> propertyReaderMockedStatic = Mockito.mockStatic(CassandraPropertyReader.class)) {
             propertyReaderMockedStatic.when(CassandraPropertyReader::getInstance).thenReturn(mockPropertyReader);
-            when(mockPropertyReader.readProperty("id")).thenReturn("userId");
             
             // Force the forEach to execute by mocking the behavior
             doAnswer(invocation -> {
@@ -173,7 +172,7 @@ class CassandraUtilTest {
         
         try (MockedStatic<CassandraPropertyReader> propertyReaderMockedStatic = Mockito.mockStatic(CassandraPropertyReader.class)) {
             propertyReaderMockedStatic.when(CassandraPropertyReader::getInstance).thenReturn(mockPropertyReader);
-            when(mockPropertyReader.readProperty("id")).thenReturn("userId");
+            lenient().when(mockPropertyReader.readProperty("id")).thenReturn("userId");
             
             // Force the forEach to execute by mocking the behavior
             doAnswer(invocation -> {
@@ -220,8 +219,6 @@ class CassandraUtilTest {
         
         try (MockedStatic<CassandraPropertyReader> propertyReaderMockedStatic = Mockito.mockStatic(CassandraPropertyReader.class)) {
             propertyReaderMockedStatic.when(CassandraPropertyReader::getInstance).thenReturn(mockPropertyReader);
-            when(mockPropertyReader.readProperty("id")).thenReturn("userId");
-            when(mockPropertyReader.readProperty("name")).thenReturn("userName");
             
             // Force the forEach to execute by mocking the behavior
             doAnswer(invocation -> {
@@ -264,7 +261,7 @@ class CassandraUtilTest {
         
         try (MockedStatic<CassandraPropertyReader> propertyReaderMockedStatic = Mockito.mockStatic(CassandraPropertyReader.class)) {
             propertyReaderMockedStatic.when(CassandraPropertyReader::getInstance).thenReturn(mockPropertyReader);
-            when(mockPropertyReader.readProperty("id")).thenReturn("userId");
+            lenient().when(mockPropertyReader.readProperty("id")).thenReturn("userId");
             
             // Force the forEach to execute by mocking the behavior
             doAnswer(invocation -> {
@@ -382,7 +379,7 @@ class CassandraUtilTest {
         
         try (MockedStatic<CassandraPropertyReader> propertyReaderMockedStatic = Mockito.mockStatic(CassandraPropertyReader.class)) {
             propertyReaderMockedStatic.when(CassandraPropertyReader::getInstance).thenReturn(mockPropertyReader);
-            when(mockPropertyReader.readProperty("id")).thenReturn("userId");
+            lenient().when(mockPropertyReader.readProperty("id")).thenReturn("userId");
             
             // Force the forEach to execute by mocking the behavior
             doAnswer(invocation -> {
@@ -429,7 +426,7 @@ class CassandraUtilTest {
         try (MockedStatic<CassandraPropertyReader> propertyReaderMockedStatic = Mockito.mockStatic(CassandraPropertyReader.class)) {
             propertyReaderMockedStatic.when(CassandraPropertyReader::getInstance).thenReturn(mockPropertyReader);
             // Make sure the property reader returns a non-null value
-            when(mockPropertyReader.readProperty("id")).thenReturn("userId");
+            lenient().when(mockPropertyReader.readProperty("id")).thenReturn("userId");
             
             // Force the forEach to execute by mocking the behavior
             doAnswer(invocation -> {
@@ -535,7 +532,7 @@ class CassandraUtilTest {
         try (MockedStatic<CassandraPropertyReader> propertyReaderMockedStatic = Mockito.mockStatic(CassandraPropertyReader.class)) {
             propertyReaderMockedStatic.when(CassandraPropertyReader::getInstance).thenReturn(mockPropertyReader);
             // Return a value with whitespace to test trim()
-            when(mockPropertyReader.readProperty("id")).thenReturn("  userId  ");
+            lenient().when(mockPropertyReader.readProperty("id")).thenReturn("  userId  ");
             
             // Force the forEach to execute by mocking the behavior
             doAnswer(invocation -> {
