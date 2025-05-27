@@ -5,6 +5,7 @@ import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import com.datastax.oss.driver.api.core.cql.ResultSet;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
+import com.datastax.oss.driver.api.querybuilder.select.Select;
 import com.igot.cb.util.ApiResponse;
 import com.igot.cb.util.Constants;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,7 +16,9 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.util.ReflectionUtils;
 
+import java.lang.reflect.Method;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -27,6 +30,8 @@ class CassandraOperationImplTest {
 
     @InjectMocks
     private CassandraOperationImpl cassandraOperation;
+
+    private CassandraOperationImpl cassandraOperationImpl;
 
     @Mock
     private CassandraConnectionManager connectionManager;
@@ -48,7 +53,7 @@ class CassandraOperationImplTest {
 
     @BeforeEach
     void setUp() {
-        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
+        cassandraOperationImpl = new CassandraOperationImpl();
     }
 
     @Test
@@ -57,7 +62,7 @@ class CassandraOperationImplTest {
         Map<String, Object> request = new HashMap<>();
         request.put("id", "123");
         request.put("name", "Test");
-
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         try (MockedStatic<CassandraUtil> cassandraUtilMockedStatic = Mockito.mockStatic(CassandraUtil.class)) {
             cassandraUtilMockedStatic.when(() -> CassandraUtil.getPreparedStatement(anyString(), anyString(), any()))
                     .thenReturn("INSERT INTO testKeyspace.testTable (id, name) VALUES (?, ?)");
@@ -89,7 +94,7 @@ class CassandraOperationImplTest {
         // Arrange
         Map<String, Object> request = new HashMap<>();
         request.put("id", "123");
-
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         try (MockedStatic<CassandraUtil> cassandraUtilMockedStatic = Mockito.mockStatic(CassandraUtil.class)) {
             cassandraUtilMockedStatic.when(() -> CassandraUtil.getPreparedStatement(anyString(), anyString(), any()))
                     .thenReturn("INSERT INTO testKeyspace.testTable (id) VALUES (?)");
@@ -114,6 +119,7 @@ class CassandraOperationImplTest {
         propertyMap.put("id", "123");
         List<String> fields = Arrays.asList("id", "name");
 
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         try (MockedStatic<CassandraUtil> cassandraUtilMockedStatic = Mockito.mockStatic(CassandraUtil.class)) {
             List<Map<String, Object>> expectedResponse = new ArrayList<>();
             Map<String, Object> record = new HashMap<>();
@@ -142,7 +148,7 @@ class CassandraOperationImplTest {
         // Arrange
         Map<String, Object> propertyMap = new HashMap<>();
         propertyMap.put("id", "123");
-
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         try (MockedStatic<CassandraUtil> cassandraUtilMockedStatic = Mockito.mockStatic(CassandraUtil.class)) {
             List<Map<String, Object>> expectedResponse = new ArrayList<>();
             Map<String, Object> record = new HashMap<>();
@@ -171,7 +177,7 @@ class CassandraOperationImplTest {
         // Arrange
         Map<String, Object> propertyMap = new HashMap<>();
         propertyMap.put("id", "123");
-
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         when(mockSession.execute(any(SimpleStatement.class))).thenThrow(new RuntimeException("Test exception"));
 
         // Act
@@ -188,7 +194,7 @@ class CassandraOperationImplTest {
         Map<String, Object> propertyMap = new HashMap<>();
         propertyMap.put("id", "123");
         List<String> fields = Arrays.asList("id", "name");
-
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         try (MockedStatic<CassandraUtil> cassandraUtilMockedStatic = Mockito.mockStatic(CassandraUtil.class)) {
             List<Map<String, Object>> expectedResponse = new ArrayList<>();
             Map<String, Object> record = new HashMap<>();
@@ -218,7 +224,7 @@ class CassandraOperationImplTest {
         Map<String, Object> propertyMap = new HashMap<>();
         propertyMap.put("id", "123");
         List<String> fields = Arrays.asList("id", "name");
-
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         when(mockSession.execute(any(SimpleStatement.class))).thenThrow(new RuntimeException("Test exception"));
 
         // Act
@@ -237,7 +243,7 @@ class CassandraOperationImplTest {
         
         Map<String, Object> compositeKey = new HashMap<>();
         compositeKey.put("id", "123");
-
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         when(mockSession.execute(any(SimpleStatement.class))).thenReturn(mockResultSet);
 
         // Act
@@ -256,12 +262,74 @@ class CassandraOperationImplTest {
         
         Map<String, Object> compositeKey = new HashMap<>();
         compositeKey.put("id", "123");
-
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
         when(mockSession.execute(any(SimpleStatement.class))).thenThrow(new RuntimeException("Test exception"));
 
         // Act & Assert
         assertThrows(RuntimeException.class, () -> {
             cassandraOperation.updateRecord(keyspaceName, tableName, updateAttributes, compositeKey);
         });
+    }
+
+    @Test
+    void testProcessQuery_AllFields_NoFilters() throws Exception {
+        Map<String, Object> propertyMap = new HashMap<>();
+        List<String> fields = null;
+
+        Method method = getProcessQueryMethod();
+        Select select = (Select) method.invoke(cassandraOperationImpl, "test_keyspace", "test_table", propertyMap, fields);
+
+        assertNotNull(select);
+        assertTrue(select.asCql().contains("SELECT * FROM test_keyspace.test_table"));
+    }
+
+    @Test
+    void testProcessQuery_SpecificFields_NoFilters() throws Exception {
+        Map<String, Object> propertyMap = new HashMap<>();
+        List<String> fields = Arrays.asList("id", "name");
+
+        Method method = getProcessQueryMethod();
+        Select select = (Select) method.invoke(cassandraOperationImpl, "ks1", "tbl1", propertyMap, fields);
+
+        assertNotNull(select);
+        String cql = select.asCql();
+        assertTrue(cql.contains("SELECT id,name FROM ks1.tbl1"));
+    }
+
+    @Test
+    void testProcessQuery_WithEqualFilter() throws Exception {
+        Map<String, Object> propertyMap = new HashMap<>();
+        propertyMap.put("status", "ACTIVE");
+        List<String> fields = Arrays.asList("id", "name");
+
+        Method method = getProcessQueryMethod();
+        Select select = (Select) method.invoke(cassandraOperationImpl, "ks2", "tbl2", propertyMap, fields);
+
+        String cql = select.asCql();
+        assertTrue(cql.contains("WHERE status='ACTIVE'"));
+    }
+
+    @Test
+    void testProcessQuery_WithInFilter() throws Exception {
+        Map<String, Object> propertyMap = new HashMap<>();
+        propertyMap.put("type", Arrays.asList("USER", "ADMIN"));
+        List<String> fields = Arrays.asList("id");
+
+        Method method = getProcessQueryMethod();
+        Select select = (Select) method.invoke(cassandraOperationImpl, "ks3", "tbl3", propertyMap, fields);
+
+        String cql = select.asCql();
+        assertTrue(cql.contains("WHERE type IN ('USER','ADMIN')"));
+    }
+
+    private Method getProcessQueryMethod() {
+        Method method = ReflectionUtils.findMethod(
+                CassandraOperationImpl.class,
+                "processQuery",
+                String.class, String.class, Map.class, List.class
+        );
+        assertNotNull(method);
+        method.setAccessible(true);
+        return method;
     }
 }

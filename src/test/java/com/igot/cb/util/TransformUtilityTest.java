@@ -2,6 +2,7 @@ package com.igot.cb.util;
 
 import com.bazaarvoice.jolt.Chainr;
 import com.bazaarvoice.jolt.JsonUtils;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -21,10 +22,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -287,5 +285,16 @@ class TransformUtilityTest {
         assertEquals(Constants.SUCCESS, response.getParams().getStatus());
         assertEquals(HttpStatus.OK, response.getResponseCode());
         assertNotNull(response.getTs());
+    }
+
+    @Test
+    void testTransformData_JsonProcessingException() throws Exception {
+        Object input = new Object(); // any dummy object
+        when(mapper.writeValueAsString(input)).thenThrow(new JsonProcessingException("Test exception") {});
+
+        JsonNode result = transformUtility.transformData(input, Collections.emptyList());
+
+        assertNull(result);
+        verify(mapper, times(1)).writeValueAsString(input);
     }
 }
