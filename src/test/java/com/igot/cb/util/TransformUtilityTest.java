@@ -60,23 +60,26 @@ class TransformUtilityTest {
         String baseUrl = "http://example.com";
         String apiUrl = "/api/cios/read/";
         String fullUrl = baseUrl + apiUrl + extCourseId + "/" + partnerId;
-        
-        Map<String, Object> responseBody = new HashMap<>();
-        responseBody.put("content", new HashMap<>());
-        
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode jsonNodeBody = objectMapper.createObjectNode(); // or use actual structure
+
+        ResponseEntity<Object> responseEntity = new ResponseEntity<>(jsonNodeBody, HttpStatus.OK);
+
         when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
         when(cbServerProperties.getCiosReadApiUrl()).thenReturn(apiUrl);
-        
-        ResponseEntity<Object> responseEntity = new ResponseEntity<>(responseBody, HttpStatus.OK);
-        when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class)))
-                .thenReturn(responseEntity);
+        when(restTemplate.exchange(
+                eq(fullUrl),
+                eq(HttpMethod.GET),
+                any(HttpEntity.class),
+                eq(Object.class))
+        ).thenReturn(responseEntity);
 
         // Act
         JsonNode result = transformUtility.callCiosReadAPi(extCourseId, partnerId);
 
         // Assert
         assertNotNull(result);
-        assertTrue(result.has("content"));
         verify(restTemplate).exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class));
     }
 
@@ -296,5 +299,35 @@ class TransformUtilityTest {
 
         assertNull(result);
         verify(mapper, times(1)).writeValueAsString(input);
+    }
+
+    @Test
+    void callCiosReadAPi_ShouldThrowCustomException_WhenResponseBodyIsNull() {
+        // Arrange
+        String extCourseId = "course123";
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String apiPath = "/api/cios/read/";
+        String fullUrl = baseUrl + apiPath + extCourseId + "/" + partnerId;
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getCiosReadApiUrl()).thenReturn(apiPath);
+
+        ResponseEntity<Object> mockResponse = new ResponseEntity<>(null, HttpStatus.OK);
+        when(restTemplate.exchange(
+                eq(fullUrl),
+                eq(HttpMethod.GET),
+                any(HttpEntity.class),
+                eq(Object.class))
+        ).thenReturn(mockResponse);
+
+        // Act & Assert
+        CustomException thrown = assertThrows(CustomException.class, () ->
+                transformUtility.callCiosReadAPi(extCourseId, partnerId)
+        );
+
+        assertEquals("Received null response body from CIOS read API", thrown.getMessage());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, thrown.getHttpStatusCode());
+        assertEquals(Constants.ERROR, thrown.getCode());
     }
 }

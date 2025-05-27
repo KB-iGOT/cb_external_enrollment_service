@@ -173,13 +173,18 @@ public class KafkaConsumer {
                 propertyMap,
                 fields
         );
-        String firstname = (String) userEnrollmentList.stream().findFirst().get().get("firstname");
-        String lastname = (String) userEnrollmentList.stream().findFirst().get().get("lastname");
-        String fullname = firstname;
-        if (lastname != null) {
-            fullname = fullname + " " + lastname;
+        Optional<Map<String, Object>> optionalUser = userEnrollmentList.stream().findFirst();
+        if (optionalUser.isPresent()) {
+            Map<String, Object> user = optionalUser.get();
+            String firstname = (String) user.get("firstname");
+            String lastname = (String) user.get("lastname");
+            String fullname = firstname;
+            if (lastname != null) {
+                fullname = fullname + " " + lastname;
+            }
+            return fullname;
         }
-        return fullname;
+        return null;
     }
 
 
