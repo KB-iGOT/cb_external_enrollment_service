@@ -44,12 +44,17 @@ public class TransformUtility {
                 Object.class
         );
         if (response.getStatusCode().is2xxSuccessful()) {
-            log.info("got successful response from cios read api by extCourseId and partnerId");
-            return mapper.valueToTree(response.getBody());
+            JsonNode jsonNode = (JsonNode) response.getBody();
+            if (jsonNode != null) {
+                return jsonNode.path("result");
+            } else {
+                log.error("CIOS read API returned null body");
+                throw new CustomException(Constants.ERROR, "Received null response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
         } else {
-            throw new RuntimeException("Failed to retrieve externalId. Status code: " + response.getStatusCodeValue());
+            throw new CustomException(Constants.ERROR, "Failed to retrieve externalId. Status code: "
+                    + response.getStatusCode(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
-
     }
 
     public JsonNode callContentPartnerReadApi(String partnerId) {
