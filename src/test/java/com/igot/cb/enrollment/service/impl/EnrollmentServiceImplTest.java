@@ -215,6 +215,25 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
+    @DisplayName("readByUserId: should return 400 when status is not provided")
+    void readByUserId_returns400WhenStatusNotProvided() {
+        String token = "jwt.token";
+        String userId = "XXXXX";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put(Constants.USER_ID, "user123");
+        // No status
+        searchRequest.put(Constants.REQUEST, requestBody);
+
+        SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("Request is not proper"));
+    }
+
+    @Test
     @DisplayName("readByUserId: should return error for empty request")
     void readByUserId_emptyRequest() {
         String token = "jwt.token";
@@ -418,6 +437,29 @@ class EnrollmentServiceImplTest {
 
         assertEquals(HttpStatus.OK, response.getResponseCode());
         assertNotNull(response.getResult());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseId: returns courseId is not matching")
+    void readByUserIdAndCourseId_ShouldReturnBadRequest() {
+        String token = "token";
+        String userId = "user1";
+        String courseId = "c1";
+        Map<String, Object> record = new HashMap<>();
+//        record.put("courseid", courseId);
+//        record.put("userid", userId);
+
+        List<Map<String, Object>> records = Collections.singletonList(record);
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), isNull(), eq(1)))
+                .thenReturn(records);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseId(courseId, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("courseId is not matching", response.getParams().getMsg());
     }
 
     @Test
