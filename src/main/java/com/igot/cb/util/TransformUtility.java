@@ -44,7 +44,8 @@ public class TransformUtility {
                 Object.class
         );
         if (response.getStatusCode().is2xxSuccessful()) {
-            JsonNode jsonNode = (JsonNode) response.getBody();
+            Object body = response.getBody();
+            JsonNode jsonNode = body == null ? null : (JsonNode) body;
             if (jsonNode != null) {
                 return jsonNode.path("result");
             } else {
