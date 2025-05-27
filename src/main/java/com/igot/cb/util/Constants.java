@@ -68,6 +68,8 @@ public class Constants {
     public static final String REQUEST = "request";
     public static final String LIMIT = "limit";
     public static final String LOCAL_DATACENTER = "spring.cassandra.local-datacenter";
+    public static final String PAYLOAD_VALIDATION_FILE_CONTENT_PROVIDER = "/payloadValidation/progressReportAdditionalPropertiesValidation.json";
+    public static final String ADDITIONAL_PROPERTIES = "additional_properties";
 
     private Constants() {
     }

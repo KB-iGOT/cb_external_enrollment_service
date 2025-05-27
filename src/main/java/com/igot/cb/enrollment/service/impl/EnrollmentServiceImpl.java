@@ -12,13 +12,14 @@ import com.igot.cb.enrollment.repository.CiosContentRepository;
 import com.igot.cb.enrollment.service.EnrollmentService;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
+import com.igot.cb.util.PayloadValidation;
 import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.*;
 import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 
-import java.sql.Timestamp;
+
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -35,6 +36,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+
 
 @Service
 @Slf4j
@@ -63,6 +65,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     @Autowired
     private Producer producer;
+
+    @Autowired
+    private PayloadValidation payloadValidation;
 
     private final Map<String, Integer> statusMap = CiosEnrolmentStatus.toMap();
 
@@ -120,6 +125,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                         instant);
                 userCourseEnrollMap.put("updatedon",
                         instant);
+                userCourseEnrollMap.put("additional_properties", objectMapper.writeValueAsString(new HashMap<>()));
                 cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD_COURSES,
                         Constants.TABLE_USER_EXTERNAL_ENROLMENTS, userCourseEnrollMap);
                 response.setResponseCode(HttpStatus.OK);
@@ -176,7 +182,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-            //List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
+
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put("userid", userId);
             List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
@@ -298,6 +304,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String formatedDate=updateDateFormatFromInputDate(inputDate);
             ((ObjectNode)jsonNode).put("completion_date",formatedDate);
             ((ObjectNode)jsonNode).put("partnerCode",partnercode);
+            JsonNode additionalProps = jsonNode.path("additionalProperties");
+            if (!additionalProps.isMissingNode() && !additionalProps.isNull()) {
+                payloadValidation.validatePayload(Constants.PAYLOAD_VALIDATION_FILE_CONTENT_PROVIDER, additionalProps);
+            }
             producer.push(cbServerProperties.getUserProgressSendFromPartner(), jsonNode);
             Map<String, Object> result = new HashMap<>();
             result.put("response", "Progress report sent successfully");

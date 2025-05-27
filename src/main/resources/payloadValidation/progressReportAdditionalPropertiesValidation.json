@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "assessmentScore": {
+      "type": "number"
+    },
+    "assessmentDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "batchName": {
+      "type": "string"
+    },
+    "batchId": {
+      "type": "string"
+    },
+    "KyFacilitator1Name": {
+      "type": "string"
+    },
+    "KyFacilitator2Name": {
+      "type": "string"
+    },
+    "batchLocation": {
+      "type": "string"
+    },
+    "KyFacilitator1MDO": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}
