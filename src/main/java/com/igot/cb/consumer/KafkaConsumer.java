@@ -81,6 +81,11 @@ public class KafkaConsumer {
                     updatedMap.put(Constants.COMPLETED_ON, convertToTimestamp((String) userCourseEnrollMap.get("completedon")));
                     updatedMap.put(Constants.COMPLETION_PERCENTAGE, 100);
                     updatedMap.put(Constants.UPDATED_ON, instant);
+                    if(userCourseEnrollMap.get(Constants.ADDITIONAL_PROPERTIES)!=null) {
+                        updatedMap.put(Constants.ADDITIONAL_PROPERTIES, mapper.writeValueAsString(userCourseEnrollMap.get("additional_properties")));
+                    } else {
+                        updatedMap.put(Constants.ADDITIONAL_PROPERTIES, mapper.writeValueAsString(new HashMap<>()));
+                    }
                     cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, updatedMap, propertyMap);
                     sendUpdatedRecordDataToKafkaToGenerateCertificate(userCourseEnrollMap, result);
                 } else {
@@ -108,6 +113,10 @@ public class KafkaConsumer {
                 });
                 JsonNode transformData = transformUtility.transformData(jsonNode, contentJson);
                 ((ObjectNode) transformData).put(Constants.PARTNER_ID, partnerid);
+                JsonNode additionalProps = jsonNode.path("additionalProperties");
+                if (!additionalProps.isMissingNode() && !additionalProps.isNull()) {
+                    ((ObjectNode) transformData).set("additional_properties", additionalProps);
+                }
                 producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
             } else {
                 log.error("Partner Transform progress json is missing in content partner db, please update");
