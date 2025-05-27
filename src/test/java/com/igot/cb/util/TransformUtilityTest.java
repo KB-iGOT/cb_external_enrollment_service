@@ -44,6 +44,8 @@ class TransformUtilityTest {
     private ObjectMapper mapper;
 
     private ObjectMapper realMapper = new ObjectMapper();
+    private static final String DUMMY_PARTNER_ID = "partnerId";
+    private static final String DUMMY_PARTNER_CODE = "partnerCode";
 
     @BeforeEach
     void setUp() {
@@ -330,4 +332,42 @@ class TransformUtilityTest {
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, thrown.getHttpStatusCode());
         assertEquals(Constants.ERROR, thrown.getCode());
     }
+
+    @Test
+    void testCallContentPartnerReadApi_whenResponseBodyIsNull_thenThrowCustomException() {
+        ResponseEntity<JsonNode> mockResponse = new ResponseEntity<>(null, HttpStatus.OK);
+
+        when(restTemplate.exchange(
+                anyString(),
+                eq(HttpMethod.GET),
+                any(HttpEntity.class),
+                eq(JsonNode.class))
+        ).thenReturn(mockResponse);
+
+        CustomException exception = assertThrows(CustomException.class,
+                () -> transformUtility.callContentPartnerReadApi(DUMMY_PARTNER_ID));
+
+        assertEquals("Invalid response body from CIOS read API", exception.getMessage());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getHttpStatusCode());
+    }
+
+    @Test
+    void testCallContentPartnerReadByPartnerCodeApi_whenResultMissing_thenThrowCustomException() {
+        JsonNode incompleteBody = mapper.createObjectNode(); // no "result" key
+        ResponseEntity<JsonNode> mockResponse = new ResponseEntity<>(incompleteBody, HttpStatus.OK);
+
+        when(restTemplate.exchange(
+                anyString(),
+                eq(HttpMethod.GET),
+                any(HttpEntity.class),
+                eq(JsonNode.class))
+        ).thenReturn(mockResponse);
+
+        CustomException exception = assertThrows(CustomException.class,
+                () -> transformUtility.callContentPartnerReadByPartnerCodeApi(DUMMY_PARTNER_CODE));
+
+        assertEquals("Invalid or null response body", exception.getMessage());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getHttpStatusCode());
+    }
+
 }
