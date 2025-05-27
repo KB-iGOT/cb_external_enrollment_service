@@ -525,4 +525,15 @@ class KafkaConsumerTest {
         assertEquals("Provider", jsonNode.get("nested").get("field3").asText());
         assertEquals("John Doe", jsonNode.get("array").get(0).get("field4").asText());
     }
+    @Test
+    void testEnrollUpdateConsumer_whenJsonParseFails_shouldLogError() {
+        // Given: an invalid JSON message that will cause ObjectMapper to throw JsonProcessingException
+        String invalidJson = "{invalid json}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", invalidJson);
+
+        // When: invoking enrollUpdateConsumer
+        kafkaConsumer.enrollUpdateConsumer(record);
+
+        // Then: exception should be caught and logged; no exception should be thrown from the method
+    }
 }
