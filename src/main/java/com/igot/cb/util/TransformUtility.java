@@ -45,9 +45,9 @@ public class TransformUtility {
         );
         if (response.getStatusCode().is2xxSuccessful()) {
             Object body = response.getBody();
-            JsonNode jsonNode = body == null ? null : (JsonNode) body;
+            JsonNode jsonNode = body == null ? null : mapper.valueToTree(body);
             if (jsonNode != null) {
-                return jsonNode.path("result");
+                return jsonNode;
             } else {
                 log.error("CIOS read API returned null body");
                 throw new CustomException(Constants.ERROR, "Received null response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
