@@ -44,12 +44,18 @@ public class TransformUtility {
                 Object.class
         );
         if (response.getStatusCode().is2xxSuccessful()) {
-            log.info("got successful response from cios read api by extCourseId and partnerId");
-            return mapper.valueToTree(response.getBody());
+            Object body = response.getBody();
+            JsonNode jsonNode = body == null ? null : mapper.valueToTree(body);
+            if (jsonNode != null) {
+                return jsonNode;
+            } else {
+                log.error("CIOS read API returned null body");
+                throw new CustomException(Constants.ERROR, "Received null response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
         } else {
-            throw new RuntimeException("Failed to retrieve externalId. Status code: " + response.getStatusCodeValue());
+            throw new CustomException(Constants.ERROR, "Failed to retrieve externalId. Status code: "
+                    + response.getStatusCode(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
-
     }
 
     public JsonNode callContentPartnerReadApi(String partnerId) {
@@ -66,10 +72,16 @@ public class TransformUtility {
                 JsonNode.class
         );
         if (response.getStatusCode().is2xxSuccessful()) {
-            JsonNode jsonNode = response.getBody();
-            return jsonNode.path("result");
+            JsonNode body = response.getBody();
+            if (body != null && body.has("result")) {
+                return body.path("result");
+            } else {
+                log.error("CIOS read API returned null or missing 'result' field");
+                throw new CustomException(Constants.ERROR, "Invalid response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
         } else {
-            throw new CustomException(Constants.ERROR,"Failed to retrieve externalId. Status code: " + response.getStatusCodeValue(),HttpStatus.BAD_REQUEST);
+            log.error("Failed to retrieve externalId. Status code: {}", response.getStatusCode());
+            throw new CustomException(Constants.ERROR, "Failed to retrieve externalId", HttpStatus.BAD_REQUEST);
         }
     }
 
@@ -88,10 +100,17 @@ public class TransformUtility {
         );
         if (response.getStatusCode().is2xxSuccessful()) {
             JsonNode jsonNode = response.getBody();
-            return jsonNode.path("result");
+            if (jsonNode != null && jsonNode.has("result")) {
+                return jsonNode.path("result");
+            } else {
+                log.error("Response body is null or missing 'result' field");
+                throw new CustomException(Constants.ERROR, "Invalid or null response body", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
         } else {
-            throw new CustomException(Constants.ERROR,"Failed to retrieve externalId. Status code: " + response.getStatusCodeValue(),HttpStatus.BAD_REQUEST);
+            log.error("Failed to retrieve externalId. Status code: {}", response.getStatusCode());
+            throw new CustomException(Constants.ERROR, "Failed to retrieve externalId", HttpStatus.BAD_REQUEST);
         }
+
     }
 
     public JsonNode transformData(Object jsonNode, List<Object> contentJson) {
