@@ -6,7 +6,7 @@
         "type": "string"
     },
     "assessment_score": {
-      "type": "number"
+      "type": "string"
     },
     "assessment_date": {
       "type": "string"
