@@ -414,10 +414,11 @@ class KafkaConsumerTest {
     @Test
     void testConvertToTimestamp() {
         // Act
-        Object result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertToTimestamp", "01/01/2023");
+        Object result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertToTimestamp", "2023-12-01T06:42:12.000Z");
 
         // Assert
         assertNotNull(result);
+
     }
 
     @Test
@@ -432,7 +433,7 @@ class KafkaConsumerTest {
     @Test
     void testConvertDateFormat() {
         // Act
-        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertDateFormat", "01/01/2023");
+        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertDateFormat", "2023-01-01T00:00:00Z");
 
         // Assert
         assertEquals("2023-01-01", result);
@@ -444,7 +445,7 @@ class KafkaConsumerTest {
         Map<String, Object> certificateRequest = new HashMap<>();
         certificateRequest.put(Constants.USER_ID, "user123");
         certificateRequest.put(Constants.COURSE_ID, "course123");
-        certificateRequest.put(Constants.COMPLETION_DATE, "01/01/2023");
+        certificateRequest.put(Constants.COMPLETION_DATE, "2023-01-01T00:00:00Z");
         certificateRequest.put(Constants.PROVIDER_NAME, "Provider");
         certificateRequest.put(Constants.COURSE_NAME, "Course Name that has extended text");
         certificateRequest.put(Constants.RECIPIENT_NAME, "John Doe");
