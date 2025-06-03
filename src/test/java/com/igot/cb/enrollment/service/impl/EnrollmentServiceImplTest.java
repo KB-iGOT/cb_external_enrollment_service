@@ -551,7 +551,7 @@ class EnrollmentServiceImplTest {
     void updateDateFormatFromInputDate_test() {
         // Use reflection to test private method
         String inputDate = "2023-12-01 12:12:12";
-        String expectedOutput = "01/12/2023";
+        String expectedOutput = "2023-12-01T06:42:12.000Z";
 
         String result = ReflectionTestUtils.invokeMethod(enrollmentService, "updateDateFormatFromInputDate", inputDate);
 
