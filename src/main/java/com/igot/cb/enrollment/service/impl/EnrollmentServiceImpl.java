@@ -320,7 +320,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         LocalDateTime localDateTime = LocalDateTime.parse(inputDate, inputFormatter);
 
         ZonedDateTime utcZonedDateTime = localDateTime
-                .atZone(ZoneId.systemDefault())
+                .atZone(ZoneId.of("Asia/Kolkata"))
                 .withZoneSameInstant(ZoneId.of("UTC"));
 
         DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
