@@ -20,10 +20,7 @@ import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 
 
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -319,10 +316,16 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     private String updateDateFormatFromInputDate(String inputDate) {
-        DateTimeFormatter originalFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-        LocalDate date = LocalDate.parse(inputDate, originalFormatter);
-        DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
-        return date.format(outputFormatter);
+        DateTimeFormatter inputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        LocalDateTime localDateTime = LocalDateTime.parse(inputDate, inputFormatter);
+
+        ZonedDateTime utcZonedDateTime = localDateTime
+                .atZone(ZoneId.systemDefault())
+                .withZoneSameInstant(ZoneId.of("UTC"));
+
+        DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+                .withZone(ZoneId.of("UTC"));
+        return outputFormatter.format(utcZonedDateTime);
     }
     public Map<String, Object> fetchDataByContentId(String contentId) {
         log.debug("getting content by id: " + contentId);
