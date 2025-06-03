@@ -547,7 +547,7 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("updateDateFormatFromInputDate: should format date correctly")
+    @DisplayName("updateDateFormatFromInputDate: should convert IST to UTC correctly")
     void updateDateFormatFromInputDate_test() {
         // Use reflection to test private method
         String inputDate = "2023-12-01 12:12:12";
