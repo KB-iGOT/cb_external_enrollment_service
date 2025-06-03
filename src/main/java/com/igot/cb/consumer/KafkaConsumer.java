@@ -89,7 +89,7 @@ public class KafkaConsumer {
                     cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, updatedMap, propertyMap);
                     sendUpdatedRecordDataToKafkaToGenerateCertificate(userCourseEnrollMap, result);
                 } else {
-                    log.error("Data not present in DB");
+                    log.error("Data not present in DB for userid {} and courseid {}", userCourseEnrollMap.get(Constants.USER_ID), courseId);
                     //add not enrolled data to file
                 }
             } else {
@@ -198,14 +198,8 @@ public class KafkaConsumer {
 
 
     private static Instant convertToTimestamp(String dateString) {
-        try{
-            DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
-            LocalDate localDate = LocalDate.parse(dateString, dateFormatter);
-            LocalTime currentTime = LocalTime.now();
-            LocalDateTime localDateTime = LocalDateTime.of(localDate, currentTime);
-            ZonedDateTime zonedDateTime = localDateTime.atZone(ZoneId.systemDefault())
-                    .withZoneSameInstant(ZoneId.of("UTC"));
-            return zonedDateTime.toInstant();
+        try {
+            return Instant.parse(dateString);
         } catch (DateTimeParseException e) {
             e.printStackTrace();
             return null;
@@ -287,10 +281,10 @@ public class KafkaConsumer {
     }
 
     private static String convertDateFormat(String originalDate) {
-        DateTimeFormatter originalFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
-        LocalDate date = LocalDate.parse(originalDate, originalFormatter);
+        Instant instant = Instant.parse(originalDate); // Parse ISO 8601 format
+        ZonedDateTime zonedDateTime = instant.atZone(ZoneId.of("UTC"));
         DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-        return date.format(outputFormatter);
+        return outputFormatter.format(zonedDateTime);
     }
 
 }
