@@ -1,13 +1,17 @@
 package com.igot.cb.transactional.cassandrautils;
 
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import com.datastax.oss.driver.api.core.cql.ResultSet;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
+import com.datastax.oss.driver.api.core.metadata.Metadata;
 import com.datastax.oss.driver.api.querybuilder.select.Select;
 import com.igot.cb.util.ApiResponse;
 import com.igot.cb.util.Constants;
+import com.igot.cb.util.PropertiesCache;
+import com.igot.cb.util.exceptions.CustomException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,10 +20,13 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.ReflectionUtils;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -331,5 +338,115 @@ class CassandraOperationImplTest {
         assertNotNull(method);
         method.setAccessible(true);
         return method;
+    }
+
+    @Test
+    void testGetSession_ExistingOpenSession() {
+        when(mockSession.isClosed()).thenReturn(false);
+        CassandraConnectionManagerImpl manager =
+                mock(CassandraConnectionManagerImpl.class, CALLS_REAL_METHODS);
+        Map<String, CqlSession> sessionMap =
+                (Map<String, CqlSession>) ReflectionTestUtils.getField(
+                        CassandraConnectionManagerImpl.class, "cassandraSessionMap");
+        assertNotNull(sessionMap);
+        sessionMap.clear();
+        sessionMap.put("testKeyspace", mockSession);
+        CqlSession result = manager.getSession("testKeyspace");
+        assertEquals(mockSession, result);
+        verify(mockSession).isClosed();
+    }
+
+    @Test
+    void testCreateCassandraConnectionWithKeySpaces_BlankHost_ThrowsException() throws Exception {
+        try (MockedStatic<PropertiesCache> mocked = mockStatic(PropertiesCache.class)) {
+            PropertiesCache mockCache = mock(PropertiesCache.class);
+            mocked.when(PropertiesCache::getInstance).thenReturn(mockCache);
+            when(mockCache.getProperty(Constants.CASSANDRA_CONFIG_HOST)).thenReturn("");
+            CassandraConnectionManagerImpl manager =
+                    mock(CassandraConnectionManagerImpl.class, CALLS_REAL_METHODS);
+            Method method = CassandraConnectionManagerImpl.class
+                    .getDeclaredMethod("createCassandraConnectionWithKeySpaces", String.class);
+            method.setAccessible(true);
+            Exception exception = assertThrows(Exception.class, () -> method.invoke(manager, "ks1"));
+            Throwable cause = exception.getCause();
+            assertInstanceOf(CustomException.class, cause);
+            assertEquals("Cassandra host is not configured", cause.getMessage());
+        }
+    }
+
+    @Test
+    void testGetConsistencyLevel_ValidValue() throws RuntimeException {
+        try (MockedStatic<PropertiesCache> mocked = mockStatic(PropertiesCache.class)) {
+            PropertiesCache mockCache = mock(PropertiesCache.class);
+            mocked.when(PropertiesCache::getInstance).thenReturn(mockCache);
+            when(mockCache.readProperty(Constants.SUNBIRD_CASSANDRA_CONSISTENCY_LEVEL)).thenReturn("LOCAL_ONE");
+
+            Method method = ReflectionUtils.findMethod(CassandraConnectionManagerImpl.class, "getConsistencyLevel");
+            assertNotNull(method);
+            method.setAccessible(true);
+            Object result = method.invoke(null);
+            assertEquals(DefaultConsistencyLevel.LOCAL_ONE, result);
+        } catch (InvocationTargetException | IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void testGetConsistencyLevel_BlankValue() {
+        try (MockedStatic<PropertiesCache> mocked = mockStatic(PropertiesCache.class)) {
+            PropertiesCache mockCache = mock(PropertiesCache.class);
+            mocked.when(PropertiesCache::getInstance).thenReturn(mockCache);
+            when(mockCache.readProperty(Constants.SUNBIRD_CASSANDRA_CONSISTENCY_LEVEL)).thenReturn("");
+            Method method = ReflectionUtils.findMethod(CassandraConnectionManagerImpl.class, "getConsistencyLevel");
+            assertNotNull(method);
+            method.setAccessible(true);
+            assertNull(method.invoke(null));
+        } catch (InvocationTargetException | IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void testGetConsistencyLevel_InvalidValue() {
+        try (MockedStatic<PropertiesCache> mocked = mockStatic(PropertiesCache.class)) {
+            PropertiesCache mockCache = mock(PropertiesCache.class);
+            mocked.when(PropertiesCache::getInstance).thenReturn(mockCache);
+            when(mockCache.readProperty(Constants.SUNBIRD_CASSANDRA_CONSISTENCY_LEVEL)).thenReturn("INVALID");
+            Method method = ReflectionUtils.findMethod(CassandraConnectionManagerImpl.class, "getConsistencyLevel");
+            assertNotNull(method);
+            method.setAccessible(true);
+            assertNull(method.invoke(null));
+        } catch (InvocationTargetException | IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void testGetTableList_KeyspaceNotFound_Throws() {
+        CassandraConnectionManagerImpl manager =
+                mock(CassandraConnectionManagerImpl.class, CALLS_REAL_METHODS);
+        Metadata mockMetadata = mock(Metadata.class);
+        when(mockSession.getMetadata()).thenReturn(mockMetadata);
+        when(mockMetadata.getKeyspace("missing_ks")).thenReturn(Optional.empty());
+        var sessionField = ReflectionUtils.findField(CassandraConnectionManagerImpl.class, "session");
+        assertNotNull(sessionField);
+        sessionField.setAccessible(true);
+        ReflectionUtils.setField(sessionField, null, mockSession);
+        assertThrows(CustomException.class, () -> manager.getTableList("missing_ks"));
+    }
+
+    @Test
+    void testResourceCleanUp_RunSuccess() {
+        CassandraConnectionManagerImpl.ResourceCleanUp cleanUp = new CassandraConnectionManagerImpl.ResourceCleanUp();
+        var field = ReflectionUtils.findField(CassandraConnectionManagerImpl.class, "session");
+        assertNotNull(field);
+        field.setAccessible(true);
+        ReflectionUtils.setField(field, null, mock(CqlSession.class));
+        assertDoesNotThrow(cleanUp::run);
+    }
+
+    @Test
+    void testRegisterShutDownHook_DoesNotThrow() {
+        assertDoesNotThrow(CassandraConnectionManagerImpl::registerShutDownHook);
     }
 }
