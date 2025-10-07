@@ -28,6 +28,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -536,5 +537,212 @@ class KafkaConsumerTest {
         kafkaConsumer.enrollUpdateConsumer(record);
 
         // Then: exception should be caught and logged; no exception should be thrown from the method
+    }
+
+    @Test
+    void enrollUpdateConsumer_withNullAdditionalProperties_doesNotThrow() throws Exception {
+        String payload = "{\"userid\":\"user@domain.com\",\"courseid\":\"courseid\",\"partnerId\":\"partnerId\",\"completedon\":\"2023-01-01T00:00:00Z\",\"additional_properties\":null}";
+        ConsumerRecord<String, String> updatRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+        ObjectNode contentNode = mapper.createObjectNode();
+        contentNode.put("contentId", "courseInternalId");
+        contentNode.put("name", "Course Name");
+        contentNode.put("appIcon", "http://image.png");
+        ObjectNode contentPartnerNode = mapper.createObjectNode();
+        contentPartnerNode.put("contentPartnerName", "Partner");
+        contentPartnerNode.put("id", "partnerId");
+        contentNode.set("contentPartner", contentPartnerNode);
+        ObjectNode result = mapper.createObjectNode();
+        result.set("content", contentNode);
+        when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+        List<Map<String, Object>> dbRecords = new ArrayList<>();
+        dbRecords.add(new HashMap<>());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                anyString(), anyString(), any(), isNull(), eq(1))
+        ).thenReturn(dbRecords);
+        when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any()))
+                .thenReturn(Collections.emptyMap());
+        ObjectNode partnerApiResponse = mapper.createObjectNode();
+        partnerApiResponse.put("certificateTemplateUrl", "http://template.svg");
+        when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
+        when(resourceLoader.getResource(anyString())).thenReturn(mockResource);
+        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
+        Map<String, Object> userMap = new HashMap<>();
+        userMap.put("firstname", "John");
+        userMap.put("lastname", "Doe");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any()))
+                .thenReturn(List.of(userMap));
+        kafkaConsumer.enrollUpdateConsumer(updatRecord);
+        verify(cassandraOperation).updateRecord(anyString(), anyString(), any(), any());
+        verify(producer).push(eq("certTopic"), any(JsonNode.class));
+    }
+
+
+    @Test
+    void enrollUpdateConsumer_withInvalidCompletedOnFormat_returnsNullTimestamp() throws Exception {
+        String payload = "{\"userid\":\"user@domain.com\",\"courseid\":\"courseid\",\"partnerId\":\"partnerId\",\"completedon\":\"invalid-format\"}";
+        ConsumerRecord<String, String> updateRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+        ObjectNode contentNode = mapper.createObjectNode();
+        contentNode.put("contentId", "internalCourseId");
+        contentNode.put("name", "Course");
+        contentNode.put("appIcon", "http://image.com");
+        ObjectNode contentPartnerNode = mapper.createObjectNode();
+        contentPartnerNode.put("id", "partnerId");
+        contentNode.set("contentPartner", contentPartnerNode);
+        ObjectNode result = mapper.createObjectNode();
+        result.set("content", contentNode);
+        when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+        List<Map<String, Object>> records = new ArrayList<>();
+        records.add(new HashMap<>());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(records);
+        when(cassandraOperation.updateRecord(any(), any(), any(), any())).thenReturn(Collections.emptyMap());
+        ObjectNode partnerApiResponse = mapper.createObjectNode();
+        partnerApiResponse.put("certificateTemplateUrl", "http://template.svg");
+        when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
+        when(resourceLoader.getResource(any())).thenReturn(mockResource);
+        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of("firstname", "John")));
+        ArgumentCaptor<Map<String, Object>> updateCaptor = ArgumentCaptor.forClass(Map.class);
+        kafkaConsumer.enrollUpdateConsumer(updateRecord);
+        verify(cassandraOperation).updateRecord(any(), any(), updateCaptor.capture(), any());
+        Map<String, Object> updateMap = updateCaptor.getValue();
+        assertNull(updateMap.get(Constants.COMPLETED_ON), "Expected 'completed_on' to be null due to invalid date format");
+    }
+
+    @Test
+    void sendUpdatedRecordDataToKafkaToGenerateCertificate_missingOptionalFields_doesNotFail() throws Exception {
+        Map<String, Object> map = Map.of(Constants.USER_ID, "user123", "completedon", "2023-01-01T00:00:00Z");
+        ObjectNode contentNode = mapper.createObjectNode();
+        contentNode.put("contentId", "course123"); // No optional fields like name or appIcon
+        ObjectNode result = mapper.createObjectNode().set("content", contentNode);
+        ObjectNode partnerApiResponse = mapper.createObjectNode()
+                .put("certificateTemplateUrl", "http://template.svg");
+        when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
+        when(resourceLoader.getResource(any())).thenReturn(mockResource);
+        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of("firstname", "John")));
+        when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
+        ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map, result);
+        verify(producer).push(eq("certTopic"), any(JsonNode.class));
+    }
+
+
+    @Test
+    void replacePlaceholders_withMissingKeys_setsEmptyString() throws IOException {
+        JsonNode json = mapper.readTree("{\"field1\":\"${missing.key}\"}");
+        Map<String, Object> certRequest = Map.of();
+        ReflectionTestUtils.invokeMethod(kafkaConsumer, "replacePlaceholders", json, certRequest);
+        assertEquals("", json.get("field1").asText());
+    }
+
+    @Test
+    void getReplacementValue_withOneNewline_returnsExpectedParts() {
+        Map<String, Object> certRequest = new HashMap<>();
+        certRequest.put(Constants.COURSE_NAME, "First Line\nSecond Line");
+        when(cbServerProperties.getCertificateCharLength()).thenReturn(6);
+        String part1 = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name", certRequest);
+        String part2 = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name.extended", certRequest);
+        assertEquals("First", part1);
+        assertEquals("Line", part2);
+    }
+
+    @Test
+    void testReadUserName_userNotFound_returnsNull() {
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any())).thenReturn(Collections.emptyList());
+        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "readUserName", "user123");
+        assertNull(result);
+    }
+
+    @Test
+    void testGetReplacementValue_courseNameWithoutNewline() {
+        Map<String, Object> certRequest = Map.of(Constants.COURSE_NAME, "SimpleCourseName");
+        when(cbServerProperties.getCertificateCharLength()).thenReturn(50);
+        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name", certRequest);
+        assertEquals("SimpleCourseName", result);
+    }
+
+    @Test
+    void testReplacePlaceholders_withNonTextField() throws Exception {
+        JsonNode json = mapper.readTree("{\"number\":123,\"nested\":{\"inner\":456}}");
+        ReflectionTestUtils.invokeMethod(kafkaConsumer, "replacePlaceholders", json, Map.of());
+        assertEquals(123, json.get("number").asInt());
+    }
+
+    @Test
+    void enrollUpdateConsumer_withMissingContentNode_doesNotFail() {
+        String payload = "{\"userid\":\"user@domain.com\",\"courseid\":\"courseid\",\"partnerId\":\"partnerId\"}";
+        JsonNode result = mapper.createObjectNode();  // "content" is missing
+        when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+        ConsumerRecord<String, String> updateRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+        kafkaConsumer.enrollUpdateConsumer(updateRecord);
+        verify(cassandraOperation, never()).updateRecord(any(), any(), any(), any());
+        verify(producer, never()).push(anyString(), any(JsonNode.class));
+    }
+
+    @Test
+    void sendUpdatedRecordDataToKafkaToGenerateCertificate_withNullTemplate_throwsCustomException() {
+        Map<String, Object> map = Map.of(Constants.USER_ID, "user123", "completedon", "2023-01-01T00:00:00Z");
+        JsonNode contentNode = mapper.createObjectNode().put("contentId", "course123")
+                .set("contentPartner", mapper.createObjectNode().put("id", "partner123"));
+        JsonNode result = mapper.createObjectNode().set("content", contentNode);
+        JsonNode response = mapper.createObjectNode().putNull("certificateTemplateUrl");
+        when(transformUtility.callContentPartnerReadApi(any())).thenReturn(response);
+        assertThrows(RuntimeException.class, () -> {
+            ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map, result);
+        });
+    }
+
+    @Test
+    void receiveProgressUpdateFromPartner_whenTransformJsonMissing_doesNotPush() {
+        String payload = "{\"partnerCode\":\"p1\"}";
+        ConsumerRecord<String, String> updateRecord = new ConsumerRecord<>("t", 0, 0L, "k", payload);
+        JsonNode resp = mapper.createObjectNode().put("id", "p1");
+        when(transformUtility.callContentPartnerReadByPartnerCodeApi(anyString())).thenReturn(resp);
+        kafkaConsumer.receiveProgressUpdateFromPartner(updateRecord);
+        verify(producer, never()).push(anyString(), any(JsonNode.class));
+    }
+
+    @Test
+    void sendUpdatedRecordDataToKafkaToGenerateCertificate_resourceReadThrows_throwsException() throws Exception {
+        Map<String, Object> map = Map.of(Constants.USER_ID, "u1", "completedon", "2023-01-01T00:00:00Z");
+        JsonNode contentNode = mapper.createObjectNode().put("contentId", "c1");
+        JsonNode result = mapper.createObjectNode().set("content", contentNode);
+        JsonNode partnerResp = mapper.createObjectNode().put("certificateTemplateUrl", "http://template.svg");
+        when(transformUtility.callContentPartnerReadApi(anyString())).thenReturn(partnerResp);
+        when(resourceLoader.getResource(anyString())).thenReturn(mockResource);
+        when(mockResource.getInputStream()).thenThrow(new IOException("fail read"));
+        assertThrows(RuntimeException.class, () -> {
+            ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map, result);
+        });
+    }
+
+    @Test
+    void readUserName_whenUserNotFound_returnsNull() {
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+        String name = ReflectionTestUtils.invokeMethod(kafkaConsumer, "readUserName", "someUser");
+        assertNull(name);
+    }
+
+    @Test
+    void getReplacementValue_unknownPlaceholder_returnsEmptyString() {
+        Map<String, Object> certReq = new HashMap<>();
+        certReq.put(Constants.USER_ID, "u1");
+        when(cbServerProperties.getCertificateCharLength()).thenReturn(50);
+        String val = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "non.existent", certReq);
+        assertEquals("", val);
+    }
+
+    @Test
+    void replacePlaceholders_withArrayAndNonTextNodes() throws IOException {
+        String jsonStr = "{\"arr\":[123, {\"key\":\"${user.id}\"}]}";
+        JsonNode node = mapper.readTree(jsonStr);
+        Map<String, Object> certReq = Map.of(Constants.USER_ID, "u1");
+        when(cbServerProperties.getCertificateCharLength()).thenReturn(50);
+        ReflectionTestUtils.invokeMethod(kafkaConsumer, "replacePlaceholders", node, certReq);
+        assertEquals(123, node.get("arr").get(0).asInt());
+        assertEquals("u1", node.get("arr").get(1).get("key").asText());
     }
 }
