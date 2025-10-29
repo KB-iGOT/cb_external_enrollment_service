@@ -74,7 +74,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     public SBApiResponse enrollUser(JsonNode userCourseEnroll, String token) {
         log.info("EnrollmentService::enrollUser:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
-        if (userCourseEnroll.get(Constants.PARTNER_ID) == null || userCourseEnroll.get(Constants.COURSE_ID_RQST) == null) {
+        if (!userCourseEnroll.hasNonNull(Constants.PARTNER_ID) || !userCourseEnroll.hasNonNull(Constants.COURSE_ID_RQST)) {
             return buildFailedResponse(response, "Both partnerId and CourseId is mandatory", HttpStatus.BAD_REQUEST);
         }
         String partnerId = userCourseEnroll.get(Constants.PARTNER_ID).asText("");
@@ -104,7 +104,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(userCourseEnroll.get(Constants.COURSE_ID_RQST).asText());
 
-            if (contentResponse.has("accessSettingsEnabled") && contentResponse.get("accessSettingsEnabled").asBoolean()) {
+            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
                 if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response)) {
                     return buildFailedResponse(response, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
                 }
@@ -359,7 +359,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return userAttributes;
     }
 
-    @SuppressWarnings("unchecked")
     private void populateProfessionalDetails(Map<String, String> userAttributes, Map<String, Object> profileDetails) {
         Object professionalObj = profileDetails.get(Constants.PROFESSIONAL_DETAILS);
         if (!(professionalObj instanceof List)) {

@@ -2,9 +2,13 @@ package com.igot.cb.enrollment.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.util.List;
 
+@Setter
+@Getter
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class UserGroup {
 
@@ -16,29 +20,4 @@ public class UserGroup {
 
     @JsonProperty("userGroupCriteriaList")
     private List<UserGroupCriteria> userGroupCriteriaList;
-
-    // Getters and setters
-    public String getUserGroupId() {
-        return userGroupId;
-    }
-
-    public void setUserGroupId(String userGroupId) {
-        this.userGroupId = userGroupId;
-    }
-
-    public String getUserGroupName() {
-        return userGroupName;
-    }
-
-    public void setUserGroupName(String userGroupName) {
-        this.userGroupName = userGroupName;
-    }
-
-    public List<UserGroupCriteria> getUserGroupCriteriaList() {
-        return userGroupCriteriaList;
-    }
-
-    public void setUserGroupCriteriaList(List<UserGroupCriteria> userGroupCriteriaList) {
-        this.userGroupCriteriaList = userGroupCriteriaList;
-    }
 }

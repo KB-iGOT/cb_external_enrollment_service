@@ -94,6 +94,7 @@ public class Constants {
     public static final String PARTNER_ID_REQ = "partnerid";
     public static final String ISSUED_CERTIFICATES = "issued_certificates";
     public static final String ROOT_ORG_ID_REQ = "rootorgid";
+    public static final String ACCESS_SETTINGS_ENABLED = "accessSettingsEnabled";
 
     private Constants() {
     }
