@@ -8,6 +8,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
 import com.igot.cb.enrollment.entity.CiosEnrolmentStatus;
+import com.igot.cb.enrollment.model.AccessControl;
+import com.igot.cb.enrollment.model.UserGroup;
+import com.igot.cb.enrollment.model.UserGroupCriteria;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
 import com.igot.cb.enrollment.service.EnrollmentService;
 import com.igot.cb.producer.Producer;
@@ -23,7 +26,6 @@ import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.stream.Collectors;
 
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
@@ -72,21 +74,23 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     public SBApiResponse enrollUser(JsonNode userCourseEnroll, String token) {
         log.info("EnrollmentService::enrollUser:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
+        if (userCourseEnroll.get(Constants.PARTNER_ID) == null || userCourseEnroll.get(Constants.COURSE_ID_RQST) == null) {
+            return buildFailedResponse(response, "Both partnerId and CourseId is mandatory", HttpStatus.BAD_REQUEST);
+        }
+        String partnerId = userCourseEnroll.get(Constants.PARTNER_ID).asText("");
+        String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText("");
         try {
             String userId = accessTokenValidator.verifyUserToken(token);
             log.info("UserId from auth token {}", userId);
             if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
-                response.getParams().setMsg(Constants.USER_ID_DOESNT_EXIST);
-                response.getParams().setStatus(Constants.FAILED);
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                return response;
+                return buildFailedResponse(response, Constants.USER_ID_DOESNT_EXIST, HttpStatus.BAD_REQUEST);
             }
             if (userCourseEnroll.has(Constants.COURSE_ID_RQST) && !userCourseEnroll.get(
                     Constants.COURSE_ID_RQST).isNull() && userCourseEnroll.has("partnerId") && !userCourseEnroll.get(
                     "partnerId").isNull()) {
                 Map<String, Object> propertyMap = new HashMap<>();
-                propertyMap.put("userid", userId);
-                propertyMap.put("courseid", userCourseEnroll.get("courseId").asText());
+                propertyMap.put(Constants.USER_ID, userId);
+                propertyMap.put(Constants.COURSE_ID, userCourseEnroll.get(Constants.COURSE_ID_RQST).asText());
                 List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                         Constants.KEYSPACE_SUNBIRD_COURSES,
                         Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
@@ -94,55 +98,29 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                         null,
                         1
                 );
-                if(!userEnrollmentList.isEmpty()){
-                    response.getParams().setMsg("User already enrolled to the course");
-                    response.getParams().setStatus(Constants.FAILED);
-                    response.setResponseCode(HttpStatus.BAD_REQUEST);
-                    return response;
+                if (!userEnrollmentList.isEmpty()) {
+                    return buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
                 }
-                ZoneId zoneId = ZoneId.of("UTC");
-                Instant instant = LocalDateTime.now().atZone(zoneId).toInstant();
-                Map<String, Object> userCourseEnrollMap = new HashMap<>();
-                userCourseEnrollMap.put("userid", userId);
-                userCourseEnrollMap.put("courseid",
-                        userCourseEnroll.get("courseId").asText());
-                userCourseEnrollMap.put("partnerid",
-                        userCourseEnroll.get(Constants.PARTNER_ID).asText());
-                userCourseEnrollMap.put("progress",
-                        0);
-                userCourseEnrollMap.put("status",
-                        0);
-                userCourseEnrollMap.put("completedon",
-                        null);
-                userCourseEnrollMap.put("completionpercentage",
-                        0);
-                userCourseEnrollMap.put("issued_certificates",
-                        new ArrayList<>());
-                userCourseEnrollMap.put(Constants.ENROLLED_DATE,
-                        instant);
-                userCourseEnrollMap.put("updatedon",
-                        instant);
-                userCourseEnrollMap.put("additional_properties", objectMapper.writeValueAsString(new HashMap<>()));
-                cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD_COURSES,
-                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS, userCourseEnrollMap);
-                response.setResponseCode(HttpStatus.OK);
-                response.setResult(userCourseEnrollMap);
-                return response;
-            } else {
-                response.getParams().setMsg("Both partnerId and CourseId is mandatory");
-                response.getParams().setStatus(Constants.FAILED);
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                return response;
             }
-        } catch (Exception e) {
-            String errMsg = "Error while performing operation." + e.getMessage();
-            log.error(errMsg, e);
-            response.getParams().setMsg(errMsg);
-            response.getParams().setStatus(Constants.FAILED);
-            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(userCourseEnroll.get(Constants.COURSE_ID_RQST).asText());
 
-        return response;
+            if (contentResponse.has("accessSettingsEnabled") && contentResponse.get("accessSettingsEnabled").asBoolean()) {
+                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response)) {
+                    return buildFailedResponse(response, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
+                }
+            } else {
+                enrollUserInCourse(userId, courseId, partnerId);
+                response.setResponseCode(HttpStatus.OK);
+                response.setResult(Map.of("message", "User enrolled successfully"));
+            }
+
+            } catch(Exception e){
+                String errMsg = "Error while performing enrollment operation: " + e.getMessage();
+                log.error(errMsg, e);
+                return buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+
+            return response;
     }
 
     @Override
@@ -204,7 +182,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                             return true;
                         })
                         .sorted(Comparator.comparing(enrollment -> ((Instant) (((Map<String, Object>) enrollment).get(Constants.UPDATED_ON)))).reversed())
-                        .collect(Collectors.toList());
+                        .toList();
                 if (CollectionUtils.isNotEmpty(userEnrollmentList) && userEnrollmentList.size() > limit) {
                     userEnrollmentList = userEnrollmentList.subList(0, limit);
                 }
@@ -212,7 +190,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
             Integer statusValue = statusMap.get(status);
             if (statusValue != -1) {
-                userEnrollmentList = userEnrollmentList.stream().filter(enrolment -> (int)enrolment.get(Constants.STATUS) == statusValue).collect(Collectors.toList());
+                userEnrollmentList = userEnrollmentList.stream().filter(enrolment -> (int) enrolment.get(Constants.STATUS) == statusValue).toList();
             }
             List<Map<String, Object>> courses = new ArrayList<>();
             if (!userEnrollmentList.isEmpty()) {
@@ -271,7 +249,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     if (!enrollment.isEmpty()) {
                         response.setResponseCode(HttpStatus.OK);
                         response.setResult(enrollment);
-                        //     cacheService.putCache(userId + courseid, response);
                     } else {
                         response.getParams().setMsg("courseId is not matching");
                         response.getParams().setStatus(Constants.FAILED);
@@ -354,4 +331,156 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     return response;
     }
 
+    private Map<String, String> getUserAttributes(Map<String, Object> userProfileMap) {
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.USER, (String) userProfileMap.get(Constants.ID));
+        userAttributes.put(Constants.ROOT_ORG_ID.toLowerCase(), (String) userProfileMap.get(Constants.ROOT_ORG_ID_REQ));
+
+        String profileDetailsStr = (String) userProfileMap.get(Constants.PROFILE_DETAILS);
+        if (StringUtils.isBlank(profileDetailsStr)) {
+            return userAttributes;
+        }
+
+        try {
+            Map<String, Object> profileDetails = objectMapper.readValue(profileDetailsStr, new TypeReference<Map<String, Object>>() {});
+            if (MapUtils.isEmpty(profileDetails)) {
+                return userAttributes;
+            }
+
+            userAttributes.put(Constants.PROFILE_STATUS.toLowerCase(),
+                    (String) profileDetails.get(Constants.PROFILE_STATUS));
+
+            populateProfessionalDetails(userAttributes, profileDetails);
+            populateCadreDetails(userAttributes, profileDetails);
+
+        } catch (Exception e) {
+            throw new CustomException(Constants.USER_NOT_FOUND, e.getMessage(), HttpStatus.NOT_FOUND);
+        }
+        return userAttributes;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void populateProfessionalDetails(Map<String, String> userAttributes, Map<String, Object> profileDetails) {
+        Object professionalObj = profileDetails.get(Constants.PROFESSIONAL_DETAILS);
+        if (!(professionalObj instanceof List)) {
+            return;
+        }
+        List<?> profList = (List<?>) professionalObj;
+        if (profList.isEmpty()) {
+            return;
+        }
+        Object first = profList.get(0);
+        if (!(first instanceof Map)) {
+            return;
+        }
+        Map<String, Object> professionalDetails = (Map<String, Object>) first;
+        if (MapUtils.isEmpty(professionalDetails)) {
+            return;
+        }
+        if (professionalDetails.get(Constants.DESIGNATION) != null) {
+            userAttributes.put(Constants.DESIGNATION, (String) professionalDetails.get(Constants.DESIGNATION));
+        }
+        if (professionalDetails.get(Constants.GROUP) != null) {
+            userAttributes.put(Constants.GROUP, (String) professionalDetails.get(Constants.GROUP));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void populateCadreDetails(Map<String, String> userAttributes, Map<String, Object> profileDetails) {
+        Object cadreObj = profileDetails.get(Constants.CADRE_DETAILS);
+        if (!(cadreObj instanceof Map)) {
+            return;
+        }
+        Map<String, Object> cadreDetails = (Map<String, Object>) cadreObj;
+        if (MapUtils.isEmpty(cadreDetails)) {
+            return;
+        }
+        if (cadreDetails.get(Constants.CADRE_NAME) != null) {
+            userAttributes.put(Constants.CADRE, (String) cadreDetails.get(Constants.CADRE_NAME));
+        }
+        if (cadreDetails.get(Constants.CIVIL_SERVICE_NAME) != null) {
+            userAttributes.put(Constants.SERVICE, (String) cadreDetails.get(Constants.CIVIL_SERVICE_NAME));
+        }
+        if (cadreDetails.containsKey(Constants.CADRE_BATCH) && cadreDetails.get(Constants.CADRE_BATCH) != null) {
+            userAttributes.put(Constants.BATCH, String.valueOf(cadreDetails.get(Constants.CADRE_BATCH)));
+        }
+    }
+
+    private SBApiResponse buildFailedResponse(SBApiResponse response, String message, HttpStatus status) {
+        response.getParams().setMsg(message);
+        response.getParams().setStatus(Constants.FAILED);
+        response.setResponseCode(status);
+        return response;
+    }
+
+    private boolean accessSettingsEnabled(Map<String, String> userAttributes, List<UserGroup> rules) {
+        boolean isCourseAllowed = false;
+        for (UserGroup rule : rules) {
+            boolean isRuleSuccess = true;
+            log.info("Validating rule: {}", rule.getUserGroupId());
+            for (UserGroupCriteria criteria : rule.getUserGroupCriteriaList()) {
+                log.info("Validating criteriaKey: {}, with Value: {}", criteria.getCriteriaKey(), criteria.getCriteriaValue());
+                if (!criteria.evaluate(userAttributes)) {
+                    isRuleSuccess = false;
+                    break;
+                }
+            }
+            if (isRuleSuccess) {
+                isCourseAllowed = true;
+                log.info("User {} successfully passed the rule using id: {}", userAttributes.get(Constants.USER), rule.getUserGroupId());
+                break;
+            }
+            log.info("isRuleSuccess: {} is course allowed: {}", isRuleSuccess, isCourseAllowed);
+        }
+        return isCourseAllowed;
+
+    }
+
+    private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response) throws JsonProcessingException {
+        Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
+        Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
+                ? getUserAttributes(userProfile)
+                : new HashMap<>();
+
+        log.info("User attributes fetched for enrollment: {}", userAttributes);
+
+        AccessControl accessControl = transformUtility.readAccessSettings(courseId);
+        if (accessControl == null) {
+            throw new CustomException(Constants.ERROR, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
+        }
+
+        if (accessSettingsEnabled(userAttributes, accessControl.getUserGroups())) {
+            enrollUserInCourse(userId, courseId, partnerId);
+            response.setResponseCode(HttpStatus.OK);
+            response.setResult(Map.of("message", "User enrolled successfully"));
+            return true;
+        }
+        return false;
+    }
+
+    private void enrollUserInCourse(String userId, String courseId, String partnerId) throws JsonProcessingException {
+        ZoneId zoneId = ZoneId.of("UTC");
+        Instant instant = LocalDateTime.now().atZone(zoneId).toInstant();
+
+        Map<String, Object> userCourseEnrollMap = new HashMap<>();
+        userCourseEnrollMap.put(Constants.USER_ID, userId);
+        userCourseEnrollMap.put(Constants.COURSE_ID, courseId);
+        userCourseEnrollMap.put(Constants.PARTNER_ID_REQ, partnerId);
+        userCourseEnrollMap.put("progress", 0);
+        userCourseEnrollMap.put(Constants.STATUS, 0);
+        userCourseEnrollMap.put(Constants.COMPLETED_ON, 0);
+        userCourseEnrollMap.put(Constants.COMPLETION_PERCENTAGE, 0);
+        userCourseEnrollMap.put(Constants.ISSUED_CERTIFICATES, new ArrayList<>());
+        userCourseEnrollMap.put(Constants.ENROLLED_DATE, instant);
+        userCourseEnrollMap.put(Constants.UPDATED_ON, instant);
+        userCourseEnrollMap.put(Constants.ADDITIONAL_PROPERTIES, objectMapper.writeValueAsString(new HashMap<>()));
+
+        cassandraOperation.insertRecord(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                userCourseEnrollMap
+        );
+
+        log.info("User {} successfully enrolled to course {}", userId, courseId);
+    }
 }

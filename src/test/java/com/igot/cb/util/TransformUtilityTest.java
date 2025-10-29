@@ -6,6 +6,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.igot.cb.enrollment.model.AccessControl;
+import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.exceptions.CustomException;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +44,9 @@ class TransformUtilityTest {
 
     @Mock
     private ObjectMapper mapper;
+
+    @Mock
+    private CassandraOperation cassandraOperation;
 
     private ObjectMapper realMapper = new ObjectMapper();
     private static final String DUMMY_PARTNER_ID = "partnerId";
@@ -368,6 +373,77 @@ class TransformUtilityTest {
 
         assertEquals("Invalid or null response body", exception.getMessage());
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getHttpStatusCode());
+    }
+
+    @Test
+    void callCiosContentReadAPi_success() {
+        String contentId = "cid";
+        String url = "http://base/api/" + contentId;
+        when(cbServerProperties.getBaseUrl()).thenReturn("http://base");
+        when(cbServerProperties.getCiosContentReadApiUrl()).thenReturn("/api/");
+        Object body = Map.of("content", Map.of("name", "test"));
+        ResponseEntity<Object> response = new ResponseEntity<>(body, HttpStatus.OK);
+        when(restTemplate.exchange(eq(url), eq(HttpMethod.GET), any(), eq(Object.class))).thenReturn(response);
+
+        JsonNode node = mock(JsonNode.class);
+        when(mapper.valueToTree(body)).thenReturn(node);
+        when(node.has("content")).thenReturn(true);
+        when(node.get("content")).thenReturn(node);
+
+        JsonNode result = transformUtility.callCiosContentReadAPi(contentId);
+        assertNotNull(result);
+    }
+
+    @Test
+    void readUserDetails_found() {
+        String userId = "user1";
+        Map<String, Object> userMap = Map.of("id", userId);
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of(userMap));
+
+        Map<String, Object> result = transformUtility.readUserDetails(userId);
+        assertEquals(userId, result.get("id"));
+    }
+
+    @Test
+    void readUserDetails_notFound() {
+        String userId = "user2";
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        Map<String, Object> result = transformUtility.readUserDetails(userId);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void readAccessSettings_found() throws Exception {
+        String courseId = "course1";
+        Map<String, Object> dbRecord = Map.of(Constants.CONTEXT_DATA, "{\"accessControl\":{}}");
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of(dbRecord));
+        Map<String, Object> contextData = Map.of(Constants.ACCESS_CONTROL, Map.of());
+
+        // Use reflection to inject the mock mapper
+        java.lang.reflect.Field mapperField = TransformUtility.class.getDeclaredField("mapper");
+        mapperField.setAccessible(true);
+        mapperField.set(transformUtility, mapper);
+
+        when(mapper.readValue(anyString(), eq(Map.class))).thenReturn(contextData);
+        AccessControl ac = new AccessControl();
+        when(mapper.convertValue(any(), eq(AccessControl.class))).thenReturn(ac);
+
+        AccessControl result = transformUtility.readAccessSettings(courseId);
+        assertNotNull(result);
+    }
+
+    @Test
+    void readAccessSettings_notFound() {
+        String courseId = "course2";
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        AccessControl result = transformUtility.readAccessSettings(courseId);
+        assertNull(result);
     }
 
 }

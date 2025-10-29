@@ -1,10 +1,7 @@
 package com.igot.cb.enrollment.service.impl;
 
 import static org.junit.Assert.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -29,6 +26,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import com.igot.cb.enrollment.model.AccessControl;
+import com.igot.cb.enrollment.model.UserGroup;
+import com.igot.cb.enrollment.model.UserGroupCriteria;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -88,31 +88,53 @@ class EnrollmentServiceImplTest {
 
     @Test
     @DisplayName("enrollUser: should enroll when input is correct and not already enrolled")
-    void enrollUser_successful() {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode userCourseEnroll = objectMapper.createObjectNode();
-        userCourseEnroll.put("courseId", "course1");
-        userCourseEnroll.put("partnerId", "partner1");
+    void enrollUser_successful() throws Exception {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode userCourseEnroll = realMapper.createObjectNode();
+        userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
+        userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
         String token = "jwt.token";
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn("user123");
 
-        Map<String, Object> propertyMap = new HashMap<>();
-        propertyMap.put("userid", "user123");
-        propertyMap.put("courseid", "course1");
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                any(), any(), any(), isNull(), eq(1)))
+        // User profile stub
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user123");
+        userProfile.put(Constants.ROOT_ORG_ID, "rootOrg");
+        userProfile.put(Constants.PROFILE_DETAILS,
+                "{\"professionalDetails\":[{\"designation\":\"Developer\",\"group\":\"Engineering\"}],"
+                        + "\"cadreDetails\":{\"cadreName\":\"Cadre1\",\"civilServiceName\":\"Service\",\"cadreBatch\":\"2020\"}}");
+        when(transformUtility.readUserDetails("user123")).thenReturn(userProfile);
+
+        // AccessControl stub (no criteria, so always passes)
+        AccessControl accessControl = new AccessControl();
+        UserGroup userGroup = new UserGroup();
+        userGroup.setUserGroupId("group1");
+        userGroup.setUserGroupCriteriaList(Collections.emptyList());
+        accessControl.setUserGroups(Collections.singletonList(userGroup));
+        when(transformUtility.readAccessSettings("course1")).thenReturn(accessControl);
+
+        // Add this stub if your service calls callCiosContentReadAPi
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put("accessSettingsEnabled", false);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+
+        // ObjectMapper.writeValueAsString stub
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        // Not already enrolled
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), anyInt()))
                 .thenReturn(Collections.emptyList());
 
-        // FIX: Use when(...).thenReturn for non-void method
+        // Insert record stub
         when(cassandraOperation.insertRecord(any(), any(), any())).thenReturn(null);
 
         SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
 
         assertEquals(HttpStatus.OK, response.getResponseCode());
-        assertEquals("user123", ((Map)response.getResult()).get("userid"));
-        assertEquals("course1", ((Map)response.getResult()).get("courseid"));
-        assertEquals("partner1", ((Map)response.getResult()).get("partnerid"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        assertEquals("User enrolled successfully", result.get("message"));
     }
 
     @Test
@@ -155,7 +177,6 @@ class EnrollmentServiceImplTest {
     @DisplayName("enrollUser: should return error when courseId or partnerId is missing")
     void enrollUser_missingRequiredFields() {
         ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
-        // No courseId or partnerId
         String token = "jwt.token";
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn("user123");
@@ -179,7 +200,7 @@ class EnrollmentServiceImplTest {
         SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
-        assertTrue(response.getParams().getMsg().contains("Error while performing operation"));
+        assertTrue(response.getParams().getMsg().contains("Error while performing enrollment operation"));
     }
 
     @Test
@@ -635,6 +656,200 @@ class EnrollmentServiceImplTest {
 
         assertThrows(RuntimeException.class, () -> {
             enrollmentService.fetchDataByContentId(contentId);
+        });
+    }
+
+    @Test
+    void getUserAttributes() {
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user1");
+        userProfile.put(Constants.ROOT_ORG_ID_REQ, "org1");
+        userProfile.put(Constants.PROFILE_DETAILS,
+                "{\"professionaldetails\":[{\"designation\":\"Dev\",\"group\":\"Eng\"}],"
+                        + "\"cadreDetails\":{\"cadreName\":\"CadreA\",\"civilServiceName\":\"ServiceA\",\"cadreBatch\":\"2021\"},"
+                        + "\"profilestatus\":\"active\"}");
+
+        Map<String, String> result = (Map<String, String>) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "getUserAttributes", userProfile);
+
+        assertEquals("user1", result.get(Constants.USER));
+        assertEquals("org1", result.get(Constants.ROOT_ORG_ID.toLowerCase()));
+    }
+
+    @Test
+    void getUserAttributes_blankProfileDetails() {
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user2");
+        userProfile.put(Constants.ROOT_ORG_ID_REQ, "org2");
+        userProfile.put(Constants.PROFILE_DETAILS, "");
+
+        Map<String, String> result = (Map<String, String>) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "getUserAttributes", userProfile);
+
+        assertEquals("user2", result.get(Constants.USER));
+        assertEquals("org2", result.get(Constants.ROOT_ORG_ID.toLowerCase()));
+        assertNull(result.get(Constants.DESIGNATION));
+    }
+
+    @Test
+    void populateProfessionalDetails() {
+        Map<String, String> userAttributes = new HashMap<>();
+        Map<String, Object> profileDetails = new HashMap<>();
+        List<Map<String, Object>> profList = new ArrayList<>();
+        Map<String, Object> prof = new HashMap<>();
+        prof.put(Constants.DESIGNATION, "Tester");
+        prof.put(Constants.GROUP, "QA");
+        profList.add(prof);
+        profileDetails.put(Constants.PROFESSIONAL_DETAILS, profList);
+
+        ReflectionTestUtils.invokeMethod(enrollmentService, "populateProfessionalDetails", userAttributes, profileDetails);
+
+        assertEquals("Tester", userAttributes.get(Constants.DESIGNATION));
+        assertEquals("QA", userAttributes.get(Constants.GROUP));
+    }
+
+    @Test
+    void populateProfessionalDetails_emptyList() {
+        Map<String, String> userAttributes = new HashMap<>();
+        Map<String, Object> profileDetails = new HashMap<>();
+        profileDetails.put(Constants.PROFESSIONAL_DETAILS, new ArrayList<>());
+
+        ReflectionTestUtils.invokeMethod(enrollmentService, "populateProfessionalDetails", userAttributes, profileDetails);
+
+        assertTrue(userAttributes.isEmpty());
+    }
+
+    @Test
+    void populateCadreDetails() {
+        Map<String, String> userAttributes = new HashMap<>();
+        Map<String, Object> profileDetails = new HashMap<>();
+        Map<String, Object> cadreDetails = new HashMap<>();
+        cadreDetails.put(Constants.CADRE_NAME, "CadreB");
+        cadreDetails.put(Constants.CIVIL_SERVICE_NAME, "ServiceB");
+        cadreDetails.put(Constants.CADRE_BATCH, "2022");
+        profileDetails.put(Constants.CADRE_DETAILS, cadreDetails);
+
+        ReflectionTestUtils.invokeMethod(enrollmentService, "populateCadreDetails", userAttributes, profileDetails);
+
+        assertEquals("CadreB", userAttributes.get(Constants.CADRE));
+        assertEquals("ServiceB", userAttributes.get(Constants.SERVICE));
+        assertEquals("2022", userAttributes.get(Constants.BATCH));
+    }
+
+    @Test
+    void populateCadreDetails_missingCadreDetails() {
+        Map<String, String> userAttributes = new HashMap<>();
+        Map<String, Object> profileDetails = new HashMap<>();
+        profileDetails.put(Constants.CADRE_DETAILS, null);
+
+        ReflectionTestUtils.invokeMethod(enrollmentService, "populateCadreDetails", userAttributes, profileDetails);
+
+        assertTrue(userAttributes.isEmpty());
+    }
+
+    @Test
+    void accessSettingsEnabled_positive() {
+        Map<String, String> userAttributes = Map.of(Constants.USER, "user1");
+        UserGroupCriteria criteria = mock(UserGroupCriteria.class);
+        when(criteria.evaluate(userAttributes)).thenReturn(true);
+
+        UserGroup userGroup = new UserGroup();
+        userGroup.setUserGroupId("group1");
+        userGroup.setUserGroupCriteriaList(List.of(criteria));
+
+        List<UserGroup> rules = List.of(userGroup);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "accessSettingsEnabled", userAttributes, rules);
+
+        assertTrue(result);
+    }
+
+    @Test
+    void accessSettingsEnabled_negative() {
+        Map<String, String> userAttributes = Map.of(Constants.USER, "user1");
+        UserGroupCriteria criteria = mock(UserGroupCriteria.class);
+        when(criteria.evaluate(userAttributes)).thenReturn(false);
+
+        UserGroup userGroup = new UserGroup();
+        userGroup.setUserGroupId("group1");
+        userGroup.setUserGroupCriteriaList(List.of(criteria));
+
+        List<UserGroup> rules = List.of(userGroup);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "accessSettingsEnabled", userAttributes, rules);
+
+        assertFalse(result);
+    }
+
+    @Test
+    void handleAccessControlledEnrollment() {
+        String userId = "user1";
+        String courseId = "course1";
+        String partnerId = "partner1";
+        SBApiResponse response = new SBApiResponse();
+
+        Map<String, Object> userProfile = Map.of(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+
+        UserGroupCriteria criteria = mock(UserGroupCriteria.class);
+        when(criteria.evaluate(any())).thenReturn(true);
+        UserGroup userGroup = new UserGroup();
+        userGroup.setUserGroupId("group1");
+        userGroup.setUserGroupCriteriaList(List.of(criteria));
+        AccessControl accessControl = new AccessControl();
+        accessControl.setUserGroups(List.of(userGroup));
+        when(transformUtility.readAccessSettings(courseId)).thenReturn(accessControl);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response);
+
+        assertTrue(result);
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertEquals("User enrolled successfully", ((Map<?, ?>) response.getResult()).get("message"));
+    }
+
+    @Test
+    void handleAccessControlledEnrollment_failure(){
+        String userId = "user1";
+        String courseId = "course1";
+        String partnerId = "partner1";
+        SBApiResponse response = new SBApiResponse();
+
+        Map<String, Object> userProfile = Map.of(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+
+        UserGroupCriteria criteria = mock(UserGroupCriteria.class);
+        when(criteria.evaluate(any())).thenReturn(false);
+        UserGroup userGroup = new UserGroup();
+        userGroup.setUserGroupId("group1");
+        userGroup.setUserGroupCriteriaList(List.of(criteria));
+        AccessControl accessControl = new AccessControl();
+        accessControl.setUserGroups(List.of(userGroup));
+        when(transformUtility.readAccessSettings(courseId)).thenReturn(accessControl);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response);
+
+        assertFalse(result);
+        assertTrue(response.getResult() == null || response.getResult().isEmpty());
+    }
+
+    @Test
+    void handleAccessControlledEnrollment_accessControlNull() {
+        String userId = "user1";
+        String courseId = "course1";
+        String partnerId = "partner1";
+        SBApiResponse response = new SBApiResponse();
+
+        Map<String, Object> userProfile = Map.of(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+        when(transformUtility.readAccessSettings(courseId)).thenReturn(null);
+
+        assertThrows(CustomException.class, () -> {
+            ReflectionTestUtils.invokeMethod(
+                    enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response);
         });
     }
 }

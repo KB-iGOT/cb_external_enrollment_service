@@ -70,6 +70,30 @@ public class Constants {
     public static final String LOCAL_DATACENTER = "spring.cassandra.local-datacenter";
     public static final String PAYLOAD_VALIDATION_FILE_CONTENT_PROVIDER = "/payloadValidation/progressReportAdditionalPropertiesValidation.json";
     public static final String ADDITIONAL_PROPERTIES = "additional_properties";
+    public static final String ID = "id";
+    public static final String ROOT_ORG_ID = "rootOrgId";
+    public static final String PROFILE_DETAILS = "profiledetails";
+    public static final String PROFILE_STATUS = "profileStatus";
+    public static final String PROFESSIONAL_DETAILS = "professionalDetails";
+    public static final String DESIGNATION = "designation";
+    public static final String GROUP = "group";
+    public static final String CADRE_DETAILS = "cadreDetails";
+    public static final String CADRE = "cadre";
+    public static final String CADRE_NAME = "cadreName";
+    public static final String SERVICE = "service";
+    public static final String CIVIL_SERVICE_NAME = "civilServiceName";
+    public static final String CADRE_BATCH = "cadreBatch";
+    public static final String BATCH = "batch";
+    public static final String USER_NOT_FOUND = "User not found";
+    public static final String ACCESS_CONTROL = "accessControl";
+    public static final String CONTEXT_DATA = "contextdata";
+    public static final String CONTEXT_ID = "contextId";
+    public static final String ACCESS_SETTINGS_RULE_TABLE = "access_setting_rules_v2";
+    public static final String ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE = "This course has been created for select learners, please keep your profile updated to ensure such selective content/s if meant for you can be enrolled.";
+    public static final String USER = "user";
+    public static final String PARTNER_ID_REQ = "partnerid";
+    public static final String ISSUED_CERTIFICATES = "issued_certificates";
+    public static final String ROOT_ORG_ID_REQ = "rootorgid";
 
     private Constants() {
     }
