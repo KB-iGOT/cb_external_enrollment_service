@@ -467,7 +467,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         userCourseEnrollMap.put(Constants.PARTNER_ID_REQ, partnerId);
         userCourseEnrollMap.put(Constants.PROGRESS, 0);
         userCourseEnrollMap.put(Constants.STATUS, 0);
-        userCourseEnrollMap.put(Constants.COMPLETED_ON, null);
+        userCourseEnrollMap.put(Constants.COMPLETED_ON, 0);
         userCourseEnrollMap.put(Constants.COMPLETION_PERCENTAGE, 0);
         userCourseEnrollMap.put(Constants.ISSUED_CERTIFICATES, new ArrayList<>());
         userCourseEnrollMap.put(Constants.ENROLLED_DATE, instant);
