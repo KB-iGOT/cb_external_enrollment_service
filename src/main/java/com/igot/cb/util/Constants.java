@@ -95,6 +95,8 @@ public class Constants {
     public static final String ISSUED_CERTIFICATES = "issued_certificates";
     public static final String ROOT_ORG_ID_REQ = "rootorgid";
     public static final String ACCESS_SETTINGS_ENABLED = "accessSettingsEnabled";
+    public static final String UTC = "UTC";
+    public static final String CONTENT = "content";
 
     private Constants() {
     }

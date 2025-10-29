@@ -79,9 +79,8 @@ public class TransformUtility {
                 Object.class
         );
         if (response.getStatusCode().is2xxSuccessful()) {
-            Object body = response.getBody();
-            JsonNode jsonNode = body == null ? null : mapper.valueToTree(body);
-            if (jsonNode != null && jsonNode.has("content")) {
+            JsonNode jsonNode = mapper.valueToTree(response.getBody());
+            if (jsonNode.has(Constants.CONTENT)) {
                 log.warn("Successfully retrieved content for ID: {}", contentId);
                 return jsonNode.get("content");
             } else {

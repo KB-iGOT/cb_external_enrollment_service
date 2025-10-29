@@ -394,13 +394,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         if (MapUtils.isEmpty(cadreDetails)) {
             return;
         }
-        if (cadreDetails.get(Constants.CADRE_NAME) != null) {
+        if (StringUtils.isNotBlank(MapUtils.getString(cadreDetails, Constants.CADRE_NAME))) {
             userAttributes.put(Constants.CADRE, (String) cadreDetails.get(Constants.CADRE_NAME));
         }
-        if (cadreDetails.get(Constants.CIVIL_SERVICE_NAME) != null) {
+        if (StringUtils.isNotBlank(MapUtils.getString(cadreDetails,Constants.CIVIL_SERVICE_NAME))) {
             userAttributes.put(Constants.SERVICE, (String) cadreDetails.get(Constants.CIVIL_SERVICE_NAME));
         }
-        if (cadreDetails.containsKey(Constants.CADRE_BATCH) && cadreDetails.get(Constants.CADRE_BATCH) != null) {
+        if (StringUtils.isNotBlank(MapUtils.getString(cadreDetails, Constants.CADRE_BATCH))) {
             userAttributes.put(Constants.BATCH, String.valueOf(cadreDetails.get(Constants.CADRE_BATCH)));
         }
     }
@@ -458,14 +458,14 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     private void enrollUserInCourse(String userId, String courseId, String partnerId) throws JsonProcessingException {
-        ZoneId zoneId = ZoneId.of("UTC");
+        ZoneId zoneId = ZoneId.of(Constants.UTC);
         Instant instant = LocalDateTime.now().atZone(zoneId).toInstant();
 
         Map<String, Object> userCourseEnrollMap = new HashMap<>();
         userCourseEnrollMap.put(Constants.USER_ID, userId);
         userCourseEnrollMap.put(Constants.COURSE_ID, courseId);
         userCourseEnrollMap.put(Constants.PARTNER_ID_REQ, partnerId);
-        userCourseEnrollMap.put("progress", 0);
+        userCourseEnrollMap.put(Constants.PROGRESS, 0);
         userCourseEnrollMap.put(Constants.STATUS, 0);
         userCourseEnrollMap.put(Constants.COMPLETED_ON, 0);
         userCourseEnrollMap.put(Constants.COMPLETION_PERCENTAGE, 0);
