@@ -2,11 +2,7 @@ package com.igot.cb.enrollment.service.impl;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -19,12 +15,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.enrollment.model.UserGroup;
@@ -80,10 +71,16 @@ class EnrollmentServiceImplTest {
     @Mock
     private Producer producer;
 
+    // java
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        when(transformUtility.createDefaultResponse(Mockito.anyString())).thenReturn(new SBApiResponse());
+        SBApiResponse defaultResponse = new SBApiResponse();
+        defaultResponse.setResponseCode(HttpStatus.OK);
+        Map<String, Object> resultMap = new HashMap<>();
+        resultMap.put("message", "User enrolled successfully");
+        defaultResponse.setResult(resultMap);
+        lenient().when(transformUtility.createDefaultResponse(Mockito.anyString())).thenReturn(defaultResponse);
     }
 
     @Test
@@ -91,13 +88,14 @@ class EnrollmentServiceImplTest {
     void enrollUser_successful() throws Exception {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode userCourseEnroll = realMapper.createObjectNode();
+        userCourseEnroll.put("courseId", "course1");
+        userCourseEnroll.put("partnerId", "partner1");
         userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
         userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
         String token = "jwt.token";
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn("user123");
 
-        // User profile stub
         Map<String, Object> userProfile = new HashMap<>();
         userProfile.put(Constants.ID, "user123");
         userProfile.put(Constants.ROOT_ORG_ID, "rootOrg");
@@ -106,36 +104,53 @@ class EnrollmentServiceImplTest {
                         + "\"cadreDetails\":{\"cadreName\":\"Cadre1\",\"civilServiceName\":\"Service\",\"cadreBatch\":\"2020\"}}");
         when(transformUtility.readUserDetails("user123")).thenReturn(userProfile);
 
-        // AccessControl stub (no criteria, so always passes)
         AccessControl accessControl = new AccessControl();
         UserGroup userGroup = new UserGroup();
         userGroup.setUserGroupId("group1");
         userGroup.setUserGroupCriteriaList(Collections.emptyList());
         accessControl.setUserGroups(Collections.singletonList(userGroup));
         when(transformUtility.readAccessSettings("course1")).thenReturn(accessControl);
-
-        // Add this stub if your service calls callCiosContentReadAPi
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put("accessSettingsEnabled", false);
-        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 100);
+        contentResponse.put(Constants.USER_WISE_LIMIT, 10);
+        contentResponse.put(Constants.CONCURRENT_LIMIT, 5);
+        contentResponse.put(Constants.KARMA_POINTS, 50);
 
-        // ObjectMapper.writeValueAsString stub
-        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(transformUtility.callCiosContentReadAPi(anyString()))
+                .thenReturn(contentResponse);
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        ObjectNode providerData = realMapper.createObjectNode();
+        providerData.put(Constants.OVER_ALL_PROVIDER_LIMIT, 100);
+        providerData.put(Constants.USER_WISE_LIMIT, 10);
+        providerData.put(Constants.CONCURRENT_LIMIT, 5);
+        providerData.put(Constants.KARMA_POINTS, 50);
+        providerResponse.set(Constants.DATA, providerData);
 
-        // Not already enrolled
+        when(transformUtility.callContentPartnerReadApi("partner1"))
+                .thenReturn(providerResponse);
+
+        when(transformUtility.readUserKarmaPoints("user123", token))
+                .thenReturn(100L);
+
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), anyInt()))
                 .thenReturn(Collections.emptyList());
+        when(cassandraOperation.insertRecord(any(), any(), any()))
+                .thenReturn(null);
 
-        // Insert record stub
-        when(cassandraOperation.insertRecord(any(), any(), any())).thenReturn(null);
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
         SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
 
+        assertNotNull(response, "Response should not be null");
         assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertNotNull(response.getResult(), "Response result should not be null");
+
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
         assertEquals("User enrolled successfully", result.get("message"));
     }
+
 
     @Test
     @DisplayName("enrollUser: should return error if user already enrolled")
@@ -429,7 +444,8 @@ class EnrollmentServiceImplTest {
         requestBody.put(Constants.STATUS, "In-Progress");
         searchRequest.put(Constants.REQUEST, requestBody);
 
-        when(accessTokenValidator.verifyUserToken(token)).thenThrow(new RuntimeException("Test exception"));
+        // Use doThrow to avoid invoking the real method during stubbing
+        doThrow(new RuntimeException("Test exception")).when(accessTokenValidator).verifyUserToken(token);
 
         SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
 
@@ -851,5 +867,108 @@ class EnrollmentServiceImplTest {
             ReflectionTestUtils.invokeMethod(
                     enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response);
         });
+    }
+
+    @Test
+    void enrollUserInCourse_Success(){
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+
+        ReflectionTestUtils.invokeMethod(enrollmentService, "enrollUserInCourse", userId, courseId, partnerId);
+
+        verify(cassandraOperation, times(2)).insertRecord(any(), any(), any());
+        verify(cassandraOperation).insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
+                argThat(map -> userId.equals(map.get(Constants.USER_ID)) &&
+                        courseId.equals(map.get(Constants.COURSE_ID)) &&
+                        partnerId.equals(map.get(Constants.PARTNER_ID_REQ)))
+        );
+        verify(cassandraOperation).insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP),
+                argThat(map -> userId.equals(map.get(Constants.USER_ID)) &&
+                        courseId.equals(map.get(Constants.COURSE_ID)) &&
+                        partnerId.equals(map.get(Constants.PARTNER_ID_REQ)))
+        );
+    }
+
+
+    @Test
+    void validatePartnerEnrollmentLimits_Success() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 100);
+        contentResponse.put(Constants.USER_WISE_LIMIT, 10);
+        contentResponse.put(Constants.CONCURRENT_LIMIT, 5);
+        contentResponse.put(Constants.KARMA_POINTS, 50);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+
+        when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(100L);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token);
+
+        assertTrue(result);
+    }
+
+    @Test
+    void validatePartnerEnrollmentLimits_OverallLimitReached() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 2);
+
+        List<Map<String, Object>> existingEnrollments = Arrays.asList(
+                Map.of(Constants.PARTNER_ID_REQ, partnerId),
+                Map.of(Constants.PARTNER_ID_REQ, partnerId),
+                Map.of(Constants.PARTNER_ID_REQ, partnerId)
+        );
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(existingEnrollments);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token);
+
+        assertFalse(result);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("Partner overall enrollment limit reached", response.getParams().getMsg());
+    }
+
+    @Test
+    void validatePartnerEnrollmentLimits_InsufficientKarmaPoints() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.KARMA_POINTS, 100);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+
+        when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(50L);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token);
+
+        assertFalse(result);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("Insufficient karma points for enrollment, required karma points to enroll: 100", response.getParams().getMsg());
     }
 }

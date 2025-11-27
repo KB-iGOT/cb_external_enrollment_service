@@ -446,4 +446,154 @@ class TransformUtilityTest {
         assertNull(result);
     }
 
+    @Test
+    void readUserKarmaPoints_Success() {
+        String userId = "user123";
+        String token = "auth-token";
+        String baseUrl = "http://example.com";
+        String fixedUrl = "/api/user/";
+        String fullUrl = baseUrl + fixedUrl + userId;
+        ObjectNode userCourseEnrolmentInfo = realMapper.createObjectNode();
+        userCourseEnrolmentInfo.put("karmaPoints", 150L);
+
+        ObjectNode resultNode = realMapper.createObjectNode();
+        resultNode.set("userCourseEnrolmentInfo", userCourseEnrolmentInfo);
+
+        ObjectNode responseNode = realMapper.createObjectNode();
+        responseNode.set(Constants.RESULT, resultNode);
+
+        when(cbServerProperties.getLmsEnrolmentSummaryBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getLmsEnrolmentSummaryFixedUrl()).thenReturn(fixedUrl);
+
+        ResponseEntity<JsonNode> responseEntity =
+                new ResponseEntity<>(responseNode, HttpStatus.OK);
+
+        when(restTemplate.exchange(
+                eq(fullUrl),
+                eq(HttpMethod.GET),
+                any(HttpEntity.class),
+                eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        Long result = transformUtility.readUserKarmaPoints(userId, token);
+
+        assertNotNull(result);
+        assertEquals(150L, result);
+        verify(restTemplate).exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class));
+    }
+
+
+
+    @Test
+    void readUserKarmaPoints_DefaultValueWhenKarmaPointsMissing() {
+        // Arrange
+        String userId = "user123";
+        String token = "auth-token";
+        String baseUrl = "http://example.com";
+        String fixedUrl = "/api/user/";
+        String fullUrl = baseUrl + fixedUrl + userId;
+
+        ObjectNode resultNode = realMapper.createObjectNode();
+        // No karmaPoints field
+
+        ObjectNode responseNode = realMapper.createObjectNode();
+        responseNode.set(Constants.RESULT, resultNode);
+
+        when(cbServerProperties.getLmsEnrolmentSummaryBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getLmsEnrolmentSummaryFixedUrl()).thenReturn(fixedUrl);
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(responseNode, HttpStatus.OK);
+        when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        // Act
+        Long result = transformUtility.readUserKarmaPoints(userId, token);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(0L, result);
+    }
+
+    @Test
+    void readUserKarmaPoints_NullResponseBody() {
+        // Arrange
+        String userId = "user123";
+        String token = "auth-token";
+        String baseUrl = "http://example.com";
+        String fixedUrl = "/api/user/";
+        String fullUrl = baseUrl + fixedUrl + userId;
+
+        when(cbServerProperties.getLmsEnrolmentSummaryBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getLmsEnrolmentSummaryFixedUrl()).thenReturn(fixedUrl);
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(null, HttpStatus.OK);
+        when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        // Act & Assert
+        CustomException exception = assertThrows(CustomException.class, () -> {
+            transformUtility.readUserKarmaPoints(userId, token);
+        });
+
+        assertEquals(Constants.ERROR, exception.getCode());
+        assertEquals("Invalid or null response body", exception.getMessage());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getHttpStatusCode());
+    }
+
+    @Test
+    void readUserKarmaPoints_MissingResultField() {
+        // Arrange
+        String userId = "user123";
+        String token = "auth-token";
+        String baseUrl = "http://example.com";
+        String fixedUrl = "/api/user/";
+        String fullUrl = baseUrl + fixedUrl + userId;
+
+        ObjectNode responseNode = realMapper.createObjectNode();
+        // No "result" field
+
+        when(cbServerProperties.getLmsEnrolmentSummaryBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getLmsEnrolmentSummaryFixedUrl()).thenReturn(fixedUrl);
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(responseNode, HttpStatus.OK);
+        when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        // Act & Assert
+        CustomException exception = assertThrows(CustomException.class, () -> {
+            transformUtility.readUserKarmaPoints(userId, token);
+        });
+
+        assertEquals(Constants.ERROR, exception.getCode());
+        assertEquals("Invalid or null response body", exception.getMessage());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getHttpStatusCode());
+    }
+
+    @Test
+    void readUserKarmaPoints_BadRequestResponse() {
+        // Arrange
+        String userId = "user123";
+        String token = "auth-token";
+        String baseUrl = "http://example.com";
+        String fixedUrl = "/api/user/";
+        String fullUrl = baseUrl + fixedUrl + userId;
+
+        when(cbServerProperties.getLmsEnrolmentSummaryBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getLmsEnrolmentSummaryFixedUrl()).thenReturn(fixedUrl);
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(null, HttpStatus.BAD_REQUEST);
+        when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        // Act & Assert
+        CustomException exception = assertThrows(CustomException.class, () -> {
+            transformUtility.readUserKarmaPoints(userId, token);
+        });
+
+        assertEquals(Constants.ERROR, exception.getCode());
+        assertEquals("Failed to retrieve externalId", exception.getMessage());
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getHttpStatusCode());
+    }
+
+
 }
