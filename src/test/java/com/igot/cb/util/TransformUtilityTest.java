@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
+import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.exceptions.CustomException;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,13 +49,18 @@ class TransformUtilityTest {
     @Mock
     private CassandraOperation cassandraOperation;
 
+    @Mock
+    private CacheService cacheService;
+
     private ObjectMapper realMapper = new ObjectMapper();
     private static final String DUMMY_PARTNER_ID = "partnerId";
     private static final String DUMMY_PARTNER_CODE = "partnerCode";
 
     @BeforeEach
     void setUp() {
-        // Use real ObjectMapper for certain tests
+        lenient().when(mapper.valueToTree(any())).thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
+        lenient().when(mapper.convertValue(any(), eq(JsonNode.class))).thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
+        lenient().when(cacheService.getCache(anyString())).thenReturn(null);
         lenient().when(mapper.valueToTree(any())).thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
         lenient().when(mapper.convertValue(any(), eq(JsonNode.class))).thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
     }

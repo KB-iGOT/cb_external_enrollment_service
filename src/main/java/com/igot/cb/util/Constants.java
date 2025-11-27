@@ -104,6 +104,7 @@ public class Constants {
     public static final String KARMA_POINTS = "karmaPoints";
     public static final String RESULT = "result";
     public static final String DATA = "data";
+    public static final String USER_KARMA_POINTS = "user:karmaPoints:";
 
     private Constants() {
     }

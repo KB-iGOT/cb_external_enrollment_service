@@ -496,11 +496,11 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         log.info("User {} successfully enrolled to course {}", userId, courseId);
     }
 
-    private boolean validatePartnerEnrollmentLimits(String userId, String partnerId, SBApiResponse response, JsonNode contentResponse, String token){
-        int overallLimit = contentResponse.path(Constants.OVER_ALL_PROVIDER_LIMIT).asInt(0);
-        int userWiseLimit = contentResponse.path(Constants.USER_WISE_LIMIT).asInt(0);
-        int concurrentLimit = contentResponse.path(Constants.CONCURRENT_LIMIT).asInt(0);
-        int karmaPoints = contentResponse.path(Constants.KARMA_POINTS).asInt(0);
+    private boolean validatePartnerEnrollmentLimits(String userId, String partnerId, SBApiResponse response, JsonNode providerResponse, String token){
+        int overallLimit = providerResponse.path(Constants.OVER_ALL_PROVIDER_LIMIT).asInt(0);
+        int userWiseLimit = providerResponse.path(Constants.USER_WISE_LIMIT).asInt(0);
+        int concurrentLimit = providerResponse.path(Constants.CONCURRENT_LIMIT).asInt(0);
+        int karmaPoints = providerResponse.path(Constants.KARMA_POINTS).asInt(0);
 
         Map<String, Object> overallProp = new HashMap<>();
         overallProp.put(Constants.PARTNER_ID_REQ, partnerId);
@@ -512,9 +512,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 null,
                 null
         );
-        int totalEnrollmentsForPartner = enrollmentsForPartner.size();
 
-        if (overallLimit > 0 && totalEnrollmentsForPartner >= overallLimit) {
+        if (overallLimit > 0 && enrollmentsForPartner.size() >= overallLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             response.getParams().setMsg("Partner overall enrollment limit reached");
             return false;
@@ -532,9 +531,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 null
         );
 
-        int totalEnrollmentsForUser = enrollmentsForUser.size();
-
-        if (userWiseLimit > 0 && totalEnrollmentsForUser >= userWiseLimit) {
+        if (userWiseLimit > 0 && enrollmentsForUser.size() >= userWiseLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             response.getParams().setMsg("User-wise enrollment limit reached for this partner");
             return false;
