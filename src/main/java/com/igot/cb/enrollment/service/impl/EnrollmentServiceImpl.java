@@ -102,8 +102,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     return buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
                 }
             }
-            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(userCourseEnroll.get(Constants.COURSE_ID_RQST).asText());
+            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
 
+            JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
+
+            if (!validatePartnerEnrollmentLimits(userId, partnerId, response,providerResponse.get(Constants.DATA),token)) {
+                return response;
+            }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
                 if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response)) {
                     return buildFailedResponse(response, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
@@ -480,6 +485,91 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 userCourseEnrollMap
         );
 
+        cassandraOperation.insertRecord(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
+                Map.of(Constants.PARTNER_ID_REQ, partnerId,
+                        Constants.USER_ID, userId,
+                        Constants.COURSE_ID, courseId)
+        );
+
         log.info("User {} successfully enrolled to course {}", userId, courseId);
     }
+
+    private boolean validatePartnerEnrollmentLimits(String userId, String partnerId, SBApiResponse response, JsonNode providerResponse, String token){
+        int overallLimit = providerResponse.path(Constants.OVER_ALL_PROVIDER_LIMIT).asInt(0);
+        int userWiseLimit = providerResponse.path(Constants.USER_WISE_LIMIT).asInt(0);
+        int concurrentLimit = providerResponse.path(Constants.CONCURRENT_LIMIT).asInt(0);
+        int karmaPoints = providerResponse.path(Constants.KARMA_POINTS).asInt(0);
+
+        Map<String, Object> overallProp = new HashMap<>();
+        overallProp.put(Constants.PARTNER_ID_REQ, partnerId);
+
+        List<Map<String, Object>> enrollmentsForPartner = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
+                overallProp,
+                null,
+                null
+        );
+
+        if (overallLimit > 0 && enrollmentsForPartner.size() >= overallLimit) {
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.getParams().setMsg("Partner overall enrollment limit reached");
+            return false;
+        }
+
+        Map<String, Object> userWiseProp = new HashMap<>();
+        userWiseProp.put(Constants.USER_ID, userId);
+        userWiseProp.put(Constants.PARTNER_ID_REQ, partnerId);
+
+        List<Map<String, Object>> enrollmentsForUser = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
+                userWiseProp,
+                null,
+                null
+        );
+
+        if (userWiseLimit > 0 && enrollmentsForUser.size() >= userWiseLimit) {
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.getParams().setMsg("User-wise enrollment limit reached for this partner");
+            return false;
+        }
+
+        Map<String, Object> userKey = new HashMap<>();
+        userKey.put(Constants.USER_ID, userId);
+
+        List<Map<String, Object>> allUserCourses =
+                cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                        Constants.KEYSPACE_SUNBIRD_COURSES,
+                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                        userKey,
+                        null,
+                        null
+                );
+
+        List<Map<String, Object>> partnerEnrolments = allUserCourses.stream()
+                .filter(rec -> partnerId.equals(rec.get(Constants.PARTNER_ID_REQ)))
+                .toList();
+
+        List<Map<String, Object>> activeEnrolments = partnerEnrolments.stream()
+                .filter(rec -> rec.get(Constants.STATUS) != null && ((int) rec.get(Constants.STATUS)) == 0)
+                .toList();
+
+        if (concurrentLimit > 0 && activeEnrolments.size() >= concurrentLimit){
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.getParams().setMsg("Concurrent enrollment limit reached. Complete existing courses first.");
+            return false;
+        }
+
+        Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
+        if (karmaPoints > 0 && userKarmaPoints < karmaPoints) {
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.getParams().setMsg("Insufficient karma points for enrollment, required karma points to enroll: " + karmaPoints);
+            return false;
+        }
+        return true;
+    }
+
 }

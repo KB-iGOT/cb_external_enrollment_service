@@ -47,7 +47,13 @@ public class CbServerProperties {
     @Value("${maximum.allowed.limit}")
     private int maximumAllowedLimit;
 
-
     @Value("${cios.content.read.api.fixed.url}")
     private String ciosContentReadApiUrl;
+
+    @Value("${lms.enrolment.summary.base.url}")
+    private String lmsEnrolmentSummaryBaseUrl;
+
+    @Value("${lms.enrolment.summary.fixed.url}")
+    private String lmsEnrolmentSummaryFixedUrl;
+
 }
