@@ -1,5 +1,5 @@
 # Use OpenJDK 17 as the base image
-FROM openjdk:17-slim
+FROM openjdk:17.0.1-jdk-slim
 
 # Install necessary dependencies
 RUN apt-get update \
