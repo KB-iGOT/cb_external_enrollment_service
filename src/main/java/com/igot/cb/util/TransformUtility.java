@@ -9,11 +9,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
+import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.dto.SunbirdApiRespParam;
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.joda.time.DateTime;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
@@ -40,6 +42,9 @@ public class TransformUtility {
 
     @Autowired
     private CassandraOperation cassandraOperation;
+
+    @Autowired
+    CacheService cacheService;
 
     public JsonNode callCiosReadAPi(String extCourseId, String partnerId) {
         log.info("KafkaConsumer :: callCiosReadAPi");
@@ -68,7 +73,7 @@ public class TransformUtility {
     }
 
     public JsonNode callCiosContentReadAPi(String contentId) {
-        log.info("KafkaConsumer :: callCiosContentReadAPi");
+        log.info("TransformUtility :: callCiosContentReadAPi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getCiosContentReadApiUrl() + contentId;
         HttpHeaders headers = new HttpHeaders();
         HttpEntity<String> entity = new HttpEntity<>(headers);
@@ -94,7 +99,7 @@ public class TransformUtility {
     }
 
     public JsonNode callContentPartnerReadApi(String partnerId) {
-        log.info("KafkaConsumer :: callExtApi");
+        log.info("TransformUtility :: callContentPartnerReadApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
         HttpHeaders headers = new HttpHeaders();
         headers.set("Accept", "application/json"); // Indicate JSON response
@@ -205,5 +210,39 @@ public class TransformUtility {
             log.error("Failed to read access settings for courseId: {} {}", courseId, e);
         }
         return null;
+    }
+
+    public Long readUserKarmaPoints(String userId, String token) {
+        log.info("TransformUtility :: readUserKarmaPoints");
+        String cachedJson = cacheService.getCache(Constants.USER_KARMA_POINTS + userId);
+        if (StringUtils.isNotEmpty(cachedJson)) {
+            log.info("TransformUtility::readUserKarmaPoints:Record coming from redis cache");
+            return Long.valueOf(cachedJson);
+        } else {
+            String url = cbServerProperties.getLmsEnrolmentSummaryBaseUrl() + cbServerProperties.getLmsEnrolmentSummaryFixedUrl() + userId;
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Accept", "application/json");
+            headers.set("Content-Type", "application/json");
+            headers.set(Constants.X_AUTH_TOKEN, token);
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.GET,
+                    entity,
+                    JsonNode.class
+            );
+            if (response.getStatusCode().is2xxSuccessful()) {
+                JsonNode jsonNode = response.getBody();
+                if (jsonNode != null && jsonNode.has(Constants.RESULT)) {
+                    return jsonNode.path(Constants.RESULT).path("userCourseEnrolmentInfo").path("karmaPoints").asLong(0);
+                } else {
+                    log.error("Response body is null or missing 'result' field");
+                    throw new CustomException(Constants.ERROR, "Invalid or null response body", HttpStatus.INTERNAL_SERVER_ERROR);
+                }
+            } else {
+                log.error("Failed to retrieve externalId. Status code: {}", response.getStatusCode());
+                throw new CustomException(Constants.ERROR, "Failed to retrieve externalId", HttpStatus.BAD_REQUEST);
+            }
+        }
     }
 }

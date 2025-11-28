@@ -43,6 +43,7 @@ public class Constants {
     public static final String USER_ID_DOESNT_EXIST = "User Id doesn't exist! Please supply a valid auth token";
     public static final String TABLE_USER = "user";
     public static final String TABLE_USER_EXTERNAL_ENROLMENTS = "user_external_enrolments";
+    public static final String TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP = "user_external_enrolments_lookup";
     public static final String ENROLLED_DATE = "enrolled_date";
     public static final String COURSE_ID_RQST = "courseId";
     public static final String CIOS_ENROLLMENT_CREATE="ciosenroll.v1.create";
@@ -97,6 +98,13 @@ public class Constants {
     public static final String ACCESS_SETTINGS_ENABLED = "accessSettingsEnabled";
     public static final String UTC = "UTC";
     public static final String CONTENT = "content";
+    public static final String OVER_ALL_PROVIDER_LIMIT = "overAllLimit";
+    public static final String USER_WISE_LIMIT = "userWiseLimit";
+    public static final String CONCURRENT_LIMIT = "concurrentLimit";
+    public static final String KARMA_POINTS = "karmaPoints";
+    public static final String RESULT = "result";
+    public static final String DATA = "data";
+    public static final String USER_KARMA_POINTS = "user:karmaPoints:";
 
     private Constants() {
     }
