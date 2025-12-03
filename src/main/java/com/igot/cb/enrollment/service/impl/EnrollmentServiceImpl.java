@@ -79,38 +79,46 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
         String partnerId = userCourseEnroll.get(Constants.PARTNER_ID).asText("");
         String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText("");
+
+        if (StringUtils.isBlank(partnerId) || StringUtils.isBlank(courseId)) {
+            return buildFailedResponse(response, "Both partnerId and CourseId cannot be empty", HttpStatus.BAD_REQUEST);
+        }
         try {
             String userId = accessTokenValidator.verifyUserToken(token);
             log.info("UserId from auth token {}", userId);
             if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
                 return buildFailedResponse(response, Constants.USER_ID_DOESNT_EXIST, HttpStatus.BAD_REQUEST);
             }
-            if (userCourseEnroll.has(Constants.COURSE_ID_RQST) && !userCourseEnroll.get(
-                    Constants.COURSE_ID_RQST).isNull() && userCourseEnroll.has("partnerId") && !userCourseEnroll.get(
-                    "partnerId").isNull()) {
-                Map<String, Object> propertyMap = new HashMap<>();
-                propertyMap.put(Constants.USER_ID, userId);
-                propertyMap.put(Constants.COURSE_ID, userCourseEnroll.get(Constants.COURSE_ID_RQST).asText());
-                List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                        Constants.KEYSPACE_SUNBIRD_COURSES,
-                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                        propertyMap,
-                        null,
-                        1
-                );
-                if (!userEnrollmentList.isEmpty()) {
-                    return buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
-                }
+
+            Map<String, Object> propertyMap = new HashMap<>();
+            propertyMap.put(Constants.USER_ID, userId);
+            propertyMap.put(Constants.COURSE_ID, courseId);
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                    propertyMap,
+                    null,
+                    1
+            );
+            if (!userEnrollmentList.isEmpty()) {
+                return buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
             }
+
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
 
             JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
 
-            if (!validatePartnerEnrollmentLimits(userId, partnerId, response,providerResponse.get(Constants.DATA),token)) {
+            Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
+            Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
+                    ? getUserAttributes(userProfile)
+                    : new HashMap<>();
+            log.info("User attributes fetched for enrollment: {}", userAttributes);
+
+            if (!validatePartnerEnrollmentLimits(userId, partnerId, response, providerResponse.get(Constants.DATA), token, userAttributes)) {
                 return response;
             }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response)) {
+                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes)) {
                     return buildFailedResponse(response, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
                 }
             } else {
@@ -119,13 +127,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResult(Map.of("message", "User enrolled successfully"));
             }
 
-            } catch(Exception e){
-                String errMsg = "Error while performing enrollment operation: " + e.getMessage();
-                log.error(errMsg, e);
-                return buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
-            }
+        } catch (Exception e) {
+            String errMsg = "Error while performing enrollment operation: " + e.getMessage();
+            log.error(errMsg, e);
+            return buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
 
-            return response;
+        return response;
     }
 
     @Override
@@ -440,14 +448,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     }
 
-    private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response) throws JsonProcessingException {
-        Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
-        Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
-                ? getUserAttributes(userProfile)
-                : new HashMap<>();
-
-        log.info("User attributes fetched for enrollment: {}", userAttributes);
-
+    private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response, Map<String, String> userAttributes) throws JsonProcessingException {
         AccessControl accessControl = transformUtility.readAccessSettings(courseId);
         if (accessControl == null) {
             throw new CustomException(Constants.ERROR, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
@@ -496,7 +497,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         log.info("User {} successfully enrolled to course {}", userId, courseId);
     }
 
-    private boolean validatePartnerEnrollmentLimits(String userId, String partnerId, SBApiResponse response, JsonNode providerResponse, String token){
+    private boolean validatePartnerEnrollmentLimits(String userId, String partnerId, SBApiResponse response, JsonNode providerResponse, String token, Map<String, String> userAttributes) {
         int overallLimit = providerResponse.path(Constants.OVER_ALL_PROVIDER_LIMIT).asInt(0);
         int userWiseLimit = providerResponse.path(Constants.USER_WISE_LIMIT).asInt(0);
         int concurrentLimit = providerResponse.path(Constants.CONCURRENT_LIMIT).asInt(0);
@@ -557,14 +558,19 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 .filter(rec -> rec.get(Constants.STATUS) != null && ((int) rec.get(Constants.STATUS)) == 0)
                 .toList();
 
-        if (concurrentLimit > 0 && activeEnrolments.size() >= concurrentLimit){
+        if (concurrentLimit > 0 && activeEnrolments.size() >= concurrentLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             response.getParams().setMsg("Concurrent enrollment limit reached. Complete existing courses first.");
             return false;
         }
 
         Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
-        if (karmaPoints > 0 && userKarmaPoints < karmaPoints) {
+        String userGroup = userAttributes.get(Constants.GROUP);
+        List<String> exemptGroups = cbServerProperties.getKarmaExemptGroups();
+        boolean isExemptGroup = StringUtils.isNotBlank(userGroup) &&
+                exemptGroups.stream().anyMatch(group -> group.equalsIgnoreCase(userGroup.trim()));
+
+        if (!isExemptGroup && karmaPoints > 0 && userKarmaPoints < karmaPoints) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             response.getParams().setMsg("Insufficient karma points for enrollment, required karma points to enroll: " + karmaPoints);
             return false;

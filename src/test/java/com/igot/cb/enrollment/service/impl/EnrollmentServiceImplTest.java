@@ -805,9 +805,8 @@ class EnrollmentServiceImplTest {
         String courseId = "course1";
         String partnerId = "partner1";
         SBApiResponse response = new SBApiResponse();
-
-        Map<String, Object> userProfile = Map.of(Constants.ID, userId);
-        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.USER, userId);
 
         UserGroupCriteria criteria = mock(UserGroupCriteria.class);
         when(criteria.evaluate(any())).thenReturn(true);
@@ -819,7 +818,7 @@ class EnrollmentServiceImplTest {
         when(transformUtility.readAccessSettings(courseId)).thenReturn(accessControl);
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response);
+                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response, userAttributes);
 
         assertTrue(result);
         assertEquals(HttpStatus.OK, response.getResponseCode());
@@ -832,9 +831,8 @@ class EnrollmentServiceImplTest {
         String courseId = "course1";
         String partnerId = "partner1";
         SBApiResponse response = new SBApiResponse();
-
-        Map<String, Object> userProfile = Map.of(Constants.ID, userId);
-        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.USER, userId);
 
         UserGroupCriteria criteria = mock(UserGroupCriteria.class);
         when(criteria.evaluate(any())).thenReturn(false);
@@ -846,7 +844,7 @@ class EnrollmentServiceImplTest {
         when(transformUtility.readAccessSettings(courseId)).thenReturn(accessControl);
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response);
+                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response, userAttributes);
 
         assertFalse(result);
         assertTrue(response.getResult() == null || response.getResult().isEmpty());
@@ -858,14 +856,14 @@ class EnrollmentServiceImplTest {
         String courseId = "course1";
         String partnerId = "partner1";
         SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.USER, userId);
 
-        Map<String, Object> userProfile = Map.of(Constants.ID, userId);
-        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
         when(transformUtility.readAccessSettings(courseId)).thenReturn(null);
 
         assertThrows(CustomException.class, () -> {
-            ReflectionTestUtils.invokeMethod(
-                    enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response);
+            ReflectionTestUtils.invokeMethod(enrollmentService, "handleAccessControlledEnrollment",
+                    userId, courseId, partnerId, response, userAttributes);
         });
     }
 
@@ -901,21 +899,20 @@ class EnrollmentServiceImplTest {
         String partnerId = "partner789";
         String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
 
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 100);
-        contentResponse.put(Constants.USER_WISE_LIMIT, 10);
-        contentResponse.put(Constants.CONCURRENT_LIMIT, 5);
-        contentResponse.put(Constants.KARMA_POINTS, 50);
+        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 0);
+        contentResponse.put(Constants.USER_WISE_LIMIT, 0);
+        contentResponse.put(Constants.CONCURRENT_LIMIT, 0);
+        contentResponse.put(Constants.KARMA_POINTS, 0);
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
 
-        when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(100L);
-
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token, userAttributes);
 
         assertTrue(result);
     }
@@ -926,22 +923,20 @@ class EnrollmentServiceImplTest {
         String partnerId = "partner789";
         String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
 
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 2);
+        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1);
 
-        List<Map<String, Object>> existingEnrollments = Arrays.asList(
-                Map.of(Constants.PARTNER_ID_REQ, partnerId),
-                Map.of(Constants.PARTNER_ID_REQ, partnerId),
-                Map.of(Constants.PARTNER_ID_REQ, partnerId)
-        );
+        List<Map<String, Object>> enrollments = new ArrayList<>();
+        enrollments.add(new HashMap<>());
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
-                .thenReturn(existingEnrollments);
+                .thenReturn(enrollments);
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token, userAttributes);
 
         assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
@@ -954,6 +949,8 @@ class EnrollmentServiceImplTest {
         String partnerId = "partner789";
         String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.GROUP, "Group C"); // Not exempt group
 
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
@@ -963,9 +960,10 @@ class EnrollmentServiceImplTest {
                 .thenReturn(Collections.emptyList());
 
         when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(50L);
+        when(cbServerProperties.getKarmaExemptGroups()).thenReturn(Arrays.asList("Group A", "Group B"));
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token, userAttributes);
 
         assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());

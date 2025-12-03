@@ -6,6 +6,8 @@ import lombok.Setter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 @Component
 @Getter
 @Setter
@@ -55,5 +57,8 @@ public class CbServerProperties {
 
     @Value("${lms.enrolment.summary.fixed.url}")
     private String lmsEnrolmentSummaryFixedUrl;
+
+    @Value("${enrollment.karma.points.exempt.groups}")
+    private List<String> karmaExemptGroups;
 
 }
