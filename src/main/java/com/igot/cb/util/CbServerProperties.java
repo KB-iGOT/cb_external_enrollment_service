@@ -61,4 +61,19 @@ public class CbServerProperties {
     @Value("${enrollment.karma.points.exempt.groups}")
     private List<String> karmaExemptGroups;
 
+    @Value("${enrollment.error.partner.overall.limit}")
+    private String partnerOverallLimitMsg;
+
+    @Value("${enrollment.error.partner.userwise.limit}")
+    private String partnerUserwiseLimitMsg;
+
+    @Value("${enrollment.error.partner.concurrent.limit}")
+    private String partnerConcurrentLimitMsg;
+
+    @Value("${enrollment.error.karma.insufficient}")
+    private String karmaInsufficientMsg;
+
+    @Value("${access.settings.error.message}")
+    private String accessSettingsErrorMessage;
+
 }

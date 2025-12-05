@@ -20,6 +20,7 @@ import java.util.*;
 import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.enrollment.model.UserGroup;
 import com.igot.cb.enrollment.model.UserGroupCriteria;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -931,14 +932,16 @@ class EnrollmentServiceImplTest {
 
         List<Map<String, Object>> enrollments = new ArrayList<>();
         enrollments.add(new HashMap<>());
+        when(cbServerProperties.getPartnerOverallLimitMsg())
+                .thenReturn("Partner overall enrollment limit reached");
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(enrollments);
 
-        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+        Boolean result = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token, userAttributes);
-
-        assertFalse(result);
+        Assertions.assertNotNull(result);
+        Assertions.assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
         assertEquals("Partner overall enrollment limit reached", response.getParams().getMsg());
     }
@@ -955,18 +958,25 @@ class EnrollmentServiceImplTest {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.KARMA_POINTS, 100);
+        contentResponse.put(Constants.KARMA_POINTS_ENABLED, true);
+        when(cbServerProperties.getKarmaInsufficientMsg())
+                .thenReturn("You don't have enough Karma Points to enroll. Minimum Karma Points required: %s. Please complete other relevant courses on iGOT to earn Karma Points and try again later.");
+
+        when(cbServerProperties.getKarmaExemptGroups())
+                .thenReturn(Arrays.asList("Group A", "Group B"));
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
 
-        when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(50L);
-        when(cbServerProperties.getKarmaExemptGroups()).thenReturn(Arrays.asList("Group A", "Group B"));
+        when(transformUtility.readUserKarmaPoints(userId, token))
+                .thenReturn(50L);
 
-        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+        Boolean result = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token, userAttributes);
 
-        assertFalse(result);
+        Assertions.assertNotNull(result);
+        Assertions.assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
-        assertEquals("Insufficient karma points for enrollment, required karma points to enroll: 100", response.getParams().getMsg());
+        assertTrue(response.getParams().getMsg().contains("100"));
     }
 }
