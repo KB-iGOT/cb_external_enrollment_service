@@ -90,7 +90,7 @@ public class Constants {
     public static final String CONTEXT_DATA = "contextdata";
     public static final String CONTEXT_ID = "contextId";
     public static final String ACCESS_SETTINGS_RULE_TABLE = "access_setting_rules_v2";
-    public static final String ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE = "This course has been created for select learners, please keep your profile updated to ensure such selective content/s if meant for you can be enrolled.";
+    public static final String ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE = "Access settings are enabled but no access rule found for the course";
     public static final String USER = "user";
     public static final String PARTNER_ID_REQ = "partnerid";
     public static final String ISSUED_CERTIFICATES = "issued_certificates";
@@ -105,6 +105,9 @@ public class Constants {
     public static final String RESULT = "result";
     public static final String DATA = "data";
     public static final String USER_KARMA_POINTS = "user:karmaPoints:";
+    public static final String USER_WISE_LIMIT_ENABLED = "isUserWiseLimitEnabled";
+    public static final String CONCURRENT_LIMIT_ENABLED = "isConcurrentLimitEnabled";
+    public static final String KARMA_POINTS_ENABLED = "addKarmaPointEnabled";
 
     private Constants() {
     }

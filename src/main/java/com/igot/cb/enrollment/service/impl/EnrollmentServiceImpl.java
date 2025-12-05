@@ -119,7 +119,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
                 if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes)) {
-                    return buildFailedResponse(response, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
+                    return buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
             } else {
                 enrollUserInCourse(userId, courseId, partnerId);
@@ -451,6 +451,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response, Map<String, String> userAttributes) throws JsonProcessingException {
         AccessControl accessControl = transformUtility.readAccessSettings(courseId);
         if (accessControl == null) {
+            log.error("Access control settings enabled but not found for courseId: {}", courseId);
             throw new CustomException(Constants.ERROR, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
         }
 
@@ -516,7 +517,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
         if (overallLimit > 0 && enrollmentsForPartner.size() >= overallLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg("Partner overall enrollment limit reached");
+            response.getParams().setMsg(cbServerProperties.getPartnerOverallLimitMsg());
             return false;
         }
 
@@ -532,9 +533,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 null
         );
 
-        if (userWiseLimit > 0 && enrollmentsForUser.size() >= userWiseLimit) {
+        if (providerResponse.path(Constants.USER_WISE_LIMIT_ENABLED).asBoolean(false) && userWiseLimit > 0 && enrollmentsForUser.size() >= userWiseLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg("User-wise enrollment limit reached for this partner");
+            response.getParams().setMsg(cbServerProperties.getPartnerUserwiseLimitMsg());
             return false;
         }
 
@@ -558,9 +559,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 .filter(rec -> rec.get(Constants.STATUS) != null && ((int) rec.get(Constants.STATUS)) == 0)
                 .toList();
 
-        if (concurrentLimit > 0 && activeEnrolments.size() >= concurrentLimit) {
+        if (providerResponse.path(Constants.CONCURRENT_LIMIT_ENABLED).asBoolean(false) && concurrentLimit > 0 && activeEnrolments.size() >= concurrentLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg("Concurrent enrollment limit reached. Complete existing courses first.");
+            response.getParams().setMsg(cbServerProperties.getPartnerConcurrentLimitMsg());
             return false;
         }
 
@@ -570,9 +571,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         boolean isExemptGroup = StringUtils.isNotBlank(userGroup) &&
                 exemptGroups.stream().anyMatch(group -> group.equalsIgnoreCase(userGroup.trim()));
 
-        if (!isExemptGroup && karmaPoints > 0 && userKarmaPoints < karmaPoints) {
+        if (providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false) && !isExemptGroup && karmaPoints > 0 && userKarmaPoints < karmaPoints) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg("Insufficient karma points for enrollment, required karma points to enroll: " + karmaPoints);
+            String formattedMsg = String.format(cbServerProperties.getKarmaInsufficientMsg(), karmaPoints);
+            response.getParams().setMsg(formattedMsg);
             return false;
         }
         return true;
