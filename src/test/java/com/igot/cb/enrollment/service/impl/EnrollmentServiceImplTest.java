@@ -837,7 +837,7 @@ class EnrollmentServiceImplTest {
         when(transformUtility.readAccessSettings(courseId)).thenReturn(accessControl);
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response, userAttributes);
+                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response, userAttributes, true);
 
         assertTrue(result);
         assertEquals(HttpStatus.OK, response.getResponseCode());
@@ -863,7 +863,16 @@ class EnrollmentServiceImplTest {
         when(transformUtility.readAccessSettings(courseId)).thenReturn(accessControl);
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response, userAttributes);
+                enrollmentService,
+                "handleAccessControlledEnrollment",
+                userId,
+                courseId,
+                partnerId,
+                response,
+                userAttributes,
+                false
+        );
+
 
         assertFalse(result);
         assertTrue(response.getResult() == null || response.getResult().isEmpty());
@@ -882,7 +891,7 @@ class EnrollmentServiceImplTest {
 
         assertThrows(CustomException.class, () -> {
             ReflectionTestUtils.invokeMethod(enrollmentService, "handleAccessControlledEnrollment",
-                    userId, courseId, partnerId, response, userAttributes);
+                    userId, courseId, partnerId, response, userAttributes, true);
         });
     }
 

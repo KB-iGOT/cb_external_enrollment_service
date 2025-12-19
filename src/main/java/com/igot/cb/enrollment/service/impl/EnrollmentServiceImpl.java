@@ -85,58 +85,16 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
 
-            Map<String, Object> propertyMap = new HashMap<>();
-            propertyMap.put(Constants.USER_ID, userId);
-            propertyMap.put(Constants.COURSE_ID, courseId);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                    propertyMap,
-                    null,
-                    1
-            );
-            if (!userEnrollmentList.isEmpty()) {
-                return transformUtility.buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
-            }
-
-            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
-
-            JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
-
-            Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
-            Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
-                    ? getUserAttributes(userProfile)
-                    : new HashMap<>();
-            log.info("User attributes fetched for enrollment: {}", userAttributes);
-
-            if (!validatePartnerEnrollmentLimits(userId, partnerId, response, providerResponse.get(Constants.DATA), token, userAttributes)) {
+            if(isUserEnrolled(response, userId, courseId)){
                 return response;
             }
-            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes)) {
-                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
-                }
-            } else {
-                if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText(""))) {
-                    boolean inviteSuccess = transformUtility.callCourseraInviteApi(
-                            contentResponse,
-                            String.valueOf(userProfile.get(Constants.ID))
-                    );
-                    if (!inviteSuccess) {
-                        return transformUtility.buildFailedResponse(response, "User invitation failed on Coursera", HttpStatus.BAD_REQUEST);
-                    }
-                }
-                enrollUserInCourse(userId, courseId, partnerId);
-                response.setResponseCode(HttpStatus.OK);
-                response.setResult(Map.of("message", "User enrolled successfully"));
-            }
+            processEnrolment(response, userId, courseId, partnerId, token);
 
         } catch (Exception e) {
-            String errMsg = "Error while performing enrollment operation: " + e.getMessage();
+            String errMsg = Constants.ENROLLMENT_ERROR + e.getMessage();
             log.error(errMsg, e);
             return transformUtility.buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
         }
-
         return response;
     }
 
@@ -446,7 +404,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     }
 
-    private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response, Map<String, String> userAttributes) throws JsonProcessingException {
+    private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response, Map<String, String> userAttributes, boolean isDbUpdate) throws JsonProcessingException {
         AccessControl accessControl = transformUtility.readAccessSettings(courseId);
         if (accessControl == null) {
             log.error("Access control settings enabled but not found for courseId: {}", courseId);
@@ -454,9 +412,11 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
 
         if (accessSettingsEnabled(userAttributes, accessControl.getUserGroups())) {
-            enrollUserInCourse(userId, courseId, partnerId);
-            response.setResponseCode(HttpStatus.OK);
-            response.setResult(Map.of("message", "User enrolled successfully"));
+            if(isDbUpdate) {
+                enrollUserInCourse(userId, courseId, partnerId);
+                response.setResponseCode(HttpStatus.OK);
+                response.setResult(Map.of("message", "User enrolled successfully"));
+            }
             return true;
         }
         return false;
@@ -596,19 +556,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if(StringUtils.isBlank(userId)){
                 return response;
             }
-            Map<String, Object> propertyMap = new HashMap<>();
-            propertyMap.put(Constants.USER_ID, userId);
-            propertyMap.put(Constants.COURSE_ID, courseId);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                    propertyMap,
-                    null,
-                    1
-            );
-            if (!userEnrollmentList.isEmpty()) {
-                return transformUtility.buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
-            }
 
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
 
@@ -624,7 +571,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes)) {
+                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes,false)) {
                     return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
             } else {
@@ -632,7 +579,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
 
         } catch (Exception e) {
-            String errMsg = "Error while performing enrollment operation: " + e.getMessage();
+            String errMsg = Constants.ENROLLMENT_ERROR + e.getMessage();
             log.error(errMsg, e);
             return transformUtility.buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -656,6 +603,65 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return false;
         }
         return true;
+    }
+
+    private boolean isUserEnrolled(SBApiResponse response, String userId, String courseId) {
+        Map<String, Object> propertyMap = new HashMap<>();
+        propertyMap.put(Constants.USER_ID, userId);
+        propertyMap.put(Constants.COURSE_ID, courseId);
+        List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                propertyMap,
+                null,
+                1
+        );
+        if (!userEnrollmentList.isEmpty()) {
+            transformUtility.buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
+            return true;
+        }
+        return false;
+    }
+
+    private SBApiResponse processEnrolment(SBApiResponse response, String userId, String courseId, String partnerId, String token) {
+        try {
+            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
+
+            JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
+
+            Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
+            Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
+                    ? getUserAttributes(userProfile)
+                    : new HashMap<>();
+            log.info("User attributes fetched for enrollment: {}", userAttributes);
+
+            if (!validatePartnerEnrollmentLimits(userId, partnerId, response, providerResponse.get(Constants.DATA), token, userAttributes)) {
+                return response;
+            }
+            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
+                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes, true)) {
+                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
+                }
+            } else {
+                if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText(""))) {
+                    boolean inviteSuccess = transformUtility.callCourseraInviteApi(
+                            contentResponse,
+                            String.valueOf(userProfile.get(Constants.ID))
+                    );
+                    if (!inviteSuccess) {
+                        return transformUtility.buildFailedResponse(response, "User invitation failed on Coursera", HttpStatus.BAD_REQUEST);
+                    }
+                }
+                enrollUserInCourse(userId, courseId, partnerId);
+                response.setResponseCode(HttpStatus.OK);
+                response.setResult(Map.of("message", "User enrolled successfully"));
+            }
+        }catch (Exception e) {
+            String errMsg = Constants.ENROLLMENT_ERROR + e.getMessage();
+            log.error(errMsg, e);
+            return transformUtility.buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        return response;
     }
 
 }
