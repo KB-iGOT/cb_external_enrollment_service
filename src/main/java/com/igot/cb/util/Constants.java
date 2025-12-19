@@ -117,6 +117,7 @@ public class Constants {
     public static final String URLMAP = "urlMap";
     public static final String REQUEST_BODY = "requestBody";
     public static final String SERVICE_CODE = "serviceCode";
+    public static final String ENROLLMENT_ERROR = "Error while performing enrollment operation: ";
 
     private Constants() {
     }
