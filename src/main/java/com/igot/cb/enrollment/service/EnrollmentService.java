@@ -14,4 +14,6 @@ public interface EnrollmentService {
   SBApiResponse readByUserIdAndCourseId(String courseId,String token);
 
   SBApiResponse userProgressUpdate(JsonNode jsonNode, String partnerid);
+
+  SBApiResponse enrolValidation(JsonNode userCourseEnroll, String token);
 }

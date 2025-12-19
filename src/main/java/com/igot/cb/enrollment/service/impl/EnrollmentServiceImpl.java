@@ -425,6 +425,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return response;
     }
 
+    private SBApiResponse buildSuccessResponse(SBApiResponse response, String message, HttpStatus status) {
+        response.getParams().setMsg(message);
+        response.getParams().setStatus(Constants.SUCCESS);
+        response.setResponseCode(status);
+        return response;
+    }
+
     private boolean accessSettingsEnabled(Map<String, String> userAttributes, List<UserGroup> rules) {
         boolean isCourseAllowed = false;
         for (UserGroup rule : rules) {
@@ -578,6 +585,69 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return false;
         }
         return true;
+    }
+
+    @Override
+    public SBApiResponse enrolValidation(JsonNode userCourseEnroll, String token) {
+        log.info("EnrollmentService::enrollUser:inside the method");
+        SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
+        if (!userCourseEnroll.hasNonNull(Constants.PARTNER_ID) || !userCourseEnroll.hasNonNull(Constants.COURSE_ID_RQST)) {
+            return buildFailedResponse(response, "Both partnerId and CourseId is mandatory", HttpStatus.BAD_REQUEST);
+        }
+        String partnerId = userCourseEnroll.get(Constants.PARTNER_ID).asText("");
+        String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText("");
+
+        if (StringUtils.isBlank(partnerId) || StringUtils.isBlank(courseId)) {
+            return buildFailedResponse(response, "Both partnerId and CourseId cannot be empty", HttpStatus.BAD_REQUEST);
+        }
+        try {
+            String userId = accessTokenValidator.verifyUserToken(token);
+            log.info("UserId from auth token {}", userId);
+            if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
+                return buildFailedResponse(response, Constants.USER_ID_DOESNT_EXIST, HttpStatus.BAD_REQUEST);
+            }
+
+            Map<String, Object> propertyMap = new HashMap<>();
+            propertyMap.put(Constants.USER_ID, userId);
+            propertyMap.put(Constants.COURSE_ID, courseId);
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                    propertyMap,
+                    null,
+                    1
+            );
+            if (!userEnrollmentList.isEmpty()) {
+                return buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
+            }
+
+            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
+
+            JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
+
+            Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
+            Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
+                    ? getUserAttributes(userProfile)
+                    : new HashMap<>();
+            log.info("User attributes fetched for enrollment: {}", userAttributes);
+
+            if (!validatePartnerEnrollmentLimits(userId, partnerId, response, providerResponse.get(Constants.DATA), token, userAttributes)) {
+                return response;
+            }
+            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
+                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes)) {
+                    return buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
+                }
+            } else {
+                return buildSuccessResponse(response, "Enrollment validation successful", HttpStatus.OK);
+            }
+
+        } catch (Exception e) {
+            String errMsg = "Error while performing enrollment operation: " + e.getMessage();
+            log.error(errMsg, e);
+            return buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        return response;
     }
 
 }

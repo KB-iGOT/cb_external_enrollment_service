@@ -21,8 +21,11 @@ import java.util.Map;
 @RequestMapping("/cios-enroll")
 public class EnrollmentController {
 
-  @Autowired
-  private EnrollmentService enrollmentService;
+  private final EnrollmentService enrollmentService;
+
+  public EnrollmentController(EnrollmentService enrollmentService) {
+    this.enrollmentService = enrollmentService;
+  }
 
   @PostMapping("/v1/create")
   public ResponseEntity<SBApiResponse> create(@RequestBody JsonNode userCourseEnroll, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
@@ -31,20 +34,26 @@ public class EnrollmentController {
   }
 
   @PostMapping("/v1/courselist/byuserid")
-  public ResponseEntity<?> readByUserId(@RequestBody Map<String, Object> searchRequest, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
+  public ResponseEntity<SBApiResponse> readByUserId(@RequestBody Map<String, Object> searchRequest, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
     SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
   @GetMapping("/v1/readby/useridcourseid/{courseid}")
-  public ResponseEntity<?> readByUserIdAndCourseId(@PathVariable String courseid, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
+  public ResponseEntity<SBApiResponse> readByUserIdAndCourseId(@PathVariable String courseid, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
     SBApiResponse response = enrollmentService.readByUserIdAndCourseId(courseid,token);
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
   @PostMapping("/v1/user/progressupdate")
-  public ResponseEntity<?> userProgressUpdate(@RequestBody JsonNode jsonNode, @RequestHeader(Constants.PARTNER_CODE) String partnerCode) {
+  public ResponseEntity<SBApiResponse> userProgressUpdate(@RequestBody JsonNode jsonNode, @RequestHeader(Constants.PARTNER_CODE) String partnerCode) {
     SBApiResponse response = enrollmentService.userProgressUpdate(jsonNode,partnerCode);
     return new ResponseEntity<>(response, HttpStatus.OK);
+  }
+
+  @PostMapping("/v1/validation")
+  public ResponseEntity<SBApiResponse> enrolValidation(@RequestBody JsonNode userCourseEnroll, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
+    SBApiResponse response = enrollmentService.enrolValidation(userCourseEnroll, token);
+    return new ResponseEntity<>(response, response.getResponseCode());
   }
 }
