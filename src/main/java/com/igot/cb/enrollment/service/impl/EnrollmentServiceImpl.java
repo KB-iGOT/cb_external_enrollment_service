@@ -589,7 +589,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     @Override
     public SBApiResponse enrolValidation(JsonNode userCourseEnroll, String token) {
-        log.info("EnrollmentService::enrollUser:inside the method");
+        log.info("EnrollmentService::enrolValidation:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
         if (!userCourseEnroll.hasNonNull(Constants.PARTNER_ID) || !userCourseEnroll.hasNonNull(Constants.COURSE_ID_RQST)) {
             return buildFailedResponse(response, "Both partnerId and CourseId is mandatory", HttpStatus.BAD_REQUEST);
