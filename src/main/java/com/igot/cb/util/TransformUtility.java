@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.util.cache.CacheService;
@@ -20,6 +21,7 @@ import org.joda.time.DateTime;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
@@ -31,20 +33,28 @@ import static org.jclouds.cloudwatch.domain.DynamoDBConstants.Dimension.TABLE_NA
 @Slf4j
 public class TransformUtility {
 
-    @Autowired
-    private CbServerProperties cbServerProperties;
+    private final CbServerProperties cbServerProperties;
+    private final RestTemplate restTemplate;
+    private final ObjectMapper mapper;
+    private final CassandraOperation cassandraOperation;
+    private final CacheService cacheService;
+    private final AccessTokenValidator accessTokenValidator;
 
-    @Autowired
-    private RestTemplate restTemplate;
+    public TransformUtility(
+            CbServerProperties cbServerProperties,
+            RestTemplate restTemplate,
+            ObjectMapper mapper,
+            CassandraOperation cassandraOperation,
+            CacheService cacheService,
+            AccessTokenValidator accessTokenValidator) {
 
-    @Autowired
-    private ObjectMapper mapper;
-
-    @Autowired
-    private CassandraOperation cassandraOperation;
-
-    @Autowired
-    CacheService cacheService;
+        this.cbServerProperties = cbServerProperties;
+        this.restTemplate = restTemplate;
+        this.mapper = mapper;
+        this.cassandraOperation = cassandraOperation;
+        this.cacheService = cacheService;
+        this.accessTokenValidator = accessTokenValidator;
+    }
 
     public JsonNode callCiosReadAPi(String extCourseId, String partnerId) {
         log.info("KafkaConsumer :: callCiosReadAPi");
@@ -102,8 +112,8 @@ public class TransformUtility {
         log.info("TransformUtility :: callContentPartnerReadApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Accept", "application/json"); // Indicate JSON response
-        headers.set("Content-Type", "application/json");
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+        headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<JsonNode> response = restTemplate.exchange(
                 url,
@@ -244,5 +254,100 @@ public class TransformUtility {
                 throw new CustomException(Constants.ERROR, "Failed to retrieve externalId", HttpStatus.BAD_REQUEST);
             }
         }
+    }
+
+    public boolean callCourseraInviteApi(JsonNode contentResponse,String userId){
+        try {
+            log.info("TransformUtility :: callCourseraInviteApi");
+            String url = cbServerProperties.getServiceRegistryApiBaseUrl() + cbServerProperties.getServiceRegistryApiFixedUrl();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            String programId = contentResponse.path(Constants.PROGRAM_ID).asText("");
+
+            if (StringUtils.isBlank(programId)) {
+                log.error("ProgramId missing in content response");
+                return false;
+            }
+
+            Map<String, Object> urlMap = new HashMap<>();
+            urlMap.put(Constants.ORG_ID, cbServerProperties.getCourseraOrgId());
+            urlMap.put(Constants.PROGRAM_ID, programId);
+
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put(Constants.EXTERNAL_ID, userId);
+            requestBody.put(Constants.FULLNAME, userId);
+            requestBody.put(Constants.EMAIL, userId + "@karmayogi.com");
+            requestBody.put(Constants.SEND_EMAIL, Boolean.FALSE);
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put(Constants.URLMAP, urlMap);
+            payload.put(Constants.REQUEST_BODY, requestBody);
+            payload.put(Constants.SERVICE_CODE, cbServerProperties.getCourseraServiceCode());
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.POST,
+                    entity,
+                    JsonNode.class
+            );
+            if (response.getStatusCode().is2xxSuccessful()) {
+                log.warn("Successfully called Coursera Invite API for externalId: {}");
+                return true;
+            }
+        } catch (HttpStatusCodeException ex) {
+            String responseBody = ex.getResponseBodyAsString();
+            log.error("Coursera Invite API error response: {}", responseBody);
+            if (responseBody != null &&
+                    responseBody.contains("PROGRAM_INVITEE_ERROR_EXISTING_INVITATION_FOR_EMAIL")) {
+                log.info("Coursera invite already exists for email: {} and programId: {}",
+                        userId,
+                        contentResponse.get("programId"));
+                return true;
+            }
+            throw new CustomException(
+                    Constants.ERROR,
+                    "Coursera Invite API failed: " + responseBody,
+                    HttpStatus.BAD_GATEWAY
+            );
+
+        } catch (Exception e) {
+            log.error("Unexpected error while calling Coursera Invite API", e);
+            throw new CustomException(
+                    Constants.ERROR,
+                    "Failed to call Coursera Invite API",
+                    HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+        return false;
+    }
+
+    public String validateAndGetUserId(String token, SBApiResponse response) {
+        String userId = accessTokenValidator.verifyUserToken(token);
+
+        if (StringUtils.isBlank(userId)
+                || Constants.UNAUTHORIZED.equalsIgnoreCase(userId)) {
+            buildFailedResponse(
+                    response,
+                    Constants.USER_ID_DOESNT_EXIST,
+                    HttpStatus.BAD_REQUEST
+            );
+            return null;
+        }
+        return userId;
+    }
+
+    public SBApiResponse buildFailedResponse(SBApiResponse response, String message, HttpStatus status) {
+        response.getParams().setMsg(message);
+        response.getParams().setStatus(Constants.FAILED);
+        response.setResponseCode(status);
+        return response;
+    }
+
+    public SBApiResponse buildSuccessResponse(SBApiResponse response, String message, HttpStatus status) {
+        response.getParams().setMsg(message);
+        response.getParams().setStatus(Constants.SUCCESS);
+        response.setResponseCode(status);
+        return response;
     }
 }

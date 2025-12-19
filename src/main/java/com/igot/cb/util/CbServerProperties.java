@@ -76,4 +76,18 @@ public class CbServerProperties {
     @Value("${access.settings.error.message}")
     private String accessSettingsErrorMessage;
 
+    @Value("${coursera.partner.code}")
+    private String courseraPartnerCode;
+
+    @Value("${service.registry.api.base.url}")
+    private String serviceRegistryApiBaseUrl;
+
+    @Value("${service.registry.api.fixed.url}")
+    private String  serviceRegistryApiFixedUrl;
+
+    @Value("${coursera.service.code}")
+    private String  courseraServiceCode;
+
+    @Value("${coursera.org.id}")
+    private String  courseraOrgId;
 }
