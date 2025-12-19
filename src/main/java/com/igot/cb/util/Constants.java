@@ -108,6 +108,15 @@ public class Constants {
     public static final String USER_WISE_LIMIT_ENABLED = "isUserWiseLimitEnabled";
     public static final String CONCURRENT_LIMIT_ENABLED = "isConcurrentLimitEnabled";
     public static final String KARMA_POINTS_ENABLED = "addKarmaPointEnabled";
+    public static final String PROGRAM_ID = "programId";
+    public static final String ORG_ID = "orgId";
+    public static final String EXTERNAL_ID = "externalId";
+    public static final String FULLNAME = "fullName";
+    public static final String EMAIL = "email";
+    public static final String SEND_EMAIL = "sendEmail";
+    public static final String URLMAP = "urlMap";
+    public static final String REQUEST_BODY = "requestBody";
+    public static final String SERVICE_CODE = "serviceCode";
 
     private Constants() {
     }

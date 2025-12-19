@@ -72,7 +72,6 @@ class EnrollmentServiceImplTest {
     @Mock
     private Producer producer;
 
-    // java
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
@@ -82,6 +81,17 @@ class EnrollmentServiceImplTest {
         resultMap.put("message", "User enrolled successfully");
         defaultResponse.setResult(resultMap);
         lenient().when(transformUtility.createDefaultResponse(Mockito.anyString())).thenReturn(defaultResponse);
+        lenient().when(transformUtility.buildFailedResponse(
+                any(SBApiResponse.class),
+                anyString(),
+                any(HttpStatus.class)
+        )).thenAnswer(invocation -> {
+            SBApiResponse resp = invocation.getArgument(0);
+            HttpStatus status = invocation.getArgument(2);
+            resp.setResponseCode(status);
+            resp.getParams().setMsg(invocation.getArgument(1));
+            return resp;
+        });
     }
 
     @Test
@@ -162,7 +172,8 @@ class EnrollmentServiceImplTest {
         userCourseEnroll.put("partnerId", "partner1");
         String token = "jwt.token";
 
-        when(accessTokenValidator.verifyUserToken(token)).thenReturn("user123");
+        when(transformUtility.validateAndGetUserId(eq(token), any(SBApiResponse.class)))
+                .thenReturn("user123");
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                 any(), any(), any(), isNull(), eq(1)))
                 .thenReturn(Collections.singletonList(new HashMap<>()));
@@ -181,7 +192,13 @@ class EnrollmentServiceImplTest {
         userCourseEnroll.put("partnerId", "partner1");
 
         String token = "invalid.token";
-        when(accessTokenValidator.verifyUserToken(token)).thenReturn(Constants.UNAUTHORIZED);
+        when(transformUtility.validateAndGetUserId(eq(token), any(SBApiResponse.class)))
+                .thenAnswer(invocation -> {
+                    SBApiResponse resp = invocation.getArgument(1);
+                    resp.setResponseCode(HttpStatus.BAD_REQUEST);
+                    resp.getParams().setMsg(Constants.USER_ID_DOESNT_EXIST);
+                    return null;
+                });
 
         SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
 
@@ -211,7 +228,8 @@ class EnrollmentServiceImplTest {
         userCourseEnroll.put("partnerId", "partner1");
         String token = "jwt.token";
 
-        when(accessTokenValidator.verifyUserToken(token)).thenThrow(new RuntimeException("Test exception"));
+        when(transformUtility.validateAndGetUserId(eq(token), any(SBApiResponse.class)))
+                .thenThrow(new RuntimeException("Test exception"));
 
         SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
 

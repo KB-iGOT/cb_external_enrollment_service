@@ -74,20 +74,15 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     public SBApiResponse enrollUser(JsonNode userCourseEnroll, String token) {
         log.info("EnrollmentService::enrollUser:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
-        if (!userCourseEnroll.hasNonNull(Constants.PARTNER_ID) || !userCourseEnroll.hasNonNull(Constants.COURSE_ID_RQST)) {
-            return buildFailedResponse(response, "Both partnerId and CourseId is mandatory", HttpStatus.BAD_REQUEST);
+        if (!validateRequest(userCourseEnroll, response)) {
+            return response;
         }
-        String partnerId = userCourseEnroll.get(Constants.PARTNER_ID).asText("");
-        String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText("");
-
-        if (StringUtils.isBlank(partnerId) || StringUtils.isBlank(courseId)) {
-            return buildFailedResponse(response, "Both partnerId and CourseId cannot be empty", HttpStatus.BAD_REQUEST);
-        }
+        String partnerId = userCourseEnroll.get(Constants.PARTNER_ID).asText();
+        String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText();
         try {
-            String userId = accessTokenValidator.verifyUserToken(token);
-            log.info("UserId from auth token {}", userId);
-            if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
-                return buildFailedResponse(response, Constants.USER_ID_DOESNT_EXIST, HttpStatus.BAD_REQUEST);
+            String userId = transformUtility.validateAndGetUserId(token,response);
+            if(StringUtils.isBlank(userId)){
+                return response;
             }
 
             Map<String, Object> propertyMap = new HashMap<>();
@@ -101,7 +96,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     1
             );
             if (!userEnrollmentList.isEmpty()) {
-                return buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
+                return transformUtility.buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
             }
 
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
@@ -119,9 +114,18 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
                 if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes)) {
-                    return buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
+                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
             } else {
+                if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText(""))) {
+                    boolean inviteSuccess = transformUtility.callCourseraInviteApi(
+                            contentResponse,
+                            String.valueOf(userProfile.get(Constants.ID))
+                    );
+                    if (!inviteSuccess) {
+                        return transformUtility.buildFailedResponse(response, "User invitation failed on Coursera", HttpStatus.BAD_REQUEST);
+                    }
+                }
                 enrollUserInCourse(userId, courseId, partnerId);
                 response.setResponseCode(HttpStatus.OK);
                 response.setResult(Map.of("message", "User enrolled successfully"));
@@ -130,7 +134,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         } catch (Exception e) {
             String errMsg = "Error while performing enrollment operation: " + e.getMessage();
             log.error(errMsg, e);
-            return buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
+            return transformUtility.buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
         return response;
@@ -418,19 +422,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
     }
 
-    private SBApiResponse buildFailedResponse(SBApiResponse response, String message, HttpStatus status) {
-        response.getParams().setMsg(message);
-        response.getParams().setStatus(Constants.FAILED);
-        response.setResponseCode(status);
-        return response;
-    }
-
-    private SBApiResponse buildSuccessResponse(SBApiResponse response, String message, HttpStatus status) {
-        response.getParams().setMsg(message);
-        response.getParams().setStatus(Constants.SUCCESS);
-        response.setResponseCode(status);
-        return response;
-    }
 
     private boolean accessSettingsEnabled(Map<String, String> userAttributes, List<UserGroup> rules) {
         boolean isCourseAllowed = false;
@@ -592,21 +583,19 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         log.info("EnrollmentService::enrolValidation:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
         if (!userCourseEnroll.hasNonNull(Constants.PARTNER_ID) || !userCourseEnroll.hasNonNull(Constants.COURSE_ID_RQST)) {
-            return buildFailedResponse(response, "Both partnerId and CourseId is mandatory", HttpStatus.BAD_REQUEST);
+            return transformUtility.buildFailedResponse(response, "Both partnerId and CourseId is mandatory", HttpStatus.BAD_REQUEST);
         }
         String partnerId = userCourseEnroll.get(Constants.PARTNER_ID).asText("");
         String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText("");
 
         if (StringUtils.isBlank(partnerId) || StringUtils.isBlank(courseId)) {
-            return buildFailedResponse(response, "Both partnerId and CourseId cannot be empty", HttpStatus.BAD_REQUEST);
+            return transformUtility.buildFailedResponse(response, "Both partnerId and CourseId cannot be empty", HttpStatus.BAD_REQUEST);
         }
         try {
-            String userId = accessTokenValidator.verifyUserToken(token);
-            log.info("UserId from auth token {}", userId);
-            if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
-                return buildFailedResponse(response, Constants.USER_ID_DOESNT_EXIST, HttpStatus.BAD_REQUEST);
+            String userId = transformUtility.validateAndGetUserId(token,response);
+            if(StringUtils.isBlank(userId)){
+                return response;
             }
-
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put(Constants.USER_ID, userId);
             propertyMap.put(Constants.COURSE_ID, courseId);
@@ -618,7 +607,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     1
             );
             if (!userEnrollmentList.isEmpty()) {
-                return buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
+                return transformUtility.buildFailedResponse(response, "User already enrolled to the course", HttpStatus.BAD_REQUEST);
             }
 
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
@@ -636,18 +625,37 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
                 if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes)) {
-                    return buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
+                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
             } else {
-                return buildSuccessResponse(response, "Enrollment validation successful", HttpStatus.OK);
+                return transformUtility.buildSuccessResponse(response, "Enrollment validation successful", HttpStatus.OK);
             }
 
         } catch (Exception e) {
             String errMsg = "Error while performing enrollment operation: " + e.getMessage();
             log.error(errMsg, e);
-            return buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
+            return transformUtility.buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
         }
         return response;
+    }
+
+    private boolean validateRequest(JsonNode request, SBApiResponse response) {
+        if (!request.hasNonNull(Constants.PARTNER_ID)
+                || !request.hasNonNull(Constants.COURSE_ID_RQST)) {
+            transformUtility.buildFailedResponse(response,
+                    "Both partnerId and CourseId is mandatory",
+                    HttpStatus.BAD_REQUEST);
+            return false;
+        }
+
+        if (StringUtils.isBlank(request.get(Constants.PARTNER_ID).asText())
+                || StringUtils.isBlank(request.get(Constants.COURSE_ID_RQST).asText())) {
+            transformUtility.buildFailedResponse(response,
+                    "Both partnerId and CourseId cannot be empty",
+                    HttpStatus.BAD_REQUEST);
+            return false;
+        }
+        return true;
     }
 
 }
