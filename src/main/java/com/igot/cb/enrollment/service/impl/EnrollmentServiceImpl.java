@@ -81,6 +81,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText();
         try {
             String userId = transformUtility.validateAndGetUserId(token,response);
+            if(StringUtils.isBlank(userId)){
+                return response;
+            }
 
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put(Constants.USER_ID, userId);
@@ -590,6 +593,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
         try {
             String userId = transformUtility.validateAndGetUserId(token,response);
+            if(StringUtils.isBlank(userId)){
+                return response;
+            }
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put(Constants.USER_ID, userId);
             propertyMap.put(Constants.COURSE_ID, courseId);
