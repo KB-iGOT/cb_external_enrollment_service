@@ -639,7 +639,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes, true)) {
+                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes, false)) {
                     return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
             } else {
