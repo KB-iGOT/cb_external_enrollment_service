@@ -638,20 +638,21 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if (!validatePartnerEnrollmentLimits(userId, partnerId, response, providerResponse.get(Constants.DATA), token, userAttributes)) {
                 return response;
             }
-            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes, true)) {
-                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
-                }
-            } else {
-                if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText(""))) {
-                    boolean inviteSuccess = transformUtility.callCourseraInviteApi(
+            String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
+            if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
+                boolean inviteSuccess = transformUtility.callCourseraInviteApi(
                             contentResponse,
                             String.valueOf(userProfile.get(Constants.ID))
                     );
                     if (!inviteSuccess) {
                         return transformUtility.buildFailedResponse(response, "User invitation failed on Coursera", HttpStatus.BAD_REQUEST);
                     }
+            }
+            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
+                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes, true)) {
+                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
+            } else {
                 enrollUserInCourse(userId, courseId, partnerId);
                 response.setResponseCode(HttpStatus.OK);
                 response.setResult(Map.of("message", "User enrolled successfully"));
