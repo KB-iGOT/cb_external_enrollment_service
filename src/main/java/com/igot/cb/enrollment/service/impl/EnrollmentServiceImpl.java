@@ -462,78 +462,86 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         int concurrentLimit = providerResponse.path(Constants.CONCURRENT_LIMIT).asInt(0);
         int karmaPoints = providerResponse.path(Constants.KARMA_POINTS).asInt(0);
 
-        Map<String, Object> overallProp = new HashMap<>();
-        overallProp.put(Constants.PARTNER_ID_REQ, partnerId);
+        if (overallLimit > 0) {
+            Map<String, Object> overallProp = new HashMap<>();
+            overallProp.put(Constants.PARTNER_ID_REQ, partnerId);
 
-        List<Map<String, Object>> enrollmentsForPartner = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                Constants.KEYSPACE_SUNBIRD_COURSES,
-                Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
-                overallProp,
-                null,
-                null
-        );
+            List<Map<String, Object>> enrollmentsForPartner = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
+                    overallProp,
+                    null,
+                    null
+            );
 
-        if (overallLimit > 0 && enrollmentsForPartner.size() >= overallLimit) {
-            response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg(cbServerProperties.getPartnerOverallLimitMsg());
-            return false;
+            if (overallLimit > 0 && enrollmentsForPartner.size() >= overallLimit) {
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                response.getParams().setMsg(cbServerProperties.getPartnerOverallLimitMsg());
+                return false;
+            }
         }
 
-        Map<String, Object> userWiseProp = new HashMap<>();
-        userWiseProp.put(Constants.USER_ID, userId);
-        userWiseProp.put(Constants.PARTNER_ID_REQ, partnerId);
+        if (userWiseLimit > 0) {
+            Map<String, Object> userWiseProp = new HashMap<>();
+            userWiseProp.put(Constants.USER_ID, userId);
+            userWiseProp.put(Constants.PARTNER_ID_REQ, partnerId);
 
-        List<Map<String, Object>> enrollmentsForUser = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                Constants.KEYSPACE_SUNBIRD_COURSES,
-                Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
-                userWiseProp,
-                null,
-                null
-        );
+            List<Map<String, Object>> enrollmentsForUser = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
+                    userWiseProp,
+                    null,
+                    null
+            );
 
-        if (providerResponse.path(Constants.USER_WISE_LIMIT_ENABLED).asBoolean(false) && userWiseLimit > 0 && enrollmentsForUser.size() >= userWiseLimit) {
-            response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg(cbServerProperties.getPartnerUserwiseLimitMsg());
-            return false;
+            if (providerResponse.path(Constants.USER_WISE_LIMIT_ENABLED).asBoolean(false) && userWiseLimit > 0 && enrollmentsForUser.size() >= userWiseLimit) {
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                response.getParams().setMsg(cbServerProperties.getPartnerUserwiseLimitMsg());
+                return false;
+            }
         }
 
-        Map<String, Object> userKey = new HashMap<>();
-        userKey.put(Constants.USER_ID, userId);
+        if (concurrentLimit > 0) {
+            Map<String, Object> userKey = new HashMap<>();
+            userKey.put(Constants.USER_ID, userId);
 
-        List<Map<String, Object>> allUserCourses =
-                cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                        Constants.KEYSPACE_SUNBIRD_COURSES,
-                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                        userKey,
-                        null,
-                        null
-                );
+            List<Map<String, Object>> allUserCourses =
+                    cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                            Constants.KEYSPACE_SUNBIRD_COURSES,
+                            Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                            userKey,
+                            null,
+                            null
+                    );
 
-        List<Map<String, Object>> partnerEnrolments = allUserCourses.stream()
-                .filter(rec -> partnerId.equals(rec.get(Constants.PARTNER_ID_REQ)))
-                .toList();
+            List<Map<String, Object>> partnerEnrolments = allUserCourses.stream()
+                    .filter(rec -> partnerId.equals(rec.get(Constants.PARTNER_ID_REQ)))
+                    .toList();
 
-        List<Map<String, Object>> activeEnrolments = partnerEnrolments.stream()
-                .filter(rec -> rec.get(Constants.STATUS) != null && ((int) rec.get(Constants.STATUS)) == 0)
-                .toList();
+            List<Map<String, Object>> activeEnrolments = partnerEnrolments.stream()
+                    .filter(rec -> rec.get(Constants.STATUS) != null && ((int) rec.get(Constants.STATUS)) == 0)
+                    .toList();
 
-        if (providerResponse.path(Constants.CONCURRENT_LIMIT_ENABLED).asBoolean(false) && concurrentLimit > 0 && activeEnrolments.size() >= concurrentLimit) {
-            response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg(cbServerProperties.getPartnerConcurrentLimitMsg());
-            return false;
+            if (providerResponse.path(Constants.CONCURRENT_LIMIT_ENABLED).asBoolean(false) && concurrentLimit > 0 && activeEnrolments.size() >= concurrentLimit) {
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                response.getParams().setMsg(cbServerProperties.getPartnerConcurrentLimitMsg());
+                return false;
+            }
         }
 
-        Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
-        String userGroup = userAttributes.get(Constants.GROUP);
-        List<String> exemptGroups = cbServerProperties.getKarmaExemptGroups();
-        boolean isExemptGroup = StringUtils.isNotBlank(userGroup) &&
-                exemptGroups.stream().anyMatch(group -> group.equalsIgnoreCase(userGroup.trim()));
+        if (karmaPoints > 0) {
+            Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
+            String userGroup = userAttributes.get(Constants.GROUP);
+            List<String> exemptGroups = cbServerProperties.getKarmaExemptGroups();
+            boolean isExemptGroup = StringUtils.isNotBlank(userGroup) &&
+                    exemptGroups.stream().anyMatch(group -> group.equalsIgnoreCase(userGroup.trim()));
 
-        if (providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false) && !isExemptGroup && karmaPoints > 0 && userKarmaPoints < karmaPoints) {
-            response.setResponseCode(HttpStatus.BAD_REQUEST);
-            String formattedMsg = String.format(cbServerProperties.getKarmaInsufficientMsg(), karmaPoints);
-            response.getParams().setMsg(formattedMsg);
-            return false;
+            if (providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false) && !isExemptGroup && karmaPoints > 0 && userKarmaPoints < karmaPoints) {
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                String formattedMsg = String.format(cbServerProperties.getKarmaInsufficientMsg(), karmaPoints);
+                response.getParams().setMsg(formattedMsg);
+                return false;
+            }
         }
         return true;
     }
