@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
-
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -16,37 +15,96 @@ public class CacheService {
 
   @Autowired
   private RedisTemplate<String, String> redisTemplate;
+
   @Autowired
   private ObjectMapper objectMapper;
 
   @Value("${spring.redis.cacheTtl}")
   private long cacheTtl;
 
-  public void putCache(String key, Object object) {
+  // ---------- PUT (INDEX) ----------
+  public void putCache(String key, int index, Object object) {
     try {
       String data = objectMapper.writeValueAsString(object);
-      redisTemplate.opsForValue().set(key, data, cacheTtl, TimeUnit.SECONDS);
+
+      Long size = redisTemplate.opsForList().size(key);
+      if (size == null || size <= index) {
+        // pad list with nulls if index does not exist
+        for (long i = size == null ? 0 : size; i <= index; i++) {
+          redisTemplate.opsForList().rightPush(key, null);
+        }
+      }
+
+      redisTemplate.opsForList().set(key, index, data);
+      redisTemplate.expire(key, cacheTtl, TimeUnit.SECONDS);
+
     } catch (Exception e) {
-      log.error("Error while putting data in Redis cache: {} ", e.getMessage());
+      log.error("Error while putting data in Redis cache for key {} at index {} : {}",
+              key, index, e.getMessage());
     }
   }
 
-  public String getCache(String key) {
+  // ---------- GET (INDEX) ----------
+  public String getCache(String key, int index) {
     try {
-      return redisTemplate.opsForValue().get(key);
+      return redisTemplate.opsForList().index(key, index);
     } catch (Exception e) {
-      log.error("Error while getting data from Redis cache: {} ", e.getMessage());
+      log.error("Error while getting data from Redis cache for key {} at index {} : {}",
+              key, index, e.getMessage());
       return null;
     }
   }
 
-  public Boolean deleteCache(String key) {
-    boolean result = redisTemplate.delete(key);
-    if(result) {
-      log.info("Field {} deleted successfully from key {}.", key);
-    } else {
-      log.warn("Field {} not found in key {}.", key);
+  // ---------- UPDATE (INDEX) ----------
+  public void updateCache(String key, int index, Object object) {
+    try {
+      String data = objectMapper.writeValueAsString(object);
+      redisTemplate.opsForList().set(key, index, data);
+      redisTemplate.expire(key, cacheTtl, TimeUnit.SECONDS);
+    } catch (Exception e) {
+      log.error("Error while updating Redis cache for key {} at index {} : {}",
+              key, index, e.getMessage());
     }
-    return null;
+  }
+
+  // ---------- DELETE (INDEX) ----------
+  public Boolean deleteCache(String key, int index) {
+    try {
+      String value = redisTemplate.opsForList().index(key, index);
+      if (value == null) {
+        log.warn("No value found at key {} index {}", key, index);
+        return false;
+      }
+
+      Long removed = redisTemplate.opsForList().remove(key, 1, value);
+      return removed != null && removed > 0;
+
+    } catch (Exception e) {
+      log.error("Error while deleting Redis cache for key {} at index {} : {}",
+              key, index, e.getMessage());
+      return false;
+    }
+  }
+
+  // ---------- INCREMENT (INDEX) ----------
+  public Long incrementIfExists(String key, int index) {
+    try {
+      String value = redisTemplate.opsForList().index(key, index);
+      if (value == null) {
+        log.debug("Redis key {} index {} does not exist. Skipping increment.", key, index);
+        return null;
+      }
+
+      Long incrementedValue = Long.parseLong(value) + 1;
+      redisTemplate.opsForList().set(key, index, String.valueOf(incrementedValue));
+      redisTemplate.expire(key, cacheTtl, TimeUnit.SECONDS);
+
+      return incrementedValue;
+
+    } catch (Exception e) {
+      log.error("Error while incrementing Redis key {} at index {} : {}",
+              key, index, e.getMessage());
+      return null;
+    }
   }
 }

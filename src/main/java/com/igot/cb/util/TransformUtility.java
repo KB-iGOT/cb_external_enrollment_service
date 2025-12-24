@@ -4,6 +4,7 @@ import com.bazaarvoice.jolt.Chainr;
 import com.bazaarvoice.jolt.JsonUtils;
 import com.fasterxml.jackson.core.JsonProcessingException;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -18,7 +19,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.joda.time.DateTime;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
@@ -27,7 +27,6 @@ import org.springframework.web.client.RestTemplate;
 import java.util.*;
 
 import static com.igot.cb.util.Constants.KEYSPACE_SUNBIRD_COURSES;
-import static org.jclouds.cloudwatch.domain.DynamoDBConstants.Dimension.TABLE_NAME;
 
 @Component
 @Slf4j
@@ -83,55 +82,75 @@ public class TransformUtility {
     }
 
     public JsonNode callCiosContentReadAPi(String contentId) {
-        log.info("TransformUtility :: callCiosContentReadAPi");
-        String url = cbServerProperties.getBaseUrl() + cbServerProperties.getCiosContentReadApiUrl() + contentId;
-        HttpHeaders headers = new HttpHeaders();
-        HttpEntity<String> entity = new HttpEntity<>(headers);
-        ResponseEntity<Object> response = restTemplate.exchange(
-                url,
-                HttpMethod.GET,
-                entity,
-                Object.class
-        );
-        if (response.getStatusCode().is2xxSuccessful()) {
-            JsonNode jsonNode = mapper.valueToTree(response.getBody());
-            if (jsonNode.has(Constants.CONTENT)) {
-                log.warn("Successfully retrieved content for ID: {}", contentId);
+        try {
+            log.info("TransformUtility :: callCiosContentReadAPi");
+            JsonNode jsonNode;
+            String cachedJson = cacheService.getCache(contentId,0);
+            if (StringUtils.isNotEmpty(cachedJson)) {
+                jsonNode = mapper.readTree(cachedJson);
                 return jsonNode.get("content");
-            } else {
-                log.error("CIOS read API returned null body");
-                throw new CustomException(Constants.ERROR, "Received null response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
             }
-        } else {
-            throw new CustomException(Constants.ERROR, "Failed to retrieve contentId. Status code: "
-                    + response.getStatusCode(), HttpStatus.INTERNAL_SERVER_ERROR);
+            String url = cbServerProperties.getBaseUrl() + cbServerProperties.getCiosContentReadApiUrl() + contentId;
+            HttpHeaders headers = new HttpHeaders();
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            ResponseEntity<Object> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.GET,
+                    entity,
+                    Object.class
+            );
+            if (response.getStatusCode().is2xxSuccessful()) {
+                jsonNode = mapper.valueToTree(response.getBody());
+                if (jsonNode.has(Constants.CONTENT)) {
+                    log.warn("Successfully retrieved content for ID: {}", contentId);
+                    return jsonNode.get("content");
+                } else {
+                    log.error("CIOS read API returned null body");
+                    throw new CustomException(Constants.ERROR, "Received null response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
+                }
+            } else {
+                throw new CustomException(Constants.ERROR, "Failed to retrieve contentId. Status code: "
+                        + response.getStatusCode(), HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+        } catch (Exception e) {
+            log.error("error while processing", e);
+            throw new CustomException(Constants.ERROR, "Failed to retrieve contentId.", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
     public JsonNode callContentPartnerReadApi(String partnerId) {
-        log.info("TransformUtility :: callContentPartnerReadApi");
-        String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
-        HttpHeaders headers = new HttpHeaders();
-        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<String> entity = new HttpEntity<>(headers);
-        ResponseEntity<JsonNode> response = restTemplate.exchange(
-                url,
-                HttpMethod.GET,
-                entity,
-                JsonNode.class
-        );
-        if (response.getStatusCode().is2xxSuccessful()) {
-            JsonNode body = response.getBody();
-            if (body != null && body.has("result")) {
-                return body.path("result");
-            } else {
-                log.error("CIOS read API returned null or missing 'result' field");
-                throw new CustomException(Constants.ERROR, "Invalid response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
+        try {
+            log.info("TransformUtility :: callContentPartnerReadApi");
+            String cachedJson = cacheService.getCache(partnerId,0);
+            if (StringUtils.isNotEmpty(cachedJson)) {
+                return mapper.readTree(cachedJson);
             }
-        } else {
-            log.error("Failed to retrieve externalId. Status code: {}", response.getStatusCode());
-            throw new CustomException(Constants.ERROR, "Failed to retrieve externalId", HttpStatus.BAD_REQUEST);
+            String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadApiUrl() + partnerId;
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.GET,
+                    entity,
+                    JsonNode.class
+            );
+            if (response.getStatusCode().is2xxSuccessful()) {
+                JsonNode body = response.getBody();
+                if (body != null && body.has("result")) {
+                    return body.path("result");
+                } else {
+                    log.error("CIOS read API returned null or missing 'result' field");
+                    throw new CustomException(Constants.ERROR, "Invalid response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
+                }
+            } else {
+                log.error("Failed to retrieve externalId. Status code: {}", response.getStatusCode());
+                throw new CustomException(Constants.ERROR, "Failed to retrieve externalId", HttpStatus.BAD_REQUEST);
+            }
+        } catch (Exception e) {
+            log.error("error while processing", e);
+            throw new CustomException("Constants.ERROR", "Failed to retrieve externalId.", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -188,17 +207,29 @@ public class TransformUtility {
     }
 
     public Map<String, Object> readUserDetails(String userid) {
-        Map<String, Object> propertyMap = new HashMap<>();
-        propertyMap.put("id", userid);
-        List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
-                Constants.KEYSPACE_SUNBIRD,
-                Constants.TABLE_USER,
-                propertyMap,
-                null
-        );
-        if (CollectionUtils.isNotEmpty(userEnrollmentList))
-            return userEnrollmentList.get(0);
-        return Map.of();
+        log.info("TransformUtility :: readUserDetails");
+        try {
+            String cachedJson = cacheService.getCache(Constants.UAER_DETAILS + userid,1);
+            if(StringUtils.isNotBlank(cachedJson)){
+                return mapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {});
+            }
+            Map<String, Object> propertyMap = new HashMap<>();
+            propertyMap.put("id", userid);
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
+                    Constants.KEYSPACE_SUNBIRD,
+                    Constants.TABLE_USER,
+                    propertyMap,
+                    null
+            );
+            if (CollectionUtils.isNotEmpty(userEnrollmentList)) {
+                cacheService.putCache(Constants.UAER_DETAILS + userid,1, userEnrollmentList.get(0));
+                return userEnrollmentList.get(0);
+            }
+            return Map.of();
+        }catch (Exception e) {
+            log.error("Error while fetching user details for userId: {} {}", userid, e);
+            return Map.of();
+        }
     }
 
     public AccessControl readAccessSettings(String courseId) {
@@ -224,7 +255,7 @@ public class TransformUtility {
 
     public Long readUserKarmaPoints(String userId, String token) {
         log.info("TransformUtility :: readUserKarmaPoints");
-        String cachedJson = cacheService.getCache(Constants.USER_KARMA_POINTS + userId);
+        String cachedJson = cacheService.getCache(Constants.USER_KARMA_POINTS + userId,0);
         if (StringUtils.isNotEmpty(cachedJson)) {
             log.info("TransformUtility::readUserKarmaPoints:Record coming from redis cache");
             return Long.valueOf(cachedJson);
