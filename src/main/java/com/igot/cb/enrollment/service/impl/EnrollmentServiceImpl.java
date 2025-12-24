@@ -481,7 +481,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
         }
 
-        if(userWiseLimit > 0) {
+        if (userWiseLimit > 0) {
             Map<String, Object> userWiseProp = new HashMap<>();
             userWiseProp.put(Constants.USER_ID, userId);
             userWiseProp.put(Constants.PARTNER_ID_REQ, partnerId);
@@ -501,7 +501,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
         }
 
-        if(concurrentLimit > 0) {
+        if (concurrentLimit > 0) {
             Map<String, Object> userKey = new HashMap<>();
             userKey.put(Constants.USER_ID, userId);
 
@@ -529,7 +529,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
         }
 
-        if(karmaPoints > 0) {
+        if (karmaPoints > 0) {
             Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
             String userGroup = userAttributes.get(Constants.GROUP);
             List<String> exemptGroups = cbServerProperties.getKarmaExemptGroups();
