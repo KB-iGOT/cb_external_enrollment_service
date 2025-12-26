@@ -405,7 +405,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     }
 
-    private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response, Map<String, String> userAttributes, boolean isDbUpdate) throws JsonProcessingException {
+    private boolean handleAccessControlledEnrollment(String courseId, Map<String, String> userAttributes) throws JsonProcessingException {
         AccessControl accessControl = transformUtility.readAccessSettings(courseId);
         if (accessControl == null) {
             log.error("Access control settings enabled but not found for courseId: {}", courseId);
