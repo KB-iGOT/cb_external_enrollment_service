@@ -286,7 +286,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             log.error("CiosContentServiceImpl::read:Id not found");
             throw new CustomException(Constants.ERROR, "contentId is mandatory", HttpStatus.BAD_REQUEST);
         }
-        String cachedJson = cacheService.getCache(contentId);
+        String cachedJson = cacheService.getCache(contentId,cbServerProperties.getDefaultIndex());
         Map<String, Object> response = new HashMap<>();
         if (StringUtils.isNotEmpty(cachedJson)) {
             log.info("CiosContentServiceImpl::read:Record coming from redis cache");
@@ -299,7 +299,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             Optional<CiosContentEntity> optionalJsonNodeEntity = contentRepository.findByContentIdAndIsActive(contentId, true);
             if (optionalJsonNodeEntity.isPresent()) {
                 CiosContentEntity ciosContentEntity = optionalJsonNodeEntity.get();
-                cacheService.putCache(contentId, ciosContentEntity.getCiosData());
+                cacheService.putCache(contentId, cbServerProperties.getDefaultIndex(), ciosContentEntity.getCiosData());
                 log.info("CiosContentServiceImpl::read:Record coming from postgres db");
                 return objectMapper.convertValue(ciosContentEntity.getCiosData(), new TypeReference<Map<String, Object>>() {});
             }
@@ -405,19 +405,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     }
 
-    private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response, Map<String, String> userAttributes, boolean isDbUpdate) throws JsonProcessingException {
+    private boolean handleAccessControlledEnrollment(String courseId, Map<String, String> userAttributes) throws JsonProcessingException {
         AccessControl accessControl = transformUtility.readAccessSettings(courseId);
         if (accessControl == null) {
             log.error("Access control settings enabled but not found for courseId: {}", courseId);
             throw new CustomException(Constants.ERROR, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
         }
-
         if (accessSettingsEnabled(userAttributes, accessControl.getUserGroups())) {
-            if(isDbUpdate) {
-                enrollUserInCourse(userId, courseId, partnerId);
-                response.setResponseCode(HttpStatus.OK);
-                response.setResult(Map.of("message", "User enrolled successfully"));
-            }
             return true;
         }
         return false;
