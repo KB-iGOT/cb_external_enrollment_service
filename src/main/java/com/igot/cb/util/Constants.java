@@ -118,6 +118,11 @@ public class Constants {
     public static final String REQUEST_BODY = "requestBody";
     public static final String SERVICE_CODE = "serviceCode";
     public static final String ENROLLMENT_ERROR = "Error while performing enrollment operation: ";
+    public static final String PARTNER = "partner_";
+    public static final String USER_KEY = "_user_";
+    public static final String COUNT = "_count";
+    public static final String UAER_DETAILS = "userDetails_";
+    public static final String ACTIVE_COUNT = "_active";
 
     private Constants() {
     }

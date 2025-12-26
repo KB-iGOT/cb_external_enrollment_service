@@ -26,6 +26,7 @@ import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.function.Supplier;
 
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
@@ -285,7 +286,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             log.error("CiosContentServiceImpl::read:Id not found");
             throw new CustomException(Constants.ERROR, "contentId is mandatory", HttpStatus.BAD_REQUEST);
         }
-        String cachedJson = cacheService.getCache(contentId);
+        String cachedJson = cacheService.getCache(contentId,cbServerProperties.getDefaultIndex());
         Map<String, Object> response = new HashMap<>();
         if (StringUtils.isNotEmpty(cachedJson)) {
             log.info("CiosContentServiceImpl::read:Record coming from redis cache");
@@ -298,7 +299,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             Optional<CiosContentEntity> optionalJsonNodeEntity = contentRepository.findByContentIdAndIsActive(contentId, true);
             if (optionalJsonNodeEntity.isPresent()) {
                 CiosContentEntity ciosContentEntity = optionalJsonNodeEntity.get();
-                cacheService.putCache(contentId, ciosContentEntity.getCiosData());
+                cacheService.putCache(contentId, cbServerProperties.getDefaultIndex(), ciosContentEntity.getCiosData());
                 log.info("CiosContentServiceImpl::read:Record coming from postgres db");
                 return objectMapper.convertValue(ciosContentEntity.getCiosData(), new TypeReference<Map<String, Object>>() {});
             }
@@ -404,19 +405,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     }
 
-    private boolean handleAccessControlledEnrollment(String userId, String courseId, String partnerId, SBApiResponse response, Map<String, String> userAttributes, boolean isDbUpdate) throws JsonProcessingException {
+    private boolean handleAccessControlledEnrollment(String courseId, Map<String, String> userAttributes) throws JsonProcessingException {
         AccessControl accessControl = transformUtility.readAccessSettings(courseId);
         if (accessControl == null) {
             log.error("Access control settings enabled but not found for courseId: {}", courseId);
             throw new CustomException(Constants.ERROR, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
         }
-
         if (accessSettingsEnabled(userAttributes, accessControl.getUserGroups())) {
-            if(isDbUpdate) {
-                enrollUserInCourse(userId, courseId, partnerId);
-                response.setResponseCode(HttpStatus.OK);
-                response.setResult(Map.of("message", "User enrolled successfully"));
-            }
             return true;
         }
         return false;
@@ -453,97 +448,177 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                         Constants.COURSE_ID, courseId)
         );
 
+        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
+        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
+        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.ACTIVE_COUNT, 1, cbServerProperties.getRedisIndex());
         log.info("User {} successfully enrolled to course {}", userId, courseId);
     }
 
-    private boolean validatePartnerEnrollmentLimits(String userId, String partnerId, SBApiResponse response, JsonNode providerResponse, String token, Map<String, String> userAttributes) {
-        int overallLimit = providerResponse.path(Constants.OVER_ALL_PROVIDER_LIMIT).asInt(0);
-        int userWiseLimit = providerResponse.path(Constants.USER_WISE_LIMIT).asInt(0);
-        int concurrentLimit = providerResponse.path(Constants.CONCURRENT_LIMIT).asInt(0);
-        int karmaPoints = providerResponse.path(Constants.KARMA_POINTS).asInt(0);
+    private boolean validatePartnerEnrollmentLimits(
+            String userId,
+            String partnerId,
+            SBApiResponse response,
+            JsonNode providerResponse,
+            String token,
+            Map<String, String> userAttributes) {
 
-        if (overallLimit > 0) {
-            Map<String, Object> overallProp = new HashMap<>();
-            overallProp.put(Constants.PARTNER_ID_REQ, partnerId);
+        if (isOverallLimitExceeded(partnerId, providerResponse, response)) return false;
 
-            List<Map<String, Object>> enrollmentsForPartner = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
-                    overallProp,
-                    null,
-                    null
-            );
+        if (isUserWiseLimitExceeded(userId, partnerId, providerResponse, response)) return false;
 
-            if (overallLimit > 0 && enrollmentsForPartner.size() >= overallLimit) {
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                response.getParams().setMsg(cbServerProperties.getPartnerOverallLimitMsg());
-                return false;
-            }
-        }
+        if (isConcurrentLimitExceeded(userId, partnerId, providerResponse, response)) return false;
 
-        if (userWiseLimit > 0) {
-            Map<String, Object> userWiseProp = new HashMap<>();
-            userWiseProp.put(Constants.USER_ID, userId);
-            userWiseProp.put(Constants.PARTNER_ID_REQ, partnerId);
+        if (isKarmaInsufficient(userId, providerResponse, token, userAttributes, response)) return false;
 
-            List<Map<String, Object>> enrollmentsForUser = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
-                    userWiseProp,
-                    null,
-                    null
-            );
-
-            if (providerResponse.path(Constants.USER_WISE_LIMIT_ENABLED).asBoolean(false) && userWiseLimit > 0 && enrollmentsForUser.size() >= userWiseLimit) {
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                response.getParams().setMsg(cbServerProperties.getPartnerUserwiseLimitMsg());
-                return false;
-            }
-        }
-
-        if (concurrentLimit > 0) {
-            Map<String, Object> userKey = new HashMap<>();
-            userKey.put(Constants.USER_ID, userId);
-
-            List<Map<String, Object>> allUserCourses =
-                    cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                            Constants.KEYSPACE_SUNBIRD_COURSES,
-                            Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                            userKey,
-                            null,
-                            null
-                    );
-
-            List<Map<String, Object>> partnerEnrolments = allUserCourses.stream()
-                    .filter(rec -> partnerId.equals(rec.get(Constants.PARTNER_ID_REQ)))
-                    .toList();
-
-            List<Map<String, Object>> activeEnrolments = partnerEnrolments.stream()
-                    .filter(rec -> rec.get(Constants.STATUS) != null && ((int) rec.get(Constants.STATUS)) == 0)
-                    .toList();
-
-            if (providerResponse.path(Constants.CONCURRENT_LIMIT_ENABLED).asBoolean(false) && concurrentLimit > 0 && activeEnrolments.size() >= concurrentLimit) {
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                response.getParams().setMsg(cbServerProperties.getPartnerConcurrentLimitMsg());
-                return false;
-            }
-        }
-
-        if (karmaPoints > 0) {
-            Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
-            String userGroup = userAttributes.get(Constants.GROUP);
-            List<String> exemptGroups = cbServerProperties.getKarmaExemptGroups();
-            boolean isExemptGroup = StringUtils.isNotBlank(userGroup) &&
-                    exemptGroups.stream().anyMatch(group -> group.equalsIgnoreCase(userGroup.trim()));
-
-            if (providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false) && !isExemptGroup && karmaPoints > 0 && userKarmaPoints < karmaPoints) {
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                String formattedMsg = String.format(cbServerProperties.getKarmaInsufficientMsg(), karmaPoints);
-                response.getParams().setMsg(formattedMsg);
-                return false;
-            }
-        }
         return true;
+    }
+
+    private boolean isOverallLimitExceeded(
+            String partnerId,
+            JsonNode providerResponse,
+            SBApiResponse response) {
+
+        int overallLimit = providerResponse.path(Constants.OVER_ALL_PROVIDER_LIMIT).asInt(0);
+        if (overallLimit <= 0) return false;
+
+        String partnerKey = Constants.PARTNER + partnerId + Constants.COUNT;
+
+        int partnerCount = getCountFromCacheOrDb(
+                partnerKey,
+                () -> cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                        Constants.KEYSPACE_SUNBIRD_COURSES,
+                        Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
+                        Map.of(Constants.PARTNER_ID_REQ, partnerId),
+                        null,
+                        null
+                ).size()
+        );
+
+        if (partnerCount >= overallLimit) {
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.getParams().setMsg(cbServerProperties.getPartnerOverallLimitMsg());
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isUserWiseLimitExceeded(
+            String userId,
+            String partnerId,
+            JsonNode providerResponse,
+            SBApiResponse response) {
+
+        if (!providerResponse.path(Constants.USER_WISE_LIMIT_ENABLED).asBoolean(false))
+            return false;
+
+        int userWiseLimit = providerResponse.path(Constants.USER_WISE_LIMIT).asInt(0);
+        if (userWiseLimit <= 0) return false;
+
+        String userWiseKey =
+                Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.COUNT;
+
+        int userCount = getCountFromCacheOrDb(
+                userWiseKey,
+                () -> cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                        Constants.KEYSPACE_SUNBIRD_COURSES,
+                        Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
+                        Map.of(Constants.USER_ID, userId, Constants.PARTNER_ID_REQ, partnerId),
+                        null,
+                        null
+                ).size()
+        );
+
+        if (userCount >= userWiseLimit) {
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.getParams().setMsg(cbServerProperties.getPartnerUserwiseLimitMsg());
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isConcurrentLimitExceeded(
+            String userId,
+            String partnerId,
+            JsonNode providerResponse,
+            SBApiResponse response) {
+
+        if (!providerResponse.path(Constants.CONCURRENT_LIMIT_ENABLED).asBoolean(false))
+            return false;
+
+        int concurrentLimit = providerResponse.path(Constants.CONCURRENT_LIMIT).asInt(0);
+        if (concurrentLimit <= 0) return false;
+
+        String activeKey =
+                Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.ACTIVE_COUNT;
+
+        int activeCount = getCountFromCacheOrDb(
+                activeKey,
+                () -> {
+                    List<Map<String, Object>> allUserCourses =
+                            cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                                    Map.of(Constants.USER_ID, userId),
+                                    null,
+                                    null
+                            );
+
+                    return (int) allUserCourses.stream()
+                            .filter(rec -> partnerId.equals(rec.get(Constants.PARTNER_ID_REQ)))
+                            .filter(rec -> rec.get(Constants.STATUS) != null
+                                    && ((int) rec.get(Constants.STATUS)) == 0)
+                            .count();
+                }
+        );
+
+        if (activeCount >= concurrentLimit) {
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.getParams().setMsg(cbServerProperties.getPartnerConcurrentLimitMsg());
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isKarmaInsufficient(
+            String userId,
+            JsonNode providerResponse,
+            String token,
+            Map<String, String> userAttributes,
+            SBApiResponse response) {
+
+        if (!providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false))
+            return false;
+
+        int karmaPoints = providerResponse.path(Constants.KARMA_POINTS).asInt(0);
+        if (karmaPoints <= 0) return false;
+
+        Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
+
+        String userGroup = userAttributes.get(Constants.GROUP);
+        boolean isExemptGroup = StringUtils.isNotBlank(userGroup)
+                && cbServerProperties.getKarmaExemptGroups()
+                .stream()
+                .anyMatch(group -> group.equalsIgnoreCase(userGroup.trim()));
+
+        if (!isExemptGroup && userKarmaPoints < karmaPoints) {
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.getParams().setMsg(
+                    String.format(cbServerProperties.getKarmaInsufficientMsg(), karmaPoints)
+            );
+            return true;
+        }
+        return false;
+    }
+
+    private int getCountFromCacheOrDb(String key, Supplier<Integer> dbSupplier) {
+        String cached = cacheService.getCache(key,cbServerProperties.getRedisIndex());
+        if (StringUtils.isNotBlank(cached)) {
+            return Integer.parseInt(cached);
+        }
+
+        int count = dbSupplier.get();
+        cacheService.putCache(key, cbServerProperties.getRedisIndex(), count);
+        return count;
     }
 
     @Override
@@ -579,19 +654,16 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes,false)) {
+                if (!handleAccessControlledEnrollment(courseId, userAttributes)) {
                     return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
-            } else {
-                return transformUtility.buildSuccessResponse(response, "Enrollment validation successful", HttpStatus.OK);
             }
-
+            return transformUtility.buildSuccessResponse(response, "Enrollment validation successful", HttpStatus.OK);
         } catch (Exception e) {
             String errMsg = Constants.ENROLLMENT_ERROR + e.getMessage();
             log.error(errMsg, e);
             return transformUtility.buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
         }
-        return response;
     }
 
     private boolean validateRequest(JsonNode request, SBApiResponse response) {
@@ -643,12 +715,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     : new HashMap<>();
             log.info("User attributes fetched for enrollment: {}", userAttributes);
 
+            // Validate provider settings limits
             if (!validatePartnerEnrollmentLimits(userId, partnerId, response, providerResponse.get(Constants.DATA), token, userAttributes)) {
                 return response;
             }
             // Check access control settings enabled and validate
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(userId, courseId, partnerId, response, userAttributes, false)) {
+                if (!handleAccessControlledEnrollment(courseId, userAttributes)) {
                         return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
             }

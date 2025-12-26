@@ -20,7 +20,9 @@ import org.springframework.test.context.TestPropertySource;
         "content.partner.readby.partnercode.api.url=http://partner.code.url",
         "spring.kafka.cornell.topic.name=user-progress-topic",
         "user.progress.send.from.partner.topic.name=user-partner-progress",
-        "maximum.allowed.limit=500"
+        "maximum.allowed.limit=500",
+        "spring.redis.index=1",
+        "spring.redis.default.index=0"
 })
 class CbServerPropertiesTest {
 
@@ -41,6 +43,10 @@ class CbServerPropertiesTest {
         assertEquals("user-progress-topic", properties.getUserProgressUpdateTopic());
         assertEquals("user-partner-progress", properties.getUserProgressSendFromPartner());
         assertEquals(500, properties.getMaximumAllowedLimit());
+        assertEquals(1, properties.getRedisIndex());
+        assertEquals(0, properties.getDefaultIndex());
+
+
 
         // Explicitly call setters to ensure setter methods are covered too
         properties.setRedisCacheEnable(false);
@@ -48,5 +54,12 @@ class CbServerPropertiesTest {
 
         properties.setSvgTemplate("new-template");
         assertEquals("new-template", properties.getSvgTemplate());
+
+        properties.setRedisIndex(2);
+        assertEquals(2, properties.getRedisIndex());
+
+        properties.setDefaultIndex(1);
+        assertEquals(1, properties.getDefaultIndex());
+
     }
 }

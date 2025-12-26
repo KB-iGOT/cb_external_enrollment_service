@@ -624,7 +624,7 @@ class EnrollmentServiceImplTest {
         contentMap.put("name", "Test Course");
         expectedMap.put("content", contentMap);
 
-        when(cacheService.getCache(contentId)).thenReturn(cachedJson);
+        when(cacheService.getCache(contentId,0)).thenReturn(cachedJson);
         when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class))).thenReturn(expectedMap);
 
         Map<String, Object> result = enrollmentService.fetchDataByContentId(contentId);
@@ -647,14 +647,14 @@ class EnrollmentServiceImplTest {
         JsonNode jsonNode = objectMapper.valueToTree(ciosData);
         when(entity.getCiosData()).thenReturn(jsonNode);
 
-        when(cacheService.getCache(contentId)).thenReturn(null);
+        when(cacheService.getCache(contentId,0)).thenReturn(null);
         when(contentRepository.findByContentIdAndIsActive(contentId, true)).thenReturn(Optional.of(entity));
         when(this.objectMapper.convertValue(eq(jsonNode), any(TypeReference.class))).thenReturn(ciosData);
 
         Map<String, Object> result = enrollmentService.fetchDataByContentId(contentId);
 
         assertEquals(ciosData, result);
-        verify(cacheService).putCache(eq(contentId), any());
+        verify(cacheService).putCache(eq(contentId), anyInt(), any());
     }
 
     @Test
@@ -672,7 +672,7 @@ class EnrollmentServiceImplTest {
     void fetchDataByContentId_repositoryMiss() {
         String contentId = "content123";
 
-        when(cacheService.getCache(contentId)).thenReturn(null);
+        when(cacheService.getCache(contentId,0)).thenReturn(null);
         when(contentRepository.findByContentIdAndIsActive(contentId, true)).thenReturn(Optional.empty());
 
         Map<String, Object> result = enrollmentService.fetchDataByContentId(contentId);
@@ -686,7 +686,7 @@ class EnrollmentServiceImplTest {
         String contentId = "content123";
         String cachedJson = "{\"content\":{\"name\":\"Test Course\"}}";
 
-        when(cacheService.getCache(contentId)).thenReturn(cachedJson);
+        when(cacheService.getCache(contentId,0)).thenReturn(cachedJson);
         when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class))).thenThrow(new JsonProcessingException("Test exception") {});
 
         assertThrows(RuntimeException.class, () -> {
@@ -837,11 +837,10 @@ class EnrollmentServiceImplTest {
         when(transformUtility.readAccessSettings(courseId)).thenReturn(accessControl);
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "handleAccessControlledEnrollment", userId, courseId, partnerId, response, userAttributes, true);
+                enrollmentService, "handleAccessControlledEnrollment", courseId, userAttributes);
 
         assertTrue(result);
-        assertEquals(HttpStatus.OK, response.getResponseCode());
-        assertEquals("User enrolled successfully", ((Map<?, ?>) response.getResult()).get("message"));
+
     }
 
     @Test
@@ -865,14 +864,9 @@ class EnrollmentServiceImplTest {
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
                 enrollmentService,
                 "handleAccessControlledEnrollment",
-                userId,
                 courseId,
-                partnerId,
-                response,
-                userAttributes,
-                false
+                userAttributes
         );
-
 
         assertFalse(result);
         assertTrue(response.getResult() == null || response.getResult().isEmpty());
@@ -891,7 +885,7 @@ class EnrollmentServiceImplTest {
 
         assertThrows(CustomException.class, () -> {
             ReflectionTestUtils.invokeMethod(enrollmentService, "handleAccessControlledEnrollment",
-                    userId, courseId, partnerId, response, userAttributes, true);
+                    courseId, userAttributes);
         });
     }
 
@@ -1007,3 +1001,4 @@ class EnrollmentServiceImplTest {
         assertTrue(response.getParams().getMsg().contains("100"));
     }
 }
+

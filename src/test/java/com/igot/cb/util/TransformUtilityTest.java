@@ -60,7 +60,7 @@ class TransformUtilityTest {
     void setUp() {
         lenient().when(mapper.valueToTree(any())).thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
         lenient().when(mapper.convertValue(any(), eq(JsonNode.class))).thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
-        lenient().when(cacheService.getCache(anyString())).thenReturn(null);
+        lenient().when(cacheService.getCache(anyString(),anyInt())).thenReturn(null);
         lenient().when(mapper.valueToTree(any())).thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
         lenient().when(mapper.convertValue(any(), eq(JsonNode.class))).thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
     }
@@ -155,10 +155,10 @@ class TransformUtilityTest {
         String baseUrl = "http://example.com";
         String apiUrl = "/api/partner/read/";
         String fullUrl = baseUrl + apiUrl + partnerId;
-        
+
         when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
         when(cbServerProperties.getContentPartnerReadApiUrl()).thenReturn(apiUrl);
-        
+
         ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(null, HttpStatus.BAD_REQUEST);
         when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
                 .thenReturn(responseEntity);
@@ -167,10 +167,11 @@ class TransformUtilityTest {
         CustomException exception = assertThrows(CustomException.class, () -> {
             transformUtility.callContentPartnerReadApi(partnerId);
         });
-        
+
         assertEquals(Constants.ERROR, exception.getCode());
         assertTrue(exception.getMessage().contains("Failed to retrieve externalId"));
     }
+
 
     @Test
     void callContentPartnerReadByPartnerCodeApi_Success() {
@@ -358,9 +359,12 @@ class TransformUtilityTest {
         CustomException exception = assertThrows(CustomException.class,
                 () -> transformUtility.callContentPartnerReadApi(DUMMY_PARTNER_ID));
 
-        assertEquals("Invalid response body from CIOS read API", exception.getMessage());
+        assertEquals("Failed to retrieve externalId.", exception.getMessage());
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getHttpStatusCode());
+        assertEquals(Constants.ERROR, exception.getCode());
     }
+
+
 
     @Test
     void testCallContentPartnerReadByPartnerCodeApi_whenResultMissing_thenThrowCustomException() {
