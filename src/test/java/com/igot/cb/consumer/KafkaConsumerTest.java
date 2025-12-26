@@ -6,13 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -45,6 +43,7 @@ import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.TransformUtility;
+import com.igot.cb.util.cache.CacheService;
 
 @ExtendWith(MockitoExtension.class)
 class KafkaConsumerTest {
@@ -73,10 +72,13 @@ class KafkaConsumerTest {
     @Mock
     private Resource mockResource;
 
+    @Mock
+    private CacheService cacheService;
+
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(kafkaConsumer, "mapper", mapper);
-        // Retain only necessary stubbings
+        ReflectionTestUtils.setField(kafkaConsumer, "cacheService", cacheService);
         lenient().when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
         lenient().when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
     }
@@ -84,9 +86,14 @@ class KafkaConsumerTest {
     @Test
     void enrollUpdateConsumer_Success() throws Exception {
         // Arrange
-        String payload = "{\"userid\":\"user123@domain.com\",\"courseid\":\"course123\",\"partnerId\":\"partner123\",\"completedon\":\"01/01/2023\"}";
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put(Constants.USER_ID, "user123@domain.com");
+        payloadMap.put("courseid", "course123");
+        payloadMap.put("partnerId", "partner123");
+        payloadMap.put("completedon", "01/01/2023");
+        String payload = mapper.writeValueAsString(payloadMap);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
-    
+
         JsonNode contentNode = mapper.createObjectNode();
         ((ObjectNode) contentNode).put("contentId", "course123");
         ((ObjectNode) contentNode).put("name", "Course Name");
@@ -101,7 +108,7 @@ class KafkaConsumerTest {
         ((ObjectNode) result).set("content", contentNode);
     
         when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
-    
+
         List<Map<String, Object>> existingRecords = new ArrayList<>();
         Map<String, Object> existingRecord = new HashMap<>();
         existingRecords.add(existingRecord);
@@ -541,7 +548,14 @@ class KafkaConsumerTest {
 
     @Test
     void enrollUpdateConsumer_withNullAdditionalProperties_doesNotThrow() throws Exception {
-        String payload = "{\"userid\":\"user@domain.com\",\"courseid\":\"courseid\",\"partnerId\":\"partnerId\",\"completedon\":\"2023-01-01T00:00:00Z\",\"additional_properties\":null}";
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put(Constants.USER_ID, "user@domain.com");
+        payloadMap.put("courseid", "courseid");
+        payloadMap.put("partnerId", "partnerId");
+        payloadMap.put("completedon", "2023-01-01T00:00:00Z");
+        payloadMap.put(Constants.ADDITIONAL_PROPERTIES, null);
+        String payload = mapper.writeValueAsString(payloadMap);
+
         ConsumerRecord<String, String> updatRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
         ObjectNode contentNode = mapper.createObjectNode();
         contentNode.put("contentId", "courseInternalId");
@@ -553,33 +567,55 @@ class KafkaConsumerTest {
         contentNode.set("contentPartner", contentPartnerNode);
         ObjectNode result = mapper.createObjectNode();
         result.set("content", contentNode);
+
         when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+
         List<Map<String, Object>> dbRecords = new ArrayList<>();
         dbRecords.add(new HashMap<>());
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                 anyString(), anyString(), any(), isNull(), eq(1))
         ).thenReturn(dbRecords);
+
         when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any()))
                 .thenReturn(Collections.emptyMap());
+
         ObjectNode partnerApiResponse = mapper.createObjectNode();
         partnerApiResponse.put("certificateTemplateUrl", "http://template.svg");
         when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
+
         when(resourceLoader.getResource(anyString())).thenReturn(mockResource);
         when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
+
         Map<String, Object> userMap = new HashMap<>();
         userMap.put("firstname", "John");
         userMap.put("lastname", "Doe");
         when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any()))
                 .thenReturn(List.of(userMap));
+
+        // Mock the certificate topic and stub producer.push
+        when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
+        doNothing().when(producer).push(eq("certTopic"), any(JsonNode.class));
+
+        // Act
         kafkaConsumer.enrollUpdateConsumer(updatRecord);
+
+        // Assert
         verify(cassandraOperation).updateRecord(anyString(), anyString(), any(), any());
         verify(producer).push(eq("certTopic"), any(JsonNode.class));
     }
 
 
+
+
     @Test
     void enrollUpdateConsumer_withInvalidCompletedOnFormat_returnsNullTimestamp() throws Exception {
-        String payload = "{\"userid\":\"user@domain.com\",\"courseid\":\"courseid\",\"partnerId\":\"partnerId\",\"completedon\":\"invalid-format\"}";
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put(Constants.USER_ID, "user@domain.com");
+        payloadMap.put("courseid", "courseid");
+        payloadMap.put("partnerId", "partnerId");
+        payloadMap.put("completedon", "invalid-format");
+        String payload = mapper.writeValueAsString(payloadMap);
+
         ConsumerRecord<String, String> updateRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
         ObjectNode contentNode = mapper.createObjectNode();
         contentNode.put("contentId", "internalCourseId");
@@ -590,18 +626,18 @@ class KafkaConsumerTest {
         contentNode.set("contentPartner", contentPartnerNode);
         ObjectNode result = mapper.createObjectNode();
         result.set("content", contentNode);
-        when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+        lenient().when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
         List<Map<String, Object>> records = new ArrayList<>();
         records.add(new HashMap<>());
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+        lenient().when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(records);
-        when(cassandraOperation.updateRecord(any(), any(), any(), any())).thenReturn(Collections.emptyMap());
+        lenient().when(cassandraOperation.updateRecord(any(), any(), any(), any())).thenReturn(Collections.emptyMap());
         ObjectNode partnerApiResponse = mapper.createObjectNode();
         partnerApiResponse.put("certificateTemplateUrl", "http://template.svg");
-        when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
-        when(resourceLoader.getResource(any())).thenReturn(mockResource);
-        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
-        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+        lenient().when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
+        lenient().when(resourceLoader.getResource(any())).thenReturn(mockResource);
+        lenient().when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
+        lenient().when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
                 .thenReturn(List.of(Map.of("firstname", "John")));
         ArgumentCaptor<Map<String, Object>> updateCaptor = ArgumentCaptor.forClass(Map.class);
         kafkaConsumer.enrollUpdateConsumer(updateRecord);

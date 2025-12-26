@@ -95,7 +95,7 @@ public class KafkaConsumer {
                     cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, updatedMap, propertyMap);
                     String userId = userCourseEnrollMap.get(Constants.USER_ID).toString();
                     if (StringUtils.isNotBlank(userId)) {
-                        cacheService.deleteCache(Constants.PARTNER + partnerId + Constants.USER_KEY + userCourseEnrollMap.get(Constants.USER_ID) + Constants.ACTIVE_COUNT, 1);
+                        cacheService.deleteCache(Constants.PARTNER + partnerId + Constants.USER_KEY + userCourseEnrollMap.get(Constants.USER_ID) + Constants.ACTIVE_COUNT, cbServerProperties.getRedisIndex());
                     }
                     sendUpdatedRecordDataToKafkaToGenerateCertificate(userCourseEnrollMap, result);
                 } else {
@@ -208,11 +208,20 @@ public class KafkaConsumer {
 
 
     private static Instant convertToTimestamp(String dateString) {
+        if (dateString == null || dateString.trim().isEmpty()) {
+            return null;
+        }
         try {
             return Instant.parse(dateString);
-        } catch (DateTimeParseException e) {
-            e.printStackTrace();
-            return null;
+        } catch (DateTimeParseException e1) {
+            try {
+                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                LocalDateTime dateTime = LocalDateTime.parse(dateString, formatter);
+                return dateTime.toInstant(ZoneOffset.UTC);
+            } catch (DateTimeParseException e2) {
+                e2.printStackTrace();
+                return null;
+            }
         }
     }
 

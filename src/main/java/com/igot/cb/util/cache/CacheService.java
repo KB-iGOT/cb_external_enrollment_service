@@ -1,12 +1,14 @@
 package com.igot.cb.util.cache;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.igot.cb.config.RedisConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -17,93 +19,79 @@ public class CacheService {
   private RedisTemplate<String, String> redisTemplate;
 
   @Autowired
+  private RedisConfig redisConfig;
+
+  @Autowired
   private ObjectMapper objectMapper;
 
   @Value("${spring.redis.cacheTtl}")
   private long cacheTtl;
 
-  // ---------- PUT (INDEX) ----------
-  public void putCache(String key, int index, Object object) {
+  @Value("${spring.redis.database:0}")
+  private int defaultDatabase;
+
+  private final ConcurrentHashMap<Integer, RedisTemplate<String, String>> templateCache = new ConcurrentHashMap<>();
+
+  private RedisTemplate<String, String> getTemplate(int dbIndex) {
+    if (dbIndex == defaultDatabase) {
+      return redisTemplate;
+    }
+
+    return templateCache.computeIfAbsent(dbIndex, db -> {
+      log.info("Creating new RedisTemplate for database: {}", db);
+      return redisConfig.createRedisTemplate(redisConfig.createConnectionFactory(db));
+    });
+  }
+
+  public void putCache(String key, int dbIndex, Object object) {
     try {
+      RedisTemplate<String, String> template = getTemplate(dbIndex);
       String data = objectMapper.writeValueAsString(object);
-
-      Long size = redisTemplate.opsForList().size(key);
-      if (size == null || size <= index) {
-        // pad list with nulls if index does not exist
-        for (long i = size == null ? 0 : size; i <= index; i++) {
-          redisTemplate.opsForList().rightPush(key, null);
-        }
-      }
-
-      redisTemplate.opsForList().set(key, index, data);
-      redisTemplate.expire(key, cacheTtl, TimeUnit.SECONDS);
-
+      template.opsForValue().set(key, data, cacheTtl, TimeUnit.SECONDS);
+      log.debug("Data saved to database {} with key: {}", dbIndex, key);
     } catch (Exception e) {
-      log.error("Error while putting data in Redis cache for key {} at index {} : {}",
-              key, index, e.getMessage());
+      log.error("Error while putting data in Redis cache: {} ", e.getMessage());
     }
   }
 
-  // ---------- GET (INDEX) ----------
-  public String getCache(String key, int index) {
+  public String getCache(String key, int dbIndex) {
     try {
-      return redisTemplate.opsForList().index(key, index);
+      RedisTemplate<String, String> template = getTemplate(dbIndex);
+      return template.opsForValue().get(key);
     } catch (Exception e) {
-      log.error("Error while getting data from Redis cache for key {} at index {} : {}",
-              key, index, e.getMessage());
+      log.error("Error while getting data from Redis cache: {} ", e.getMessage());
       return null;
     }
   }
 
-  // ---------- UPDATE (INDEX) ----------
-  public void updateCache(String key, int index, Object object) {
+  public Boolean deleteCache(String key, int dbIndex) {
     try {
-      String data = objectMapper.writeValueAsString(object);
-      redisTemplate.opsForList().set(key, index, data);
-      redisTemplate.expire(key, cacheTtl, TimeUnit.SECONDS);
-    } catch (Exception e) {
-      log.error("Error while updating Redis cache for key {} at index {} : {}",
-              key, index, e.getMessage());
-    }
-  }
-
-  // ---------- DELETE (INDEX) ----------
-  public Boolean deleteCache(String key, int index) {
-    try {
-      String value = redisTemplate.opsForList().index(key, index);
-      if (value == null) {
-        log.warn("No value found at key {} index {}", key, index);
-        return false;
+      RedisTemplate<String, String> template = getTemplate(dbIndex);
+      boolean result = template.delete(key);
+      if(result) {
+        log.info("Key {} deleted successfully from database {}.", key, dbIndex);
+      } else {
+        log.warn("Key {} not found in database {}.", key, dbIndex);
       }
-
-      Long removed = redisTemplate.opsForList().remove(key, 1, value);
-      return removed != null && removed > 0;
-
+      return result;
     } catch (Exception e) {
-      log.error("Error while deleting Redis cache for key {} at index {} : {}",
-              key, index, e.getMessage());
+      log.error("Error while deleting key from Redis cache: {} ", e.getMessage());
       return false;
     }
   }
 
-  // ---------- INCREMENT (INDEX) ----------
-  public Long incrementIfExists(String key, int index) {
+  public Long incrementIfExists(String key, long delta, int dbIndex) {
     try {
-      String value = redisTemplate.opsForList().index(key, index);
-      if (value == null) {
-        log.debug("Redis key {} index {} does not exist. Skipping increment.", key, index);
+      RedisTemplate<String, String> template = getTemplate(dbIndex);
+      Boolean exists = template.hasKey(key);
+      if (Boolean.TRUE.equals(exists)) {
+        return template.opsForValue().increment(key, delta);
+      } else {
+        log.warn("Key {} does not exist in database {}, increment skipped.", key, dbIndex);
         return null;
       }
-
-      Long incrementedValue = Long.parseLong(value) + 1;
-      redisTemplate.opsForList().set(key, index, String.valueOf(incrementedValue));
-      redisTemplate.expire(key, cacheTtl, TimeUnit.SECONDS);
-
-      return incrementedValue;
-
     } catch (Exception e) {
-      log.error("Error while incrementing Redis key {} at index {} : {}",
-              key, index, e.getMessage());
+      log.error("Error while incrementing key in Redis cache: {} ", e.getMessage());
       return null;
     }
   }

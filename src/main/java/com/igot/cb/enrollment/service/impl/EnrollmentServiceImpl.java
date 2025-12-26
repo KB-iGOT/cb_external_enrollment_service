@@ -286,7 +286,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             log.error("CiosContentServiceImpl::read:Id not found");
             throw new CustomException(Constants.ERROR, "contentId is mandatory", HttpStatus.BAD_REQUEST);
         }
-        String cachedJson = cacheService.getCache(contentId,0);
+        String cachedJson = cacheService.getCache(contentId,cbServerProperties.getDefaultIndex());
         Map<String, Object> response = new HashMap<>();
         if (StringUtils.isNotEmpty(cachedJson)) {
             log.info("CiosContentServiceImpl::read:Record coming from redis cache");
@@ -299,7 +299,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             Optional<CiosContentEntity> optionalJsonNodeEntity = contentRepository.findByContentIdAndIsActive(contentId, true);
             if (optionalJsonNodeEntity.isPresent()) {
                 CiosContentEntity ciosContentEntity = optionalJsonNodeEntity.get();
-                cacheService.putCache(contentId, 1, ciosContentEntity.getCiosData());
+                cacheService.putCache(contentId, cbServerProperties.getDefaultIndex(), ciosContentEntity.getCiosData());
                 log.info("CiosContentServiceImpl::read:Record coming from postgres db");
                 return objectMapper.convertValue(ciosContentEntity.getCiosData(), new TypeReference<Map<String, Object>>() {});
             }
@@ -448,9 +448,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                         Constants.COURSE_ID, courseId)
         );
 
-        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.COUNT,1);
-        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.COUNT,1);
-        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.ACTIVE_COUNT, 1);
+        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
+        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
+        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.ACTIVE_COUNT, 1, cbServerProperties.getRedisIndex());
         log.info("User {} successfully enrolled to course {}", userId, courseId);
     }
 
@@ -611,13 +611,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     private int getCountFromCacheOrDb(String key, Supplier<Integer> dbSupplier) {
-        String cached = cacheService.getCache(key,1);
+        String cached = cacheService.getCache(key,cbServerProperties.getRedisIndex());
         if (StringUtils.isNotBlank(cached)) {
             return Integer.parseInt(cached);
         }
 
         int count = dbSupplier.get();
-        cacheService.putCache(key, 1, count);
+        cacheService.putCache(key, cbServerProperties.getRedisIndex(), count);
         return count;
     }
 

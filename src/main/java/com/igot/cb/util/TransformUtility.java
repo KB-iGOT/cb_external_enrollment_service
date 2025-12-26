@@ -85,7 +85,7 @@ public class TransformUtility {
         try {
             log.info("TransformUtility :: callCiosContentReadAPi");
             JsonNode jsonNode;
-            String cachedJson = cacheService.getCache(contentId,0);
+            String cachedJson = cacheService.getCache(contentId, cbServerProperties.getDefaultIndex());
             if (StringUtils.isNotEmpty(cachedJson)) {
                 jsonNode = mapper.readTree(cachedJson);
                 return jsonNode.get("content");
@@ -121,7 +121,7 @@ public class TransformUtility {
     public JsonNode callContentPartnerReadApi(String partnerId) {
         try {
             log.info("TransformUtility :: callContentPartnerReadApi");
-            String cachedJson = cacheService.getCache(partnerId,0);
+            String cachedJson = cacheService.getCache(partnerId, cbServerProperties.getDefaultIndex());
             if (StringUtils.isNotEmpty(cachedJson)) {
                 return mapper.readTree(cachedJson);
             }
@@ -150,7 +150,7 @@ public class TransformUtility {
             }
         } catch (Exception e) {
             log.error("error while processing", e);
-            throw new CustomException("Constants.ERROR", "Failed to retrieve externalId.", HttpStatus.INTERNAL_SERVER_ERROR);
+            throw new CustomException(Constants.ERROR, "Failed to retrieve externalId.", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -209,7 +209,7 @@ public class TransformUtility {
     public Map<String, Object> readUserDetails(String userid) {
         log.info("TransformUtility :: readUserDetails");
         try {
-            String cachedJson = cacheService.getCache(Constants.UAER_DETAILS + userid,1);
+            String cachedJson = cacheService.getCache(Constants.UAER_DETAILS + userid, cbServerProperties.getRedisIndex());
             if(StringUtils.isNotBlank(cachedJson)){
                 return mapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {});
             }
@@ -222,7 +222,7 @@ public class TransformUtility {
                     null
             );
             if (CollectionUtils.isNotEmpty(userEnrollmentList)) {
-                cacheService.putCache(Constants.UAER_DETAILS + userid,1, userEnrollmentList.get(0));
+                cacheService.putCache(Constants.UAER_DETAILS + userid, cbServerProperties.getRedisIndex(), userEnrollmentList.get(0));
                 return userEnrollmentList.get(0);
             }
             return Map.of();
@@ -255,7 +255,7 @@ public class TransformUtility {
 
     public Long readUserKarmaPoints(String userId, String token) {
         log.info("TransformUtility :: readUserKarmaPoints");
-        String cachedJson = cacheService.getCache(Constants.USER_KARMA_POINTS + userId,0);
+        String cachedJson = cacheService.getCache(Constants.USER_KARMA_POINTS + userId,cbServerProperties.getDefaultIndex());
         if (StringUtils.isNotEmpty(cachedJson)) {
             log.info("TransformUtility::readUserKarmaPoints:Record coming from redis cache");
             return Long.valueOf(cachedJson);

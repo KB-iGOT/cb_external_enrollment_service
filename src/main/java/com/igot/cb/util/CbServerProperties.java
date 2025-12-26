@@ -90,4 +90,10 @@ public class CbServerProperties {
 
     @Value("${coursera.org.id}")
     private String  courseraOrgId;
+
+    @Value("${spring.redis.index}")
+    private int redisIndex;
+
+    @Value("${spring.redis.default.index}")
+    private int defaultIndex;
 }
