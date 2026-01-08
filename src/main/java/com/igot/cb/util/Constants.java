@@ -123,6 +123,7 @@ public class Constants {
     public static final String COUNT = "_count";
     public static final String UAER_DETAILS = "userDetails_";
     public static final String ACTIVE_COUNT = "_active";
+    public static final String CONTENT_PARTNER = "contentPartner";
 
     private Constants() {
     }

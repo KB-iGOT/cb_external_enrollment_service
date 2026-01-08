@@ -207,18 +207,24 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("enrollUser: should return error when courseId or partnerId is missing")
-    void enrollUser_missingRequiredFields() {
+    @DisplayName("enrollUser: should return error when courseId is missing")
+    void enrollUser_missingCourseId() {
+
         ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
         String token = "jwt.token";
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn("user123");
 
-        SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
+        SBApiResponse response =
+                enrollmentService.enrollUser(userCourseEnroll, token);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
-        assertTrue(response.getParams().getMsg().contains("Both partnerId and CourseId is mandatory"));
+        assertTrue(
+                response.getParams().getMsg()
+                        .contains("CourseId is mandatory and cannot be empty")
+        );
     }
+
 
     @Test
     @DisplayName("enrollUser: should handle exceptions")
