@@ -625,11 +625,16 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     public SBApiResponse enrolValidation(JsonNode userCourseEnroll, String token) {
         log.info("EnrollmentService::enrolValidation:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_CREATE);
-        if (!userCourseEnroll.hasNonNull(Constants.PARTNER_ID) || !userCourseEnroll.hasNonNull(Constants.COURSE_ID_RQST)) {
-            return transformUtility.buildFailedResponse(response, "Both partnerId and CourseId is mandatory", HttpStatus.BAD_REQUEST);
+        if (!userCourseEnroll.hasNonNull(Constants.COURSE_ID_RQST)) {
+            return transformUtility.buildFailedResponse(response, "CourseId is mandatory", HttpStatus.BAD_REQUEST);
         }
-        String partnerId = userCourseEnroll.get(Constants.PARTNER_ID).asText("");
+
+        String partnerId = userCourseEnroll.path(Constants.PARTNER_ID).asText("");
         String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText("");
+        JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
+        if(StringUtils.isBlank(partnerId)){
+            partnerId = contentResponse.path(Constants.CONTENT_PARTNER).path(Constants.ID).asText("");
+        }
 
         if (StringUtils.isBlank(partnerId) || StringUtils.isBlank(courseId)) {
             return transformUtility.buildFailedResponse(response, "Both partnerId and CourseId cannot be empty", HttpStatus.BAD_REQUEST);
@@ -639,8 +644,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if(StringUtils.isBlank(userId)){
                 return response;
             }
-
-            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
 
             JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
 
@@ -667,21 +670,44 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     private boolean validateRequest(JsonNode request, SBApiResponse response) {
-        if (!request.hasNonNull(Constants.PARTNER_ID)
-                || !request.hasNonNull(Constants.COURSE_ID_RQST)) {
-            transformUtility.buildFailedResponse(response,
-                    "Both partnerId and CourseId is mandatory",
-                    HttpStatus.BAD_REQUEST);
+        if (!request.hasNonNull(Constants.COURSE_ID_RQST)
+                || StringUtils.isBlank(request.get(Constants.COURSE_ID_RQST).asText())) {
+
+            transformUtility.buildFailedResponse(
+                    response,
+                    "CourseId is mandatory and cannot be empty",
+                    HttpStatus.BAD_REQUEST
+            );
             return false;
         }
 
-        if (StringUtils.isBlank(request.get(Constants.PARTNER_ID).asText())
-                || StringUtils.isBlank(request.get(Constants.COURSE_ID_RQST).asText())) {
-            transformUtility.buildFailedResponse(response,
-                    "Both partnerId and CourseId cannot be empty",
-                    HttpStatus.BAD_REQUEST);
-            return false;
+        boolean isPartnerIdMissing =
+                !request.hasNonNull(Constants.PARTNER_ID)
+                        || StringUtils.isBlank(request.path(Constants.PARTNER_ID).asText());
+
+        if (isPartnerIdMissing) {
+            JsonNode contentResponse =
+                    transformUtility.callCiosContentReadAPi(
+                            request.get(Constants.COURSE_ID_RQST).asText()
+                    );
+
+            String partnerIdFromContent =
+                    contentResponse
+                            .path(Constants.CONTENT_PARTNER)
+                            .path(Constants.ID)
+                            .asText("");
+
+            if (StringUtils.isBlank(partnerIdFromContent)) {
+                transformUtility.buildFailedResponse(
+                        response,
+                        "PartnerId not found for given CourseId",
+                        HttpStatus.BAD_REQUEST
+                );
+                return false;
+            }
+            ((ObjectNode) request).put(Constants.PARTNER_ID, partnerIdFromContent);
         }
+
         return true;
     }
 
