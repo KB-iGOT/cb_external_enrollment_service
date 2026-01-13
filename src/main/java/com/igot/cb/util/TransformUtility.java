@@ -145,8 +145,8 @@ public class TransformUtility {
                     throw new CustomException(Constants.ERROR, "Invalid response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
                 }
             } else {
-                log.error("Failed to retrieve externalId. Status code: {}", response.getStatusCode());
-                throw new CustomException(Constants.ERROR, "Failed to retrieve externalId", HttpStatus.BAD_REQUEST);
+                log.error("Failed to retrieve partnerId. Status code: {}", response.getStatusCode());
+                throw new CustomException(Constants.ERROR, "Failed to retrieve partnerId", HttpStatus.BAD_REQUEST);
             }
         } catch (Exception e) {
             log.error("error while processing", e);
