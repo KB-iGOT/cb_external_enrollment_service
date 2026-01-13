@@ -135,7 +135,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
 
             Map<String, Object> propertyMap = new HashMap<>();
-            propertyMap.put("userid", userId);
+            propertyMap.put(Constants.USER_ID, userId);
             List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                     Constants.KEYSPACE_SUNBIRD_COURSES,
                     Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
@@ -168,15 +168,35 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if (statusValue != -1) {
                 userEnrollmentList = userEnrollmentList.stream().filter(enrolment -> (int) enrolment.get(Constants.STATUS) == statusValue).toList();
             }
+
+            boolean isInProgress = statusValue != null && statusValue == 0;
+            
             List<Map<String, Object>> courses = new ArrayList<>();
             if (!userEnrollmentList.isEmpty()) {
                 for (Map<String, Object> enrollment : userEnrollmentList) {
-                    // Extract the courseId from each map
-                    String courseId = (String) enrollment.get("courseid");
+                    if (isInProgress) {
+                        String partnerId = (String) enrollment.get(Constants.PARTNER_ID_REQ);
+                        if (StringUtils.isNotBlank(partnerId)) {
+                            try {
+                                JsonNode partnerResponse = transformUtility.callContentPartnerReadApi(partnerId);
+                                JsonNode dataNode = partnerResponse.path(Constants.DATA);
+                                boolean isActive = dataNode.path(Constants.IS_ACTIVE).asBoolean(false);
+                                if (!isActive) {
+                                    log.warn("Skipping enrollment for courseId {} as partner {} is not active", 
+                                            enrollment.get(Constants.COURSE_ID), partnerId);
+                                    continue;
+                                }
+                            } catch (Exception e) {
+                                log.error("Error checking partner isActive status for partnerId: {}", partnerId, e);
+                                continue;
+                            }
+                        }
+                    }
+                    String courseId = (String) enrollment.get(Constants.COURSE_ID);
                     Map<String, Object> data = fetchDataByContentId(courseId);
-                    enrollment.put("content", data.get("content"));
+                    enrollment.put(Constants.CONTENT, data.get(Constants.CONTENT));
                     courses.add(enrollment);
-                    response.put("courses", courses);
+                    response.put(Constants.COURSES, courses);
                 }
                 response.setResponseCode(HttpStatus.OK);
                 response.setResult(response.getResult());

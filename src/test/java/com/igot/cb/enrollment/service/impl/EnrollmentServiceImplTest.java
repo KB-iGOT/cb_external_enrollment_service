@@ -1006,5 +1006,254 @@ class EnrollmentServiceImplTest {
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("100"));
     }
+
+    @Test
+    @DisplayName("readByUserId: should filter out inactive partner enrollments when status is In-Progress")
+    void readByUserId_filtersInactivePartners_InProgress() throws Exception {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put(Constants.STATUS, "In-Progress");
+        searchRequest.put(Constants.REQUEST, requestBody);
+        Map<String, Object> enrollment1 = new HashMap<>();
+        enrollment1.put(Constants.COURSE_ID, "course1");
+        enrollment1.put(Constants.PARTNER_ID_REQ, "partner1");
+        enrollment1.put(Constants.STATUS, 0);
+        enrollment1.put(Constants.UPDATED_ON, Instant.now());
+
+        Map<String, Object> enrollment2 = new HashMap<>();
+        enrollment2.put(Constants.COURSE_ID, "course2");
+        enrollment2.put(Constants.PARTNER_ID_REQ, "partner2");
+        enrollment2.put(Constants.STATUS, 0);
+        enrollment2.put(Constants.UPDATED_ON, Instant.now());
+
+        List<Map<String, Object>> enrollmentList = Arrays.asList(enrollment1, enrollment2);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(enrollmentList);
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode partnerResponse1 = realMapper.createObjectNode();
+        ObjectNode dataNode1 = realMapper.createObjectNode();
+        dataNode1.put(Constants.IS_ACTIVE, true);
+        partnerResponse1.set(Constants.DATA, dataNode1);
+        ObjectNode partnerResponse2 = realMapper.createObjectNode();
+        ObjectNode dataNode2 = realMapper.createObjectNode();
+        dataNode2.put(Constants.IS_ACTIVE, false);
+        partnerResponse2.set(Constants.DATA, dataNode2);
+
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(partnerResponse1);
+        when(transformUtility.callContentPartnerReadApi("partner2")).thenReturn(partnerResponse2);
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId(anyString());
+
+        SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+        assertNotNull(courses);
+        assertEquals(1, courses.size());
+        assertEquals("course1", courses.get(0).get(Constants.COURSE_ID));
+    }
+
+    @Test
+    @DisplayName("readByUserId: should include all enrollments when status is Completed regardless of partner isActive")
+    void readByUserId_includesAllEnrollments_Completed() throws Exception {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put(Constants.STATUS, "Completed");
+        searchRequest.put(Constants.REQUEST, requestBody);
+
+        Map<String, Object> enrollment1 = new HashMap<>();
+        enrollment1.put(Constants.COURSE_ID, "course1");
+        enrollment1.put(Constants.PARTNER_ID_REQ, "partner1");
+        enrollment1.put(Constants.STATUS, 2);
+        enrollment1.put(Constants.UPDATED_ON, Instant.now());
+
+        Map<String, Object> enrollment2 = new HashMap<>();
+        enrollment2.put(Constants.COURSE_ID, "course2");
+        enrollment2.put(Constants.PARTNER_ID_REQ, "partner2");
+        enrollment2.put(Constants.STATUS, 2);
+        enrollment2.put(Constants.UPDATED_ON, Instant.now());
+
+        List<Map<String, Object>> enrollmentList = Arrays.asList(enrollment1, enrollment2);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(enrollmentList);
+
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId(anyString());
+
+        SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+
+        assertNotNull(courses);
+        assertEquals(2, courses.size());
+    }
+
+    @Test
+    @DisplayName("readByUserId: should include all enrollments when status is All regardless of partner isActive")
+    void readByUserId_includesAllEnrollments_All() throws Exception {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put(Constants.STATUS, "All");
+        searchRequest.put(Constants.REQUEST, requestBody);
+
+        Map<String, Object> enrollment1 = new HashMap<>();
+        enrollment1.put(Constants.COURSE_ID, "course1");
+        enrollment1.put(Constants.PARTNER_ID_REQ, "partner1");
+        enrollment1.put(Constants.STATUS, 0);
+        enrollment1.put(Constants.UPDATED_ON, Instant.now());
+
+        Map<String, Object> enrollment2 = new HashMap<>();
+        enrollment2.put(Constants.COURSE_ID, "course2");
+        enrollment2.put(Constants.PARTNER_ID_REQ, "partner2");
+        enrollment2.put(Constants.STATUS, 2);
+        enrollment2.put(Constants.UPDATED_ON, Instant.now());
+
+        List<Map<String, Object>> enrollmentList = Arrays.asList(enrollment1, enrollment2);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(enrollmentList);
+
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId(anyString());
+
+        SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+
+        assertNotNull(courses);
+        assertEquals(2, courses.size());
+    }
+
+    @Test
+    @DisplayName("readByUserId: should skip enrollment when partner API call fails for In-Progress")
+    void readByUserId_skipsEnrollmentOnPartnerAPIError_InProgress() throws Exception {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put(Constants.STATUS, "In-Progress");
+        searchRequest.put(Constants.REQUEST, requestBody);
+
+        Map<String, Object> enrollment1 = new HashMap<>();
+        enrollment1.put(Constants.COURSE_ID, "course1");
+        enrollment1.put(Constants.PARTNER_ID_REQ, "partner1");
+        enrollment1.put(Constants.STATUS, 0);
+        enrollment1.put(Constants.UPDATED_ON, Instant.now());
+
+        Map<String, Object> enrollment2 = new HashMap<>();
+        enrollment2.put(Constants.COURSE_ID, "course2");
+        enrollment2.put(Constants.PARTNER_ID_REQ, "partner2");
+        enrollment2.put(Constants.STATUS, 0);
+        enrollment2.put(Constants.UPDATED_ON, Instant.now());
+
+        List<Map<String, Object>> enrollmentList = Arrays.asList(enrollment1, enrollment2);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(enrollmentList);
+        when(transformUtility.callContentPartnerReadApi("partner1"))
+                .thenThrow(new RuntimeException("API call failed"));
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode partnerResponse2 = realMapper.createObjectNode();
+        ObjectNode dataNode2 = realMapper.createObjectNode();
+        dataNode2.put(Constants.IS_ACTIVE, true);
+        partnerResponse2.set(Constants.DATA, dataNode2);
+        when(transformUtility.callContentPartnerReadApi("partner2")).thenReturn(partnerResponse2);
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId(anyString());
+
+        SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+
+        assertNotNull(courses);
+        assertEquals(1, courses.size());
+        assertEquals("course2", courses.get(0).get(Constants.COURSE_ID));
+    }
+
+    @Test
+    @DisplayName("readByUserId: should handle all active partners for In-Progress")
+    void readByUserId_allActivePartners_InProgress() throws Exception {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put(Constants.STATUS, "In-Progress");
+        searchRequest.put(Constants.REQUEST, requestBody);
+
+        Map<String, Object> enrollment1 = new HashMap<>();
+        enrollment1.put(Constants.COURSE_ID, "course1");
+        enrollment1.put(Constants.PARTNER_ID_REQ, "partner1");
+        enrollment1.put(Constants.STATUS, 0);
+        enrollment1.put(Constants.UPDATED_ON, Instant.now());
+
+        Map<String, Object> enrollment2 = new HashMap<>();
+        enrollment2.put(Constants.COURSE_ID, "course2");
+        enrollment2.put(Constants.PARTNER_ID_REQ, "partner2");
+        enrollment2.put(Constants.STATUS, 0);
+        enrollment2.put(Constants.UPDATED_ON, Instant.now());
+
+        Map<String, Object> enrollment3 = new HashMap<>();
+        enrollment3.put(Constants.COURSE_ID, "course3");
+        enrollment3.put(Constants.PARTNER_ID_REQ, "partner3");
+        enrollment3.put(Constants.STATUS, 0);
+        enrollment3.put(Constants.UPDATED_ON, Instant.now());
+
+        List<Map<String, Object>> enrollmentList = Arrays.asList(enrollment1, enrollment2, enrollment3);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(enrollmentList);
+
+        ObjectMapper realMapper = new ObjectMapper();
+        for (String partnerId : Arrays.asList("partner1", "partner2", "partner3")) {
+            ObjectNode partnerResponse = realMapper.createObjectNode();
+            ObjectNode dataNode = realMapper.createObjectNode();
+            dataNode.put(Constants.IS_ACTIVE, true);
+            partnerResponse.set(Constants.DATA, dataNode);
+            when(transformUtility.callContentPartnerReadApi(partnerId)).thenReturn(partnerResponse);
+        }
+
+        // Mock content fetch
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId(anyString());
+
+        SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+
+        assertNotNull(courses);
+        assertEquals(3, courses.size());
+    }
 }
 
