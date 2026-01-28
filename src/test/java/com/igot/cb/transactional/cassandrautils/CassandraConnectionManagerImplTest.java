@@ -60,7 +60,7 @@ class CassandraConnectionManagerImplTest {
     @Test
     void testShutdownHook() {
         Thread thread = new CassandraConnectionManagerImpl.ResourceCleanUp();
-        thread.start();
+        assertDoesNotThrow(thread::start);
     }
 
     private ConsistencyLevel invokeGetConsistencyLevel() {
@@ -76,8 +76,7 @@ class CassandraConnectionManagerImplTest {
     @Test
     void testConstructorThrowsException_whenHostIsBlank() {
         try (
-                MockedStatic<PropertiesCache> propertiesCacheStatic = Mockito.mockStatic(PropertiesCache.class)
-        ) {
+                MockedStatic<PropertiesCache> propertiesCacheStatic = Mockito.mockStatic(PropertiesCache.class)) {
             // Arrange
             PropertiesCache mockPropertiesCache = mock(PropertiesCache.class);
             propertiesCacheStatic.when(PropertiesCache::getInstance).thenReturn(mockPropertiesCache);
@@ -88,18 +87,17 @@ class CassandraConnectionManagerImplTest {
             assertEquals("Cassandra host is not configured", exception.getMessage()); // Adjust message if needed
         }
     }
-    
+
     @Test
     void testResourceCleanup() {
         // This is just for code coverage
         CassandraConnectionManagerImpl.ResourceCleanUp cleanup = new CassandraConnectionManagerImpl.ResourceCleanUp();
-        cleanup.run();
+        assertDoesNotThrow(cleanup::run);
     }
 
     @Test
     void testGetSession_ReturnsExistingSession() throws Exception {
-        CassandraConnectionManagerImpl manager =
-                mock(CassandraConnectionManagerImpl.class, CALLS_REAL_METHODS);
+        CassandraConnectionManagerImpl manager = mock(CassandraConnectionManagerImpl.class, CALLS_REAL_METHODS);
         CqlSession mockSession = mock(CqlSession.class);
         when(mockSession.isClosed()).thenReturn(false);
         Field field = CassandraConnectionManagerImpl.class.getDeclaredField("cassandraSessionMap");
@@ -114,8 +112,7 @@ class CassandraConnectionManagerImplTest {
 
     @Test
     void testGetSession_CreatesNewSession() throws Exception {
-        CassandraConnectionManagerImpl manager =
-                mock(CassandraConnectionManagerImpl.class, CALLS_REAL_METHODS);
+        CassandraConnectionManagerImpl manager = mock(CassandraConnectionManagerImpl.class, CALLS_REAL_METHODS);
         CqlSession mockSession = mock(CqlSession.class);
         when(mockSession.isClosed()).thenReturn(false);
         Field mapField = CassandraConnectionManagerImpl.class.getDeclaredField("cassandraSessionMap");
@@ -141,8 +138,7 @@ class CassandraConnectionManagerImplTest {
         doThrow(new RuntimeException("close fail")).when(mockSession).close();
         sessionField.set(null, mockSession);
 
-        CassandraConnectionManagerImpl.ResourceCleanUp cleanup =
-                new CassandraConnectionManagerImpl.ResourceCleanUp();
+        CassandraConnectionManagerImpl.ResourceCleanUp cleanup = new CassandraConnectionManagerImpl.ResourceCleanUp();
         assertDoesNotThrow(cleanup::run);
     }
 
@@ -152,8 +148,7 @@ class CassandraConnectionManagerImplTest {
             mocked.when(CqlSession::builder).thenThrow(new RuntimeException("boom"));
             CustomException ex = assertThrows(
                     CustomException.class,
-                    CassandraConnectionManagerImpl::new
-            );
+                    CassandraConnectionManagerImpl::new);
             assertTrue(ex.getMessage().contains("boom"));
         }
     }
@@ -166,8 +161,7 @@ class CassandraConnectionManagerImplTest {
             when(cache.getProperty(Constants.CASSANDRA_CONFIG_HOST)).thenReturn("");
             CustomException ex = assertThrows(
                     CustomException.class,
-                    CassandraConnectionManagerImpl::new
-            );
+                    CassandraConnectionManagerImpl::new);
             assertTrue(ex.getMessage().contains("Cassandra host is not configured"));
         }
     }
