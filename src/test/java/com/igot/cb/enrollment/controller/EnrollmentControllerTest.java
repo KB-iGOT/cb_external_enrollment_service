@@ -1,7 +1,7 @@
 package com.igot.cb.enrollment.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -97,8 +97,18 @@ class EnrollmentControllerTest {
     }
 
     @Test
-    void testEnrollmentControllerLogic() {
-        // Add test logic here
-        assertTrue(true);
+    void testEnrolValidation_Success() {
+        JsonNode userCourseEnroll = mock(JsonNode.class);
+        String token = "validToken";
+
+        SBApiResponse mockResponse = new SBApiResponse();
+        mockResponse.setResponseCode(HttpStatus.OK);
+
+        when(enrollmentService.enrolValidation(userCourseEnroll, token)).thenReturn(mockResponse);
+
+        ResponseEntity<SBApiResponse> response = enrollmentController.enrolValidation(userCourseEnroll, token);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(mockResponse, response.getBody());
     }
 }
