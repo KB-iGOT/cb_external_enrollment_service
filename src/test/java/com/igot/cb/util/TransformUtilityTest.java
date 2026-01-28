@@ -10,7 +10,9 @@ import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.SBApiResponse;
+import com.igot.cb.util.dto.SunbirdApiRespParam;
 import com.igot.cb.util.exceptions.CustomException;
+import com.igot.cb.authentication.util.AccessTokenValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,17 +54,24 @@ class TransformUtilityTest {
     @Mock
     private CacheService cacheService;
 
+    @Mock
+    private AccessTokenValidator accessTokenValidator;
+
     private ObjectMapper realMapper = new ObjectMapper();
     private static final String DUMMY_PARTNER_ID = "partnerId";
     private static final String DUMMY_PARTNER_CODE = "partnerCode";
 
     @BeforeEach
     void setUp() {
-        lenient().when(mapper.valueToTree(any())).thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
-        lenient().when(mapper.convertValue(any(), eq(JsonNode.class))).thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
-        lenient().when(cacheService.getCache(anyString(),anyInt())).thenReturn(null);
-        lenient().when(mapper.valueToTree(any())).thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
-        lenient().when(mapper.convertValue(any(), eq(JsonNode.class))).thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
+        lenient().when(mapper.valueToTree(any()))
+                .thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
+        lenient().when(mapper.convertValue(any(), eq(JsonNode.class)))
+                .thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
+        lenient().when(cacheService.getCache(anyString(), anyInt())).thenReturn(null);
+        lenient().when(mapper.valueToTree(any()))
+                .thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
+        lenient().when(mapper.convertValue(any(), eq(JsonNode.class)))
+                .thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
     }
 
     @Test
@@ -85,8 +94,7 @@ class TransformUtilityTest {
                 eq(fullUrl),
                 eq(HttpMethod.GET),
                 any(HttpEntity.class),
-                eq(Object.class))
-        ).thenReturn(responseEntity);
+                eq(Object.class))).thenReturn(responseEntity);
 
         // Act
         JsonNode result = transformUtility.callCiosReadAPi(extCourseId, partnerId);
@@ -104,10 +112,10 @@ class TransformUtilityTest {
         String baseUrl = "http://example.com";
         String apiUrl = "/api/cios/read/";
         String fullUrl = baseUrl + apiUrl + extCourseId + "/" + partnerId;
-        
+
         when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
         when(cbServerProperties.getCiosReadApiUrl()).thenReturn(apiUrl);
-        
+
         ResponseEntity<Object> responseEntity = new ResponseEntity<>(null, HttpStatus.BAD_REQUEST);
         when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class)))
                 .thenReturn(responseEntity);
@@ -125,16 +133,16 @@ class TransformUtilityTest {
         String baseUrl = "http://example.com";
         String apiUrl = "/api/partner/read/";
         String fullUrl = baseUrl + apiUrl + partnerId;
-        
+
         ObjectNode resultNode = realMapper.createObjectNode();
         resultNode.put("id", "partner123");
-        
+
         ObjectNode responseNode = realMapper.createObjectNode();
         responseNode.set("result", resultNode);
-        
+
         when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
         when(cbServerProperties.getContentPartnerReadApiUrl()).thenReturn(apiUrl);
-        
+
         ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(responseNode, HttpStatus.OK);
         when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
                 .thenReturn(responseEntity);
@@ -172,7 +180,6 @@ class TransformUtilityTest {
         assertTrue(exception.getMessage().contains("Failed to retrieve externalId"));
     }
 
-
     @Test
     void callContentPartnerReadByPartnerCodeApi_Success() {
         // Arrange
@@ -180,16 +187,16 @@ class TransformUtilityTest {
         String baseUrl = "http://example.com";
         String apiUrl = "/api/partner/code/";
         String fullUrl = baseUrl + apiUrl + partnerCode;
-        
+
         ObjectNode resultNode = realMapper.createObjectNode();
         resultNode.put("id", "partner123");
-        
+
         ObjectNode responseNode = realMapper.createObjectNode();
         responseNode.set("result", resultNode);
-        
+
         when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
         when(cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl()).thenReturn(apiUrl);
-        
+
         ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(responseNode, HttpStatus.OK);
         when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
                 .thenReturn(responseEntity);
@@ -210,10 +217,10 @@ class TransformUtilityTest {
         String baseUrl = "http://example.com";
         String apiUrl = "/api/partner/code/";
         String fullUrl = baseUrl + apiUrl + partnerCode;
-        
+
         when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
         when(cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl()).thenReturn(apiUrl);
-        
+
         ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(null, HttpStatus.BAD_REQUEST);
         when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
                 .thenReturn(responseEntity);
@@ -222,7 +229,7 @@ class TransformUtilityTest {
         CustomException exception = assertThrows(CustomException.class, () -> {
             transformUtility.callContentPartnerReadByPartnerCodeApi(partnerCode);
         });
-        
+
         assertEquals(Constants.ERROR, exception.getCode());
         assertTrue(exception.getMessage().contains("Failed to retrieve externalId"));
     }
@@ -232,7 +239,7 @@ class TransformUtilityTest {
         // Arrange
         JsonNode jsonNode = realMapper.createObjectNode();
         ((ObjectNode) jsonNode).put("field", "value");
-        
+
         List<Object> contentJson = new ArrayList<>();
         Map<String, Object> spec = new HashMap<>();
         spec.put("operation", "shift");
@@ -240,31 +247,31 @@ class TransformUtilityTest {
         mapping.put("field", "transformedField");
         spec.put("spec", mapping);
         contentJson.add(spec);
-        
+
         JsonNode expectedOutput = realMapper.createObjectNode();
         ((ObjectNode) expectedOutput).put("transformedField", "value");
-        
+
         Chainr mockChainr = mock(Chainr.class);
-        
+
         try (MockedStatic<Chainr> chainrMockedStatic = Mockito.mockStatic(Chainr.class);
-             MockedStatic<JsonUtils> jsonUtilsMockedStatic = Mockito.mockStatic(JsonUtils.class)) {
-            
+                MockedStatic<JsonUtils> jsonUtilsMockedStatic = Mockito.mockStatic(JsonUtils.class)) {
+
             chainrMockedStatic.when(() -> Chainr.fromSpec(any())).thenReturn(mockChainr);
-            
+
             Map<String, Object> jsonObject = new HashMap<>();
             jsonObject.put("field", "value");
             jsonUtilsMockedStatic.when(() -> JsonUtils.jsonToObject(anyString())).thenReturn(jsonObject);
-            
+
             Map<String, Object> transformedObject = new HashMap<>();
             transformedObject.put("transformedField", "value");
             when(mockChainr.transform(any())).thenReturn(transformedObject);
-            
+
             when(mapper.writeValueAsString(any())).thenReturn("{\"field\":\"value\"}");
             when(mapper.convertValue(any(), eq(JsonNode.class))).thenReturn(expectedOutput);
-            
+
             // Act
             JsonNode result = transformUtility.transformData(jsonNode, contentJson);
-            
+
             // Assert
             assertNotNull(result);
             assertEquals("value", result.get("transformedField").asText());
@@ -276,9 +283,9 @@ class TransformUtilityTest {
         // Arrange
         JsonNode jsonNode = realMapper.createObjectNode();
         List<Object> contentJson = new ArrayList<>();
-        
+
         when(mapper.writeValueAsString(any())).thenThrow(new RuntimeException("Test exception"));
-        
+
         // Act & Assert - expect a RuntimeException with the message "Test exception"
         RuntimeException exception = assertThrows(RuntimeException.class, () -> {
             transformUtility.transformData(jsonNode, contentJson);
@@ -290,10 +297,10 @@ class TransformUtilityTest {
     void createDefaultResponse() {
         // Arrange
         String api = "test-api";
-        
+
         // Act
         SBApiResponse response = transformUtility.createDefaultResponse(api);
-        
+
         // Assert
         assertNotNull(response);
         assertEquals(api, response.getId());
@@ -307,7 +314,8 @@ class TransformUtilityTest {
     @Test
     void testTransformData_JsonProcessingException() throws Exception {
         Object input = new Object(); // any dummy object
-        when(mapper.writeValueAsString(input)).thenThrow(new JsonProcessingException("Test exception") {});
+        when(mapper.writeValueAsString(input)).thenThrow(new JsonProcessingException("Test exception") {
+        });
 
         JsonNode result = transformUtility.transformData(input, Collections.emptyList());
 
@@ -332,13 +340,11 @@ class TransformUtilityTest {
                 eq(fullUrl),
                 eq(HttpMethod.GET),
                 any(HttpEntity.class),
-                eq(Object.class))
-        ).thenReturn(mockResponse);
+                eq(Object.class))).thenReturn(mockResponse);
 
         // Act & Assert
-        CustomException thrown = assertThrows(CustomException.class, () ->
-                transformUtility.callCiosReadAPi(extCourseId, partnerId)
-        );
+        CustomException thrown = assertThrows(CustomException.class,
+                () -> transformUtility.callCiosReadAPi(extCourseId, partnerId));
 
         assertEquals("Received null response body from CIOS read API", thrown.getMessage());
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, thrown.getHttpStatusCode());
@@ -353,8 +359,7 @@ class TransformUtilityTest {
                 anyString(),
                 eq(HttpMethod.GET),
                 any(HttpEntity.class),
-                eq(JsonNode.class))
-        ).thenReturn(mockResponse);
+                eq(JsonNode.class))).thenReturn(mockResponse);
 
         CustomException exception = assertThrows(CustomException.class,
                 () -> transformUtility.callContentPartnerReadApi(DUMMY_PARTNER_ID));
@@ -363,8 +368,6 @@ class TransformUtilityTest {
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getHttpStatusCode());
         assertEquals(Constants.ERROR, exception.getCode());
     }
-
-
 
     @Test
     void testCallContentPartnerReadByPartnerCodeApi_whenResultMissing_thenThrowCustomException() {
@@ -375,8 +378,7 @@ class TransformUtilityTest {
                 anyString(),
                 eq(HttpMethod.GET),
                 any(HttpEntity.class),
-                eq(JsonNode.class))
-        ).thenReturn(mockResponse);
+                eq(JsonNode.class))).thenReturn(mockResponse);
 
         CustomException exception = assertThrows(CustomException.class,
                 () -> transformUtility.callContentPartnerReadByPartnerCodeApi(DUMMY_PARTNER_CODE));
@@ -475,8 +477,7 @@ class TransformUtilityTest {
         when(cbServerProperties.getLmsEnrolmentSummaryBaseUrl()).thenReturn(baseUrl);
         when(cbServerProperties.getLmsEnrolmentSummaryFixedUrl()).thenReturn(fixedUrl);
 
-        ResponseEntity<JsonNode> responseEntity =
-                new ResponseEntity<>(responseNode, HttpStatus.OK);
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(responseNode, HttpStatus.OK);
 
         when(restTemplate.exchange(
                 eq(fullUrl),
@@ -491,8 +492,6 @@ class TransformUtilityTest {
         assertEquals(150L, result);
         verify(restTemplate).exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class));
     }
-
-
 
     @Test
     void readUserKarmaPoints_DefaultValueWhenKarmaPointsMissing() {
@@ -605,5 +604,88 @@ class TransformUtilityTest {
         assertEquals(HttpStatus.BAD_REQUEST, exception.getHttpStatusCode());
     }
 
+    @Test
+    void callCourseraInviteApi_Success() {
+        JsonNode contentResponse = realMapper.createObjectNode()
+                .put(Constants.PROGRAM_ID, "prog1");
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user1");
+        userProfile.put(Constants.FIRST_NAME, "Test User");
 
+        when(cbServerProperties.getServiceRegistryApiBaseUrl()).thenReturn("http://base");
+        when(cbServerProperties.getServiceRegistryApiFixedUrl()).thenReturn("/fixed");
+        when(cbServerProperties.getCourseraOrgId()).thenReturn("org1");
+        when(cbServerProperties.getCourseraServiceCode()).thenReturn("svc1");
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(realMapper.createObjectNode(), HttpStatus.OK);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        boolean result = transformUtility.callCourseraInviteApi(contentResponse, userProfile);
+        assertTrue(result);
+    }
+
+    @Test
+    void callCourseraInviteApi_MissingProgramId() {
+        JsonNode contentResponse = realMapper.createObjectNode(); // No programId
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user1");
+
+        boolean result = transformUtility.callCourseraInviteApi(contentResponse, userProfile);
+        assertFalse(result);
+    }
+
+    @Test
+    void callCourseraInviteApi_Error() {
+        JsonNode contentResponse = realMapper.createObjectNode()
+                .put(Constants.PROGRAM_ID, "prog1");
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user1");
+
+        when(cbServerProperties.getServiceRegistryApiBaseUrl()).thenReturn("http://base");
+        when(cbServerProperties.getServiceRegistryApiFixedUrl()).thenReturn("/fixed");
+
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenThrow(new CustomException(Constants.ERROR, "API Error", HttpStatus.INTERNAL_SERVER_ERROR));
+
+        assertThrows(CustomException.class, () -> transformUtility.callCourseraInviteApi(contentResponse, userProfile));
+    }
+
+    @Test
+    void validateAndGetUserId_Success() {
+        String token = "valid.token";
+        SBApiResponse response = new SBApiResponse();
+        response.setParams(new SunbirdApiRespParam("id"));
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn("user1");
+
+        String userId = transformUtility.validateAndGetUserId(token, response);
+        assertEquals("user1", userId);
+    }
+
+    @Test
+    void validateAndGetUserId_Invalid() {
+        String token = "invalid.token";
+        SBApiResponse response = new SBApiResponse();
+        response.setParams(new SunbirdApiRespParam("id"));
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(Constants.UNAUTHORIZED);
+
+        String userId = transformUtility.validateAndGetUserId(token, response);
+        assertNull(userId);
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(Constants.USER_ID_DOESNT_EXIST, response.getParams().getMsg());
+    }
+
+    @Test
+    void buildSuccessResponse() {
+        SBApiResponse response = new SBApiResponse();
+        response.setParams(new SunbirdApiRespParam("id"));
+
+        SBApiResponse result = transformUtility.buildSuccessResponse(response, "Success Msg", HttpStatus.OK);
+
+        assertEquals(Constants.SUCCESS, result.getParams().getStatus());
+        assertEquals("Success Msg", result.getParams().getMsg());
+        assertEquals(HttpStatus.OK, result.getResponseCode());
+    }
 }
