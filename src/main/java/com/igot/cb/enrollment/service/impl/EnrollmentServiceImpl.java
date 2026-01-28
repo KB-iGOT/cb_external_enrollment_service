@@ -775,9 +775,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
             if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
                 boolean inviteSuccess = transformUtility.callCourseraInviteApi(
-                            contentResponse,
-                            String.valueOf(userProfile.get(Constants.ID))
-                    );
+                        contentResponse,
+                        userProfile);
                     if (!inviteSuccess) {
                         return transformUtility.buildFailedResponse(response, "User invitation failed on Coursera", HttpStatus.BAD_REQUEST);
                     }

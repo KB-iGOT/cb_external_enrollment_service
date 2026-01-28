@@ -287,7 +287,8 @@ public class TransformUtility {
         }
     }
 
-    public boolean callCourseraInviteApi(JsonNode contentResponse,String userId){
+    public boolean callCourseraInviteApi(JsonNode contentResponse,Map<String, Object> userProfile){
+        String userId = String.valueOf(userProfile.get(Constants.ID));
         try {
             log.info("TransformUtility :: callCourseraInviteApi");
             String url = cbServerProperties.getServiceRegistryApiBaseUrl() + cbServerProperties.getServiceRegistryApiFixedUrl();
@@ -307,7 +308,7 @@ public class TransformUtility {
 
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put(Constants.EXTERNAL_ID, userId);
-            requestBody.put(Constants.FULLNAME, userId);
+            requestBody.put(Constants.FULLNAME, userProfile.get(Constants.FIRST_NAME));
             requestBody.put(Constants.EMAIL, userId + "@karmayogi.com");
             requestBody.put(Constants.SEND_EMAIL, Boolean.FALSE);
 

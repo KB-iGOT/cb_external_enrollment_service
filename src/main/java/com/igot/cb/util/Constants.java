@@ -126,6 +126,7 @@ public class Constants {
     public static final String CONTENT_PARTNER = "contentPartner";
     public static final String IS_ACTIVE = "isActive";
     public static final String COURSES = "courses";
+    public static final String FIRST_NAME = "firstname";
 
     private Constants() {
     }
