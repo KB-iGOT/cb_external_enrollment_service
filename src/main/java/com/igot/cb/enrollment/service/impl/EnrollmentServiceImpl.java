@@ -169,29 +169,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 userEnrollmentList = userEnrollmentList.stream().filter(enrolment -> (int) enrolment.get(Constants.STATUS) == statusValue).toList();
             }
 
-            boolean isInProgress = statusValue != null && statusValue == 0;
-            
             List<Map<String, Object>> courses = new ArrayList<>();
             if (!userEnrollmentList.isEmpty()) {
                 for (Map<String, Object> enrollment : userEnrollmentList) {
-                    if (isInProgress) {
-                        String partnerId = (String) enrollment.get(Constants.PARTNER_ID_REQ);
-                        if (StringUtils.isNotBlank(partnerId)) {
-                            try {
-                                JsonNode partnerResponse = transformUtility.callContentPartnerReadApi(partnerId);
-                                JsonNode dataNode = partnerResponse.path(Constants.DATA);
-                                boolean isActive = dataNode.path(Constants.IS_ACTIVE).asBoolean(false);
-                                if (!isActive) {
-                                    log.warn("Skipping enrollment for courseId {} as partner {} is not active", 
-                                            enrollment.get(Constants.COURSE_ID), partnerId);
-                                    continue;
-                                }
-                            } catch (Exception e) {
-                                log.error("Error checking partner isActive status for partnerId: {}", partnerId, e);
-                                continue;
-                            }
-                        }
-                    }
                     String courseId = (String) enrollment.get(Constants.COURSE_ID);
                     Map<String, Object> data = fetchDataByContentId(courseId);
                     enrollment.put(Constants.CONTENT, data.get(Constants.CONTENT));
