@@ -1,6 +1,8 @@
 # Use OpenJDK 17 as the base image
 FROM openjdk:17.0.1-jdk-slim
 
+RUN useradd -ms /bin/bash appuser
+
 # Install necessary dependencies
 RUN apt-get update \
     && apt-get install -y \
@@ -21,6 +23,10 @@ RUN apt-get update \
 
 # Copy the application JAR file
 COPY cb-enrollment-service-0.0.1-SNAPSHOT.jar /opt/
+
+RUN chown -R appuser:appuser /opt
+USER appuser
+WORKDIR /opt
 
 # Optional: Define a health check
 #HEALTHCHECK --interval=30s --timeout=30s CMD curl --fail http://localhost:7001/actuator/health || exit 1
