@@ -98,60 +98,57 @@ class KafkaConsumerTest {
         ((ObjectNode) contentNode).put("contentId", "course123");
         ((ObjectNode) contentNode).put("name", "Course Name");
         ((ObjectNode) contentNode).put("appIcon", "http://example.com/icon.png");
-    
+
         JsonNode contentPartnerNode = mapper.createObjectNode();
         ((ObjectNode) contentPartnerNode).put("contentPartnerName", "Partner Name");
         ((ObjectNode) contentPartnerNode).put("id", "partner123");
         ((ObjectNode) contentNode).set("contentPartner", contentPartnerNode);
-    
+
         JsonNode result = mapper.createObjectNode();
         ((ObjectNode) result).set("content", contentNode);
-    
+
         when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
 
         List<Map<String, Object>> existingRecords = new ArrayList<>();
         Map<String, Object> existingRecord = new HashMap<>();
         existingRecords.add(existingRecord);
-    
+
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES),
                 eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
                 any(),
                 isNull(),
-                eq(1)
-        )).thenReturn(existingRecords);
-    
+                eq(1))).thenReturn(existingRecords);
+
         when(cassandraOperation.updateRecord(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES),
                 eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
                 any(),
-                any()
-        )).thenReturn(new HashMap<>());
-    
+                any())).thenReturn(new HashMap<>());
+
         JsonNode partnerApiResponse = mapper.createObjectNode();
         ((ObjectNode) partnerApiResponse).put("certificateTemplateUrl", "http://example.com/template.svg");
         when(transformUtility.callContentPartnerReadApi(anyString())).thenReturn(partnerApiResponse);
-    
+
         String certificateTemplateJson = "{\"template\":\"data\"}";
         when(resourceLoader.getResource(anyString())).thenReturn(mockResource);
         when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream(certificateTemplateJson.getBytes()));
-    
+
         List<Map<String, Object>> userList = new ArrayList<>();
         Map<String, Object> userMap = new HashMap<>();
         userMap.put("firstname", "John");
         userMap.put("lastname", "Doe");
         userList.add(userMap);
-    
+
         when(cassandraOperation.getRecordsByProperties(
                 eq(Constants.KEYSPACE_SUNBIRD),
                 eq(Constants.TABLE_USER),
                 any(),
-                any()
-        )).thenReturn(userList);
-    
+                any())).thenReturn(userList);
+
         // Act
         kafkaConsumer.enrollUpdateConsumer(record);
-    
+
         // Assert
         verify(producer).push(eq("certTopic"), any(JsonNode.class));
         verify(cassandraOperation).getRecordsByPropertiesWithoutFiltering(
@@ -159,10 +156,8 @@ class KafkaConsumerTest {
                 eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
                 any(),
                 isNull(),
-                eq(1)
-        );
+                eq(1));
     }
-    
 
     @Test
     void enrollUpdateConsumer_NoUserIdOrCourseId() throws Exception {
@@ -422,7 +417,8 @@ class KafkaConsumerTest {
     @Test
     void testConvertToTimestamp() {
         // Act
-        Object result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertToTimestamp", "2023-12-01T06:42:12.000Z");
+        Object result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "convertToTimestamp",
+                "2023-12-01T06:42:12.000Z");
 
         // Assert
         assertNotNull(result);
@@ -534,16 +530,17 @@ class KafkaConsumerTest {
         assertEquals("Provider", jsonNode.get("nested").get("field3").asText());
         assertEquals("John Doe", jsonNode.get("array").get(0).get("field4").asText());
     }
+
     @Test
     void testEnrollUpdateConsumer_whenJsonParseFails_shouldLogError() {
-        // Given: an invalid JSON message that will cause ObjectMapper to throw JsonProcessingException
+        // Given: an invalid JSON message that will cause ObjectMapper to throw
+        // JsonProcessingException
         String invalidJson = "{invalid json}";
         ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", invalidJson);
 
-        // When: invoking enrollUpdateConsumer
-        kafkaConsumer.enrollUpdateConsumer(record);
-
-        // Then: exception should be caught and logged; no exception should be thrown from the method
+        // When & Then: exception should be caught and logged; no exception should be
+        // thrown from the method
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> kafkaConsumer.enrollUpdateConsumer(record));
     }
 
     @Test
@@ -573,8 +570,7 @@ class KafkaConsumerTest {
         List<Map<String, Object>> dbRecords = new ArrayList<>();
         dbRecords.add(new HashMap<>());
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                anyString(), anyString(), any(), isNull(), eq(1))
-        ).thenReturn(dbRecords);
+                anyString(), anyString(), any(), isNull(), eq(1))).thenReturn(dbRecords);
 
         when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any()))
                 .thenReturn(Collections.emptyMap());
@@ -603,9 +599,6 @@ class KafkaConsumerTest {
         verify(cassandraOperation).updateRecord(anyString(), anyString(), any(), any());
         verify(producer).push(eq("certTopic"), any(JsonNode.class));
     }
-
-
-
 
     @Test
     void enrollUpdateConsumer_withInvalidCompletedOnFormat_returnsNullTimestamp() throws Exception {
@@ -636,14 +629,16 @@ class KafkaConsumerTest {
         partnerApiResponse.put("certificateTemplateUrl", "http://template.svg");
         lenient().when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
         lenient().when(resourceLoader.getResource(any())).thenReturn(mockResource);
-        lenient().when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
+        lenient().when(mockResource.getInputStream())
+                .thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
         lenient().when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
                 .thenReturn(List.of(Map.of("firstname", "John")));
         ArgumentCaptor<Map<String, Object>> updateCaptor = ArgumentCaptor.forClass(Map.class);
         kafkaConsumer.enrollUpdateConsumer(updateRecord);
         verify(cassandraOperation).updateRecord(any(), any(), updateCaptor.capture(), any());
         Map<String, Object> updateMap = updateCaptor.getValue();
-        assertNull(updateMap.get(Constants.COMPLETED_ON), "Expected 'completed_on' to be null due to invalid date format");
+        assertNull(updateMap.get(Constants.COMPLETED_ON),
+                "Expected 'completed_on' to be null due to invalid date format");
     }
 
     @Test
@@ -660,10 +655,10 @@ class KafkaConsumerTest {
         when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
                 .thenReturn(List.of(Map.of("firstname", "John")));
         when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
-        ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map, result);
+        ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map,
+                result);
         verify(producer).push(eq("certTopic"), any(JsonNode.class));
     }
-
 
     @Test
     void replacePlaceholders_withMissingKeys_setsEmptyString() throws IOException {
@@ -678,8 +673,10 @@ class KafkaConsumerTest {
         Map<String, Object> certRequest = new HashMap<>();
         certRequest.put(Constants.COURSE_NAME, "First Line\nSecond Line");
         when(cbServerProperties.getCertificateCharLength()).thenReturn(6);
-        String part1 = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name", certRequest);
-        String part2 = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name.extended", certRequest);
+        String part1 = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name",
+                certRequest);
+        String part2 = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name.extended",
+                certRequest);
         assertEquals("First", part1);
         assertEquals("Line", part2);
     }
@@ -695,7 +692,8 @@ class KafkaConsumerTest {
     void testGetReplacementValue_courseNameWithoutNewline() {
         Map<String, Object> certRequest = Map.of(Constants.COURSE_NAME, "SimpleCourseName");
         when(cbServerProperties.getCertificateCharLength()).thenReturn(50);
-        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name", certRequest);
+        String result = ReflectionTestUtils.invokeMethod(kafkaConsumer, "getReplacementValue", "course.name",
+                certRequest);
         assertEquals("SimpleCourseName", result);
     }
 
@@ -709,7 +707,7 @@ class KafkaConsumerTest {
     @Test
     void enrollUpdateConsumer_withMissingContentNode_doesNotFail() {
         String payload = "{\"userid\":\"user@domain.com\",\"courseid\":\"courseid\",\"partnerId\":\"partnerId\"}";
-        JsonNode result = mapper.createObjectNode();  // "content" is missing
+        JsonNode result = mapper.createObjectNode(); // "content" is missing
         when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
         ConsumerRecord<String, String> updateRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
         kafkaConsumer.enrollUpdateConsumer(updateRecord);
@@ -726,7 +724,8 @@ class KafkaConsumerTest {
         JsonNode response = mapper.createObjectNode().putNull("certificateTemplateUrl");
         when(transformUtility.callContentPartnerReadApi(any())).thenReturn(response);
         assertThrows(RuntimeException.class, () -> {
-            ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map, result);
+            ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map,
+                    result);
         });
     }
 
@@ -750,7 +749,8 @@ class KafkaConsumerTest {
         when(resourceLoader.getResource(anyString())).thenReturn(mockResource);
         when(mockResource.getInputStream()).thenThrow(new IOException("fail read"));
         assertThrows(RuntimeException.class, () -> {
-            ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map, result);
+            ReflectionTestUtils.invokeMethod(kafkaConsumer, "sendUpdatedRecordDataToKafkaToGenerateCertificate", map,
+                    result);
         });
     }
 

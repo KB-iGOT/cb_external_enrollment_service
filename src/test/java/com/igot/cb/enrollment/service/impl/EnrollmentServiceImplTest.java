@@ -84,14 +84,13 @@ class EnrollmentServiceImplTest {
         lenient().when(transformUtility.buildFailedResponse(
                 any(SBApiResponse.class),
                 anyString(),
-                any(HttpStatus.class)
-        )).thenAnswer(invocation -> {
-            SBApiResponse resp = invocation.getArgument(0);
-            HttpStatus status = invocation.getArgument(2);
-            resp.setResponseCode(status);
-            resp.getParams().setMsg(invocation.getArgument(1));
-            return resp;
-        });
+                any(HttpStatus.class))).thenAnswer(invocation -> {
+                    SBApiResponse resp = invocation.getArgument(0);
+                    HttpStatus status = invocation.getArgument(2);
+                    resp.setResponseCode(status);
+                    resp.getParams().setMsg(invocation.getArgument(1));
+                    return resp;
+                });
     }
 
     @Test
@@ -162,7 +161,6 @@ class EnrollmentServiceImplTest {
         assertEquals("User enrolled successfully", result.get("message"));
     }
 
-
     @Test
     @DisplayName("enrollUser: should return error if user already enrolled")
     void enrollUser_alreadyEnrolled() {
@@ -215,16 +213,13 @@ class EnrollmentServiceImplTest {
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn("user123");
 
-        SBApiResponse response =
-                enrollmentService.enrollUser(userCourseEnroll, token);
+        SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
         assertTrue(
                 response.getParams().getMsg()
-                        .contains("CourseId is mandatory and cannot be empty")
-        );
+                        .contains("CourseId is mandatory and cannot be empty"));
     }
-
 
     @Test
     @DisplayName("enrollUser: should handle exceptions")
@@ -266,13 +261,14 @@ class EnrollmentServiceImplTest {
         Map<String, Object> contentData = new HashMap<>();
         contentData.put("content", new HashMap<>());
 
-        // FIX: Use doReturn(...).when(SPY).fetchDataByContentId() because @Spy is used now.
+        // FIX: Use doReturn(...).when(SPY).fetchDataByContentId() because @Spy is used
+        // now.
         doReturn(contentData).when(enrollmentService).fetchDataByContentId("c1");
 
         SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
         System.out.println(response.getResult());
         assertEquals(HttpStatus.OK, response.getResponseCode());
-        //assertTrue(((Map<?, ?>)response.getResult()).containsKey("courses"));
+        // assertTrue(((Map<?, ?>)response.getResult()).containsKey("courses"));
     }
 
     @Test
@@ -316,17 +312,20 @@ class EnrollmentServiceImplTest {
         // No status
         searchRequest.put(Constants.REQUEST, requestBody);
 
-        // Mock token validation - not needed for this test since it fails before token validation
+        // Mock token validation - not needed for this test since it fails before token
+        // validation
         // The method checks for status before validating the token
 
         SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
-        // Just check that the message contains the expected text, don't assert the exact boolean value
+        // Just check that the message contains the expected text, don't assert the
+        // exact boolean value
         assertNotNull(response.getParams().getMsg());
-        
+
         // For testing purposes, manually verify the condition
-        boolean containsExpectedText = response.getParams().getMsg().contains("Request is not proper, please provide status in request body");
+        boolean containsExpectedText = response.getParams().getMsg()
+                .contains("Request is not proper, please provide status in request body");
         assertFalse(containsExpectedText);
     }
 
@@ -338,8 +337,9 @@ class EnrollmentServiceImplTest {
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put(Constants.STATUS, "InvalidStatus");
         searchRequest.put(Constants.REQUEST, requestBody);
-        
-        // Mock token validation - not needed for this test since it fails before token validation
+
+        // Mock token validation - not needed for this test since it fails before token
+        // validation
         // The method checks for valid status before validating the token
 
         SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
@@ -508,8 +508,8 @@ class EnrollmentServiceImplTest {
         String userId = "user1";
         String courseId = "c1";
         Map<String, Object> record = new HashMap<>();
-//        record.put("courseid", courseId);
-//        record.put("userid", userId);
+        // record.put("courseid", courseId);
+        // record.put("userid", userId);
 
         List<Map<String, Object>> records = Collections.singletonList(record);
 
@@ -585,8 +585,8 @@ class EnrollmentServiceImplTest {
         SBApiResponse response = enrollmentService.userProgressUpdate(jsonNode, partnerCode);
 
         assertNotNull(response.getResult());
-        assertEquals("Progress report sent successfully", ((Map)response.getResult()).get("response"));
-        
+        assertEquals("Progress report sent successfully", ((Map) response.getResult()).get("response"));
+
         // Verify the producer.push method was called with the exact topic name
         verify(producer).push(eq(topic), any(JsonNode.class));
     }
@@ -601,7 +601,7 @@ class EnrollmentServiceImplTest {
         String topic = "topic";
         when(cbServerProperties.getUserProgressSendFromPartner()).thenReturn(topic);
         doThrow(new CustomException(Constants.ERROR, "Test exception", HttpStatus.INTERNAL_SERVER_ERROR))
-            .when(producer).push(anyString(), any(JsonNode.class));
+                .when(producer).push(anyString(), any(JsonNode.class));
 
         assertThrows(CustomException.class, () -> {
             enrollmentService.userProgressUpdate(jsonNode, partnerCode);
@@ -630,7 +630,7 @@ class EnrollmentServiceImplTest {
         contentMap.put("name", "Test Course");
         expectedMap.put("content", contentMap);
 
-        when(cacheService.getCache(contentId,0)).thenReturn(cachedJson);
+        when(cacheService.getCache(contentId, 0)).thenReturn(cachedJson);
         when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class))).thenReturn(expectedMap);
 
         Map<String, Object> result = enrollmentService.fetchDataByContentId(contentId);
@@ -653,7 +653,7 @@ class EnrollmentServiceImplTest {
         JsonNode jsonNode = objectMapper.valueToTree(ciosData);
         when(entity.getCiosData()).thenReturn(jsonNode);
 
-        when(cacheService.getCache(contentId,0)).thenReturn(null);
+        when(cacheService.getCache(contentId, 0)).thenReturn(null);
         when(contentRepository.findByContentIdAndIsActive(contentId, true)).thenReturn(Optional.of(entity));
         when(this.objectMapper.convertValue(eq(jsonNode), any(TypeReference.class))).thenReturn(ciosData);
 
@@ -678,7 +678,7 @@ class EnrollmentServiceImplTest {
     void fetchDataByContentId_repositoryMiss() {
         String contentId = "content123";
 
-        when(cacheService.getCache(contentId,0)).thenReturn(null);
+        when(cacheService.getCache(contentId, 0)).thenReturn(null);
         when(contentRepository.findByContentIdAndIsActive(contentId, true)).thenReturn(Optional.empty());
 
         Map<String, Object> result = enrollmentService.fetchDataByContentId(contentId);
@@ -692,8 +692,10 @@ class EnrollmentServiceImplTest {
         String contentId = "content123";
         String cachedJson = "{\"content\":{\"name\":\"Test Course\"}}";
 
-        when(cacheService.getCache(contentId,0)).thenReturn(cachedJson);
-        when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class))).thenThrow(new JsonProcessingException("Test exception") {});
+        when(cacheService.getCache(contentId, 0)).thenReturn(cachedJson);
+        when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class)))
+                .thenThrow(new JsonProcessingException("Test exception") {
+                });
 
         assertThrows(RuntimeException.class, () -> {
             enrollmentService.fetchDataByContentId(contentId);
@@ -743,7 +745,8 @@ class EnrollmentServiceImplTest {
         profList.add(prof);
         profileDetails.put(Constants.PROFESSIONAL_DETAILS, profList);
 
-        ReflectionTestUtils.invokeMethod(enrollmentService, "populateProfessionalDetails", userAttributes, profileDetails);
+        ReflectionTestUtils.invokeMethod(enrollmentService, "populateProfessionalDetails", userAttributes,
+                profileDetails);
 
         assertEquals("Tester", userAttributes.get(Constants.DESIGNATION));
         assertEquals("QA", userAttributes.get(Constants.GROUP));
@@ -755,7 +758,8 @@ class EnrollmentServiceImplTest {
         Map<String, Object> profileDetails = new HashMap<>();
         profileDetails.put(Constants.PROFESSIONAL_DETAILS, new ArrayList<>());
 
-        ReflectionTestUtils.invokeMethod(enrollmentService, "populateProfessionalDetails", userAttributes, profileDetails);
+        ReflectionTestUtils.invokeMethod(enrollmentService, "populateProfessionalDetails", userAttributes,
+                profileDetails);
 
         assertTrue(userAttributes.isEmpty());
     }
@@ -850,7 +854,7 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    void handleAccessControlledEnrollment_failure(){
+    void handleAccessControlledEnrollment_failure() {
         String userId = "user1";
         String courseId = "course1";
         String partnerId = "partner1";
@@ -871,8 +875,7 @@ class EnrollmentServiceImplTest {
                 enrollmentService,
                 "handleAccessControlledEnrollment",
                 courseId,
-                userAttributes
-        );
+                userAttributes);
 
         assertFalse(result);
         assertTrue(response.getResult() == null || response.getResult().isEmpty());
@@ -896,7 +899,7 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    void enrollUserInCourse_Success(){
+    void enrollUserInCourse_Success() {
         String userId = "user123";
         String courseId = "course456";
         String partnerId = "partner789";
@@ -909,17 +912,14 @@ class EnrollmentServiceImplTest {
                 eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
                 argThat(map -> userId.equals(map.get(Constants.USER_ID)) &&
                         courseId.equals(map.get(Constants.COURSE_ID)) &&
-                        partnerId.equals(map.get(Constants.PARTNER_ID_REQ)))
-        );
+                        partnerId.equals(map.get(Constants.PARTNER_ID_REQ))));
         verify(cassandraOperation).insertRecord(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES),
                 eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP),
                 argThat(map -> userId.equals(map.get(Constants.USER_ID)) &&
                         courseId.equals(map.get(Constants.COURSE_ID)) &&
-                        partnerId.equals(map.get(Constants.PARTNER_ID_REQ)))
-        );
+                        partnerId.equals(map.get(Constants.PARTNER_ID_REQ))));
     }
-
 
     @Test
     void validatePartnerEnrollmentLimits_Success() {
@@ -940,7 +940,8 @@ class EnrollmentServiceImplTest {
                 .thenReturn(Collections.emptyList());
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token, userAttributes);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse,
+                token, userAttributes);
 
         assertTrue(result);
     }
@@ -966,7 +967,8 @@ class EnrollmentServiceImplTest {
                 .thenReturn(enrollments);
 
         Boolean result = ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token, userAttributes);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse,
+                token, userAttributes);
         Assertions.assertNotNull(result);
         Assertions.assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
@@ -987,7 +989,8 @@ class EnrollmentServiceImplTest {
         contentResponse.put(Constants.KARMA_POINTS, 100);
         contentResponse.put(Constants.KARMA_POINTS_ENABLED, true);
         when(cbServerProperties.getKarmaInsufficientMsg())
-                .thenReturn("You don't have enough Karma Points to enroll. Minimum Karma Points required: %s. Please complete other relevant courses on iGOT to earn Karma Points and try again later.");
+                .thenReturn(
+                        "You don't have enough Karma Points to enroll. Minimum Karma Points required: %s. Please complete other relevant courses on iGOT to earn Karma Points and try again later.");
 
         when(cbServerProperties.getKarmaExemptGroups())
                 .thenReturn(Arrays.asList("Group A", "Group B"));
@@ -999,7 +1002,8 @@ class EnrollmentServiceImplTest {
                 .thenReturn(50L);
 
         Boolean result = ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse, token, userAttributes);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse,
+                token, userAttributes);
 
         Assertions.assertNotNull(result);
         Assertions.assertFalse(result);
@@ -1151,5 +1155,78 @@ class EnrollmentServiceImplTest {
         assertNotNull(courses);
         assertEquals(3, courses.size());
     }
-}
 
+    @Test
+    void enrolValidation_Success() throws Exception {
+        ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
+        userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
+        userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
+        String token = "valid.token";
+
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(new ObjectMapper().createObjectNode());
+        when(transformUtility.validateAndGetUserId(eq(token), any())).thenReturn("user1");
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(
+                new ObjectMapper().createObjectNode().set(Constants.DATA, new ObjectMapper().createObjectNode()));
+        when(transformUtility.readUserDetails("user1")).thenReturn(Map.of(Constants.ID, "user1"));
+        when(transformUtility.buildSuccessResponse(any(), anyString(), eq(HttpStatus.OK))).thenAnswer(i -> {
+            SBApiResponse r = i.getArgument(0);
+            r.setResponseCode(HttpStatus.OK);
+            return r;
+        });
+
+        // Mock private method behavior via mock calls if possible, or use permissive
+        // mocks
+        // Since validatePartnerEnrollmentLimits is private and hard to mock without
+        // spy, we rely on the implementation logic (which we mocked dependencies for).
+        // We need to ensure limits check passes. Empty provider response implies 0
+        // limits (disabled).
+
+        SBApiResponse response = enrollmentService.enrolValidation(userCourseEnroll, token);
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+    }
+
+    @Test
+    void enrolValidation_MissingCourseId() {
+        ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
+        // No courseId
+        String token = "valid.token";
+
+        SBApiResponse response = enrollmentService.enrolValidation(userCourseEnroll, token);
+        // buildFailedResponse is mocked in setUp to set status
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("CourseId is mandatory", response.getParams().getMsg());
+    }
+
+    // @Test
+    // void enrolUser_CourseraInvite_Success() throws Exception {
+    // ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
+    // userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
+    // userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
+    // String token = "valid.token";
+
+    // when(accessTokenValidator.verifyUserToken(token)).thenReturn("user1");
+    // when(transformUtility.readUserDetails("user1")).thenReturn(Map.of(Constants.ID,
+    // "user1"));
+
+    // ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+    // when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+
+    // ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+    // ObjectNode data = new ObjectMapper().createObjectNode();
+    // data.put(Constants.PARTNER_CODE, "COURSERA");
+    // providerResponse.set(Constants.DATA, data);
+    // when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+
+    // when(cbServerProperties.getCourseraPartnerCode()).thenReturn("COURSERA");
+    // // when(transformUtility.callCourseraInviteApi(eq(contentResponse),
+    // // any())).thenReturn(true);
+    // // when(transformUtility.readUserKarmaPoints(anyString(),
+    // // anyString())).thenReturn(0L);
+
+    // SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll,
+    // token);
+
+    // assertEquals(HttpStatus.OK, response.getResponseCode());
+    // verify(transformUtility).callCourseraInviteApi(eq(contentResponse), any());
+    // }
+}
