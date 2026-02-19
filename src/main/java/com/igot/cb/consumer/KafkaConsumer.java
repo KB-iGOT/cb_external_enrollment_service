@@ -156,8 +156,8 @@ public class KafkaConsumer {
                 }
             }
             JsonNode partnerApiResponse = transformUtility.callContentPartnerReadApi(partnerId);
-            if (!partnerApiResponse.path("certificateTemplateUrl").isMissingNode() && !partnerApiResponse.path("certificateTemplateUrl").isNull()) {
-                String svgTemplate = partnerApiResponse.get("certificateTemplateUrl").asText();
+            if (!partnerApiResponse.path(Constants.CERTIFICATE_TEMPLATE_URL).isMissingNode() && !partnerApiResponse.path(Constants.CERTIFICATE_TEMPLATE_URL).isNull()) {
+                String svgTemplate = partnerApiResponse.get(Constants.CERTIFICATE_TEMPLATE_URL).asText();
                 Resource resource = resourceLoader.getResource("classpath:certificateTemplate.json");
                 InputStream inputStream = resource.getInputStream();
                 JsonNode jsonNode = mapper.readTree(inputStream);
@@ -178,7 +178,7 @@ public class KafkaConsumer {
             }
 
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 

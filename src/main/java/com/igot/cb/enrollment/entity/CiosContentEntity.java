@@ -18,7 +18,7 @@ import java.sql.Timestamp;
 @NoArgsConstructor
 @Entity
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class CiosContentEntity implements Serializable {
+public class CiosContentEntity {
     @Id
     private String contentId;
     private String externalId;

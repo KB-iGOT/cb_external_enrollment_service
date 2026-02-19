@@ -127,6 +127,12 @@ public class Constants {
     public static final String IS_ACTIVE = "isActive";
     public static final String COURSES = "courses";
     public static final String FIRST_NAME = "firstname";
+    public static final String CERTIFICATE_TEMPLATE_URL = "certificateTemplateUrl";
+    public static final String DATA_CENTER = "datacenter1";
+    public static final String APPLICATION_JSON = "application/json";
+    public static final String ACCEPT = "Accept";
+    public static final String CONTENT_TYPE = "Content-Type";
+    public static final String COURSE_ENROLEMNT_INFO = "userCourseEnrolmentInfo";
 
     private Constants() {
     }
