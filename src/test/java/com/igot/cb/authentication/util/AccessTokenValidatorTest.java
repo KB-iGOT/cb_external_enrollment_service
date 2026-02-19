@@ -8,17 +8,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.BeforeEach;
 import org.keycloak.common.util.Time;
-import org.keycloak.crypto.KeyWrapper;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
-import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.io.IOException;
 import java.security.PublicKey;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -32,15 +27,10 @@ class AccessTokenValidatorTest {
     private KeyManager keyManager;
 
     @Mock
-    private KeyWrapper mockKeyWrapper;
-
-    @Mock
     private PublicKey mockPublicKey;
 
-    @InjectMocks
     private AccessTokenValidator accessTokenValidator;
 
-    @Spy
     private AccessTokenValidator spyAccessTokenValidator;
 
     private static final ObjectMapper mapper = new ObjectMapper();
@@ -51,6 +41,11 @@ class AccessTokenValidatorTest {
 
     @BeforeEach
     void setUp() throws Exception {
+        // Initialize the validator with the mocked KeyManager
+        accessTokenValidator = new AccessTokenValidator(keyManager);
+        // Create a spy of the validator for tests that need to mock specific methods
+        spyAccessTokenValidator = spy(new AccessTokenValidator(keyManager));
+
         expiredToken = generateToken("expiredUserId", Time.currentTime() - 1000, "expectedIssuer");
         invalidSignatureToken = generateToken("invalidSignatureUserId", Time.currentTime() + 1000, "expectedIssuer");
         invalidIssuerToken = generateToken("invalidIssuerUserId", Time.currentTime() + 1000, "invalidIssuer");
