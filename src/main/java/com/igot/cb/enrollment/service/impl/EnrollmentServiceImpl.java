@@ -293,7 +293,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             try {
                return objectMapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {});
             } catch (JsonProcessingException e) {
-                throw new RuntimeException(e);
+                throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
             }
         } else {
             Optional<CiosContentEntity> optionalJsonNodeEntity = contentRepository.findByContentIdAndIsActive(contentId, true);

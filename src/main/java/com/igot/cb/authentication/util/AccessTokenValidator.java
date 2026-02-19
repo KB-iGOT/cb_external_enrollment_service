@@ -8,7 +8,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.keycloak.common.util.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -21,14 +20,15 @@ import java.util.Map;
 @Component
 public class AccessTokenValidator {
 
-    @Autowired
-    KeyManager keyManager;
-
+    private final KeyManager keyManager;
     private static Logger logger = LoggerFactory.getLogger(AccessTokenValidator.class.getName());
     private static final ObjectMapper mapper = new ObjectMapper();
     private static PropertiesCache cache = PropertiesCache.getInstance();
     private static final String REALM_URL = cache.getProperty(Constants.SSO_URL) + "realms/" + cache.getProperty(Constants.SSO_REALM);
 
+    public AccessTokenValidator(KeyManager keyManager) {
+        this.keyManager = keyManager;
+    }
 
     /**
      * Validates the provided JWT token.
