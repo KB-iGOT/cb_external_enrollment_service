@@ -1,5 +1,6 @@
 package com.igot.cb.util;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -16,10 +17,8 @@ import java.util.Properties;
  * It loads properties from specified files and provides methods to access them.
  * Also handles environment variable overrides for properties.
  */
+@Slf4j
 public class PropertiesCache {
-    // Logger for logging messages
-    private final Logger logger = LogManager.getLogger(getClass());
-
     // Array of file names from which properties are loaded
     private final String[] fileName = {
             "cassandra.config.properties",
@@ -40,6 +39,7 @@ public class PropertiesCache {
             try {
                 configProp.load(in);
             } catch (IOException e) {
+                log.error("Error while loading properties from file: " + file, e);
             }
         }
     }

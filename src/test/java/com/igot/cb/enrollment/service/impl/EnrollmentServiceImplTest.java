@@ -37,7 +37,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.igot.cb.authentication.util.AccessTokenValidator;
+import org.igot.common.auth.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
 import com.igot.cb.producer.Producer;
@@ -47,7 +47,7 @@ import com.igot.cb.util.Constants;
 import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.SBApiResponse;
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 
 class EnrollmentServiceImplTest {
 
@@ -164,8 +164,7 @@ class EnrollmentServiceImplTest {
     @Test
     @DisplayName("enrollUser: should return error if user already enrolled")
     void enrollUser_alreadyEnrolled() {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode userCourseEnroll = objectMapper.createObjectNode();
+        ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
         userCourseEnroll.put("courseId", "course1");
         userCourseEnroll.put("partnerId", "partner1");
         String token = "jwt.token";
@@ -268,7 +267,6 @@ class EnrollmentServiceImplTest {
         SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
         System.out.println(response.getResult());
         assertEquals(HttpStatus.OK, response.getResponseCode());
-        // assertTrue(((Map<?, ?>)response.getResult()).containsKey("courses"));
     }
 
     @Test
@@ -508,8 +506,6 @@ class EnrollmentServiceImplTest {
         String userId = "user1";
         String courseId = "c1";
         Map<String, Object> record = new HashMap<>();
-        // record.put("courseid", courseId);
-        // record.put("userid", userId);
 
         List<Map<String, Object>> records = Collections.singletonList(record);
 
@@ -573,8 +569,7 @@ class EnrollmentServiceImplTest {
     @Test
     @DisplayName("userProgressUpdate: returns success")
     void userProgressUpdate_success() {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode jsonNode = objectMapper.createObjectNode();
+        ObjectNode jsonNode = new ObjectMapper().createObjectNode();
         jsonNode.put("completion_date", "2023-12-01 12:12:12");
         String partnerCode = "partner";
 
@@ -649,8 +644,7 @@ class EnrollmentServiceImplTest {
         ciosData.put("content", contentMap);
 
         CiosContentEntity entity = mock(CiosContentEntity.class);
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode jsonNode = objectMapper.valueToTree(ciosData);
+        JsonNode jsonNode = new ObjectMapper().valueToTree(ciosData);
         when(entity.getCiosData()).thenReturn(jsonNode);
 
         when(cacheService.getCache(contentId, 0)).thenReturn(null);
@@ -832,8 +826,6 @@ class EnrollmentServiceImplTest {
     void handleAccessControlledEnrollment() {
         String userId = "user1";
         String courseId = "course1";
-        String partnerId = "partner1";
-        SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.USER, userId);
 
@@ -857,7 +849,6 @@ class EnrollmentServiceImplTest {
     void handleAccessControlledEnrollment_failure() {
         String userId = "user1";
         String courseId = "course1";
-        String partnerId = "partner1";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.USER, userId);
@@ -885,8 +876,6 @@ class EnrollmentServiceImplTest {
     void handleAccessControlledEnrollment_accessControlNull() {
         String userId = "user1";
         String courseId = "course1";
-        String partnerId = "partner1";
-        SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.USER, userId);
 
@@ -1197,36 +1186,145 @@ class EnrollmentServiceImplTest {
         assertEquals("CourseId is mandatory", response.getParams().getMsg());
     }
 
-    // @Test
-    // void enrolUser_CourseraInvite_Success() throws Exception {
-    // ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
-    // userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
-    // userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
-    // String token = "valid.token";
+    @Test
+    void testProcessEnrollmentSuccess() throws Exception {
 
-    // when(accessTokenValidator.verifyUserToken(token)).thenReturn("user1");
-    // when(transformUtility.readUserDetails("user1")).thenReturn(Map.of(Constants.ID,
-    // "user1"));
+        String userId = "user1";
+        String courseId = "course1";
+        String partnerId = "partner1";
+        String token = "token";
 
-    // ObjectNode contentResponse = new ObjectMapper().createObjectNode();
-    // when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        ObjectMapper mapper = new ObjectMapper();
 
-    // ObjectNode providerResponse = new ObjectMapper().createObjectNode();
-    // ObjectNode data = new ObjectMapper().createObjectNode();
-    // data.put(Constants.PARTNER_CODE, "COURSERA");
-    // providerResponse.set(Constants.DATA, data);
-    // when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        JsonNode contentResponse =
+                mapper.readTree("{\"accessSettingsEnabled\":false}");
 
-    // when(cbServerProperties.getCourseraPartnerCode()).thenReturn("COURSERA");
-    // // when(transformUtility.callCourseraInviteApi(eq(contentResponse),
-    // // any())).thenReturn(true);
-    // // when(transformUtility.readUserKarmaPoints(anyString(),
-    // // anyString())).thenReturn(0L);
+        JsonNode providerResponse =
+                mapper.readTree("""
+                {
+                    "data":{
+                        "partnerCode":"udemy"
+                    }
+                }
+                """);
 
-    // SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll,
-    // token);
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put("firstName", "Test");
 
-    // assertEquals(HttpStatus.OK, response.getResponseCode());
-    // verify(transformUtility).callCourseraInviteApi(eq(contentResponse), any());
-    // }
+        when(transformUtility.callCiosContentReadAPi(courseId))
+                .thenReturn(contentResponse);
+
+        when(transformUtility.callContentPartnerReadApi(partnerId))
+                .thenReturn(providerResponse);
+
+        when(transformUtility.readUserDetails(userId))
+                .thenReturn(userProfile);
+
+        /*
+         * Private methods cannot be mocked.
+         * Therefore provide input data that naturally
+         * passes all validations.
+         */
+
+        SBApiResponse response = new SBApiResponse();
+
+        SBApiResponse result =
+                ReflectionTestUtils.invokeMethod(
+                        enrollmentService,
+                        "processEnrolment",
+                        response,
+                        userId,
+                        courseId,
+                        partnerId,
+                        token);
+
+        assertNotNull(result);
+    }
+
+
+    @Test
+    void testProcessEnrollmentException() {
+
+        String userId = "user1";
+        String courseId = "course1";
+        String partnerId = "partner1";
+        String token = "token";
+
+        when(transformUtility.callCiosContentReadAPi(courseId))
+                .thenThrow(new RuntimeException("failure"));
+
+        SBApiResponse failedResponse = new SBApiResponse();
+
+        when(transformUtility.buildFailedResponse(
+                any(),
+                contains(Constants.ENROLLMENT_ERROR),
+                eq(HttpStatus.INTERNAL_SERVER_ERROR)))
+                .thenReturn(failedResponse);
+
+        SBApiResponse result =
+                ReflectionTestUtils.invokeMethod(
+                        enrollmentService,
+                        "processEnrolment",
+                        new SBApiResponse(),
+                        userId,
+                        courseId,
+                        partnerId,
+                        token);
+
+        assertSame(failedResponse, result);
+    }
+
+
+    @Test
+    void testProcessEnrollmentCourseraInviteFailure() throws Exception {
+
+        ObjectMapper mapper = new ObjectMapper();
+
+        JsonNode contentResponse =
+                mapper.readTree("{\"accessSettingsEnabled\":false}");
+
+        JsonNode providerResponse =
+                mapper.readTree("""
+                {
+                  "data":{
+                     "partnerCode":"coursera"
+                  }
+                }
+                """);
+
+        when(transformUtility.callCiosContentReadAPi(anyString()))
+                .thenReturn(contentResponse);
+
+        when(transformUtility.callContentPartnerReadApi(anyString()))
+                .thenReturn(providerResponse);
+
+        when(transformUtility.readUserDetails(anyString()))
+                .thenReturn(new HashMap<>());
+
+        when(cbServerProperties.getCourseraPartnerCode())
+                .thenReturn("coursera");
+
+        when(transformUtility.callCourseraInviteApi(any(), any()))
+                .thenReturn(false);
+
+        SBApiResponse failedResponse = new SBApiResponse();
+
+        when(transformUtility.buildFailedResponse(
+                any(),
+                eq("User invitation failed on Coursera"),
+                eq(HttpStatus.BAD_REQUEST)))
+                .thenReturn(failedResponse);
+
+        SBApiResponse result =
+                ReflectionTestUtils.invokeMethod(
+                        enrollmentService,
+                        "processEnrolment",
+                        new SBApiResponse(),
+                        "user1",
+                        "course1",
+                        "partner1",
+                        "token");
+
+        assertSame(failedResponse, result);
+    }
 }

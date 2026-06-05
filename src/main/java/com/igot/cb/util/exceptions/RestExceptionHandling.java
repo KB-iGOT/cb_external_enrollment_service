@@ -2,6 +2,7 @@ package com.igot.cb.util.exceptions;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.igot.common.CustomException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -12,7 +13,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class RestExceptionHandling {
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity handleException(Exception ex) {
+    public ResponseEntity<ErrorResponse> handleException(Exception ex) {
         log.debug("RestExceptionHandler::handleException::" + ex);
         HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
         ErrorResponse errorResponse = null;
@@ -38,7 +39,7 @@ public class RestExceptionHandling {
                 log.error(CustomException.getMessage());
             }
 
-            return new ResponseEntity<>(errorResponse, status);
+            return new ResponseEntity<ErrorResponse>(errorResponse, status);
         }
         errorResponse = ErrorResponse.builder()
                 .code("ERROR")

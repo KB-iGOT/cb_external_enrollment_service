@@ -30,11 +30,4 @@ class CassandraConnectionManagerTest {
         verify(cassandraConnectionManager, times(1)).getSession(keyspace);
     }
 
-    // @Test
-    // void testCloseConnection() {
-    //     // Updated to mock a valid close method
-    //     doNothing().when(cassandraConnectionManager).closeConnection();
-    //     cassandraConnectionManager.closeConnection();
-    //     verify(cassandraConnectionManager, times(1)).closeConnection();
-    // }
 }

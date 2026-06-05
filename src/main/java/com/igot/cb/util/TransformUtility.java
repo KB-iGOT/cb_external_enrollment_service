@@ -8,13 +8,13 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.igot.cb.authentication.util.AccessTokenValidator;
+import org.igot.common.auth.AccessTokenValidator;
 import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.dto.SunbirdApiRespParam;
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -138,8 +138,8 @@ public class TransformUtility {
             );
             if (response.getStatusCode().is2xxSuccessful()) {
                 JsonNode body = response.getBody();
-                if (body != null && body.has("result")) {
-                    return body.path("result");
+                if (body != null && body.has(Constants.RESULT)) {
+                    return body.path(Constants.RESULT);
                 } else {
                     log.error("CIOS read API returned null or missing 'result' field");
                     throw new CustomException(Constants.ERROR, "Invalid response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
@@ -158,8 +158,8 @@ public class TransformUtility {
         log.info("KafkaConsumer :: callContentPartnerReadByPartnerCodeApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl() + partnerCode;
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Accept", "application/json"); // Indicate JSON response
-        headers.set("Content-Type", "application/json");
+        headers.set(Constants.ACCEPT, Constants.APPLICATION_JSON);
+        headers.set(Constants.CONTENT_TYPE, Constants.APPLICATION_JSON);
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<JsonNode> response = restTemplate.exchange(
                 url,
@@ -169,8 +169,8 @@ public class TransformUtility {
         );
         if (response.getStatusCode().is2xxSuccessful()) {
             JsonNode jsonNode = response.getBody();
-            if (jsonNode != null && jsonNode.has("result")) {
-                return jsonNode.path("result");
+            if (jsonNode != null && jsonNode.has(Constants.RESULT)) {
+                return jsonNode.path(Constants.RESULT);
             } else {
                 log.error("Response body is null or missing 'result' field");
                 throw new CustomException(Constants.ERROR, "Invalid or null response body", HttpStatus.INTERNAL_SERVER_ERROR);
@@ -262,8 +262,8 @@ public class TransformUtility {
         } else {
             String url = cbServerProperties.getLmsEnrolmentSummaryBaseUrl() + cbServerProperties.getLmsEnrolmentSummaryFixedUrl() + userId;
             HttpHeaders headers = new HttpHeaders();
-            headers.set("Accept", "application/json");
-            headers.set("Content-Type", "application/json");
+            headers.set(Constants.ACCEPT, Constants.APPLICATION_JSON);
+            headers.set(Constants.CONTENT_TYPE, Constants.APPLICATION_JSON);
             headers.set(Constants.X_AUTH_TOKEN, token);
             HttpEntity<String> entity = new HttpEntity<>(headers);
             ResponseEntity<JsonNode> response = restTemplate.exchange(
@@ -275,7 +275,7 @@ public class TransformUtility {
             if (response.getStatusCode().is2xxSuccessful()) {
                 JsonNode jsonNode = response.getBody();
                 if (jsonNode != null && jsonNode.has(Constants.RESULT)) {
-                    return jsonNode.path(Constants.RESULT).path("userCourseEnrolmentInfo").path("karmaPoints").asLong(0);
+                    return jsonNode.path(Constants.RESULT).path(Constants.COURSE_ENROLEMNT_INFO).path(Constants.KARMA_POINTS).asLong(0);
                 } else {
                     log.error("Response body is null or missing 'result' field");
                     throw new CustomException(Constants.ERROR, "Invalid or null response body", HttpStatus.INTERNAL_SERVER_ERROR);

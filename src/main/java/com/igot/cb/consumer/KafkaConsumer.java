@@ -14,7 +14,7 @@ import java.io.InputStream;
 
 
 import com.igot.cb.util.cache.CacheService;
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.WordUtils;
@@ -156,8 +156,8 @@ public class KafkaConsumer {
                 }
             }
             JsonNode partnerApiResponse = transformUtility.callContentPartnerReadApi(partnerId);
-            if (!partnerApiResponse.path("certificateTemplateUrl").isMissingNode() && !partnerApiResponse.path("certificateTemplateUrl").isNull()) {
-                String svgTemplate = partnerApiResponse.get("certificateTemplateUrl").asText();
+            if (!partnerApiResponse.path(Constants.CERTIFICATE_TEMPLATE_URL).isMissingNode() && !partnerApiResponse.path(Constants.CERTIFICATE_TEMPLATE_URL).isNull()) {
+                String svgTemplate = partnerApiResponse.get(Constants.CERTIFICATE_TEMPLATE_URL).asText();
                 Resource resource = resourceLoader.getResource("classpath:certificateTemplate.json");
                 InputStream inputStream = resource.getInputStream();
                 JsonNode jsonNode = mapper.readTree(inputStream);
@@ -178,7 +178,7 @@ public class KafkaConsumer {
             }
 
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -219,7 +219,7 @@ public class KafkaConsumer {
                 LocalDateTime dateTime = LocalDateTime.parse(dateString, formatter);
                 return dateTime.toInstant(ZoneOffset.UTC);
             } catch (DateTimeParseException e2) {
-                e2.printStackTrace();
+                log.error("Failed to parse date string: {}", dateString, e2);
                 return null;
             }
         }

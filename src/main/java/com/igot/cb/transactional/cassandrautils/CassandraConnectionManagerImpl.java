@@ -12,7 +12,7 @@ import com.datastax.oss.driver.internal.core.retry.DefaultRetryPolicy;
 import com.datastax.oss.driver.internal.core.time.AtomicTimestampGenerator;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.PropertiesCache;
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.HttpStatus;
@@ -32,12 +32,11 @@ import java.util.stream.Collectors;
  * <p>
  * Manages Cassandra connections and sessions.
  */
-@Component
+@Component("cbCassandraConnectionManager")
 @Slf4j
 public class CassandraConnectionManagerImpl implements CassandraConnectionManager {
 
     private static final Map<String, CqlSession> cassandraSessionMap = new ConcurrentHashMap<>(2);
-    //private static final log log = logFactory.getlog(CassandraConnectionManagerImpl.class);
     private static CqlSession session;
 
     @Override
@@ -60,7 +59,7 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
         createCassandraConnection();
     }
 
-    private void createCassandraConnection() {
+    private static void createCassandraConnection() {
         try {
             session = createCassandraConnectionWithKeySpaces(null);
         } catch (Exception e) {
@@ -72,7 +71,7 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
         }
     }
 
-    private CqlSession createCassandraConnectionWithKeySpaces(String keySpaceName) {
+    private static CqlSession createCassandraConnectionWithKeySpaces(String keySpaceName) {
         try {
             // Load the properties required for connection
             PropertiesCache cache = PropertiesCache.getInstance();
@@ -95,7 +94,7 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
             DriverConfigLoader loader = DriverConfigLoader.programmaticBuilder()
                     .withStringList(DefaultDriverOption.CONTACT_POINTS, contactPointsString)
                     .withString(DefaultDriverOption.REQUEST_CONSISTENCY, consistencyLevelName)
-                    .withString(DefaultDriverOption.LOAD_BALANCING_LOCAL_DATACENTER, "datacenter1")
+                    .withString(DefaultDriverOption.LOAD_BALANCING_LOCAL_DATACENTER, Constants.DATA_CENTER)
                     .withInt(DefaultDriverOption.CONNECTION_POOL_LOCAL_SIZE,
                             Integer.parseInt(cache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_LOCAL)))
                     .withInt(DefaultDriverOption.CONNECTION_POOL_REMOTE_SIZE,
@@ -112,14 +111,14 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
             if (StringUtils.isNotBlank(keySpaceName)) {
                 sessionWithKeyspaces = CqlSession.builder()
                         .addContactPoints(contactPoints)
-                        .withLocalDatacenter("datacenter1")
+                        .withLocalDatacenter(Constants.DATA_CENTER)
                         .withKeyspace(keySpaceName)
                         .withConfigLoader(loader)
                         .build();
             } else {
                 sessionWithKeyspaces = CqlSession.builder()
                         .addContactPoints(contactPoints)
-                        .withLocalDatacenter("datacenter1")
+                        .withLocalDatacenter(Constants.DATA_CENTER)
                         .withConfigLoader(loader)
                         .build();
             }

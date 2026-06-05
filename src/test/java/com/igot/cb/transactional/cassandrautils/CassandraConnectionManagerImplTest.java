@@ -6,7 +6,7 @@ import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
 import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.PropertiesCache;
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

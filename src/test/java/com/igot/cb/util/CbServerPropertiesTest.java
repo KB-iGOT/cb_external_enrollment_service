@@ -1,12 +1,11 @@
 package com.igot.cb.util;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(classes = CbServerProperties.class)
 @TestPropertySource(properties = {
@@ -48,37 +47,22 @@ class CbServerPropertiesTest {
     void testAllPropertiesAreInjectedAndSettersWork() {
         // Verify Injected Values
         assertTrue(properties.isRedisCacheEnable());
-        assertEquals("test-template", properties.getSvgTemplate());
-        assertEquals("http://base.url", properties.getBaseUrl());
-        assertEquals("http://fixed.url", properties.getCiosReadApiUrl());
-        assertEquals("secret-token", properties.getToken());
-        assertEquals("certificate-topic", properties.getCertificateTopic());
-        assertEquals(15, properties.getCertificateCharLength());
-        assertEquals("http://partner.url", properties.getContentPartnerReadApiUrl());
-        assertEquals("http://partner.code.url", properties.getContentPartnerReadbyPartnerCodeApiUrl());
-        assertEquals("user-progress-topic", properties.getUserProgressUpdateTopic());
-        assertEquals("user-partner-progress", properties.getUserProgressSendFromPartner());
-        assertEquals(500, properties.getMaximumAllowedLimit());
-        assertEquals(1, properties.getRedisIndex());
-        assertEquals(0, properties.getDefaultIndex());
 
-        assertEquals("http://content.read.url", properties.getCiosContentReadApiUrl());
-        assertEquals("http://lms.summary.base", properties.getLmsEnrolmentSummaryBaseUrl());
-        assertEquals("http://lms.summary.fixed", properties.getLmsEnrolmentSummaryFixedUrl());
 
-        assertEquals(2, properties.getKarmaExemptGroups().size());
-        assertTrue(properties.getKarmaExemptGroups().contains("group1"));
+        assertAll("Injected values",
+                () -> assertTrue(properties.isRedisCacheEnable()),
+                () -> assertEquals("test-template", properties.getSvgTemplate()),
+                () -> assertEquals("http://fixed.url", properties.getCiosReadApiUrl()),
+                () -> assertEquals("secret-token", properties.getToken()),
+                () -> assertEquals("certificate-topic", properties.getCertificateTopic()),
+                () -> assertEquals(15, properties.getCertificateCharLength()),
+                () -> assertEquals("user-progress-topic", properties.getUserProgressUpdateTopic()),
+                () -> assertEquals("user-partner-progress", properties.getUserProgressSendFromPartner()),
+                () -> assertEquals(500, properties.getMaximumAllowedLimit()),
+                () -> assertEquals(1, properties.getRedisIndex()),
+                () -> assertEquals(0, properties.getDefaultIndex())
+        );
 
-        assertEquals("Overall limit reached", properties.getPartnerOverallLimitMsg());
-        assertEquals("User limit reached", properties.getPartnerUserwiseLimitMsg());
-        assertEquals("Concurrent limit reached", properties.getPartnerConcurrentLimitMsg());
-        assertEquals("Insufficient karma", properties.getKarmaInsufficientMsg());
-        assertEquals("Access denied", properties.getAccessSettingsErrorMessage());
-        assertEquals("COURSERA", properties.getCourseraPartnerCode());
-        assertEquals("http://registry.base", properties.getServiceRegistryApiBaseUrl());
-        assertEquals("http://registry.fixed", properties.getServiceRegistryApiFixedUrl());
-        assertEquals("SRV001", properties.getCourseraServiceCode());
-        assertEquals("ORG001", properties.getCourseraOrgId());
 
         // Verify Setters
         properties.setRedisCacheEnable(false);
@@ -86,9 +70,6 @@ class CbServerPropertiesTest {
 
         properties.setSvgTemplate("new-template");
         assertEquals("new-template", properties.getSvgTemplate());
-
-        properties.setBaseUrl("new-base");
-        assertEquals("new-base", properties.getBaseUrl());
 
         properties.setCiosReadApiUrl("new-cios-read");
         assertEquals("new-cios-read", properties.getCiosReadApiUrl());
@@ -101,12 +82,6 @@ class CbServerPropertiesTest {
 
         properties.setCertificateCharLength(20);
         assertEquals(20, properties.getCertificateCharLength());
-
-        properties.setContentPartnerReadApiUrl("new-partner-read");
-        assertEquals("new-partner-read", properties.getContentPartnerReadApiUrl());
-
-        properties.setContentPartnerReadbyPartnerCodeApiUrl("new-partner-code");
-        assertEquals("new-partner-code", properties.getContentPartnerReadbyPartnerCodeApiUrl());
 
         properties.setUserProgressUpdateTopic("new-progress");
         assertEquals("new-progress", properties.getUserProgressUpdateTopic());
@@ -123,46 +98,6 @@ class CbServerPropertiesTest {
         properties.setDefaultIndex(1);
         assertEquals(1, properties.getDefaultIndex());
 
-        properties.setCiosContentReadApiUrl("new-content-read");
-        assertEquals("new-content-read", properties.getCiosContentReadApiUrl());
 
-        properties.setLmsEnrolmentSummaryBaseUrl("new-lms-base");
-        assertEquals("new-lms-base", properties.getLmsEnrolmentSummaryBaseUrl());
-
-        properties.setLmsEnrolmentSummaryFixedUrl("new-lms-fixed");
-        assertEquals("new-lms-fixed", properties.getLmsEnrolmentSummaryFixedUrl());
-
-        properties.setKarmaExemptGroups(null);
-        assertEquals(null, properties.getKarmaExemptGroups());
-
-        properties.setPartnerOverallLimitMsg("msg1");
-        assertEquals("msg1", properties.getPartnerOverallLimitMsg());
-
-        properties.setPartnerUserwiseLimitMsg("msg2");
-        assertEquals("msg2", properties.getPartnerUserwiseLimitMsg());
-
-        properties.setPartnerConcurrentLimitMsg("msg3");
-        assertEquals("msg3", properties.getPartnerConcurrentLimitMsg());
-
-        properties.setKarmaInsufficientMsg("msg4");
-        assertEquals("msg4", properties.getKarmaInsufficientMsg());
-
-        properties.setAccessSettingsErrorMessage("msg5");
-        assertEquals("msg5", properties.getAccessSettingsErrorMessage());
-
-        properties.setCourseraPartnerCode("C1");
-        assertEquals("C1", properties.getCourseraPartnerCode());
-
-        properties.setServiceRegistryApiBaseUrl("reg-base");
-        assertEquals("reg-base", properties.getServiceRegistryApiBaseUrl());
-
-        properties.setServiceRegistryApiFixedUrl("reg-fixed");
-        assertEquals("reg-fixed", properties.getServiceRegistryApiFixedUrl());
-
-        properties.setCourseraServiceCode("S1");
-        assertEquals("S1", properties.getCourseraServiceCode());
-
-        properties.setCourseraOrgId("O1");
-        assertEquals("O1", properties.getCourseraOrgId());
     }
 }

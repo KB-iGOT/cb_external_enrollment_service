@@ -9,6 +9,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.Type;
+import java.io.Serial;
 import java.io.Serializable;
 import java.sql.Timestamp;
 
@@ -19,6 +20,9 @@ import java.sql.Timestamp;
 @Entity
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class CiosContentEntity implements Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+
     @Id
     private String contentId;
     private String externalId;
