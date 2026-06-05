@@ -15,8 +15,6 @@ public class SBApiResponse {
 
     private transient Map<String, Object> response = new HashMap<>();
 
-    private List<Object> objectList = new ArrayList<>();
-
     public SBApiResponse() {
         this.ver = "v1";
         this.ts = new Timestamp(System.currentTimeMillis()).toString();

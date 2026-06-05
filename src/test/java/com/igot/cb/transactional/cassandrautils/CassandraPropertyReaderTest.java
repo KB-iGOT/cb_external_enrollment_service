@@ -106,26 +106,5 @@ class CassandraPropertyReaderTest {
         // Note: We can't assert it's not empty because we don't know what's in the properties file
         // But the fact that getInstance() didn't throw an exception means loadProperties() worked
     }
-    
-    // // This test is a bit tricky because we need to simulate an IOException during properties loading
-    // // We'll use a different approach by testing the exception handling directly
-    // @Test
-    // void loadProperties_ExceptionHandling() throws Exception {
-    //     // Create a test instance with a mocked Properties object that throws an exception
-    //     try (MockedConstruction<Properties> mockedProperties = mockConstruction(
-    //             Properties.class,
-    //             (mock, context) -> {
-    //                 doThrow(new IOException("Test IO Exception"))
-    //                         .when(mock).load(any(InputStream.class));
-    //             })) {
-            
-    //         // Now try to create a new CassandraPropertyReader instance
-    //         // This should trigger the loadProperties method which will throw an exception
-    //         assertThrows(CassandraPropertyReaderException.class, () -> {
-    //             Constructor<CassandraPropertyReader> constructor = CassandraPropertyReader.class.getDeclaredConstructor();
-    //             constructor.setAccessible(true);
-    //             constructor.newInstance();
-    //         });
-    //     }
-    // }
+
 }

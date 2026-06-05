@@ -1,12 +1,11 @@
 package com.igot.cb.util;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(classes = CbServerProperties.class)
 @TestPropertySource(properties = {
@@ -48,37 +47,60 @@ class CbServerPropertiesTest {
     void testAllPropertiesAreInjectedAndSettersWork() {
         // Verify Injected Values
         assertTrue(properties.isRedisCacheEnable());
-        assertEquals("test-template", properties.getSvgTemplate());
-        assertEquals("http://base.url", properties.getBaseUrl());
-        assertEquals("http://fixed.url", properties.getCiosReadApiUrl());
-        assertEquals("secret-token", properties.getToken());
-        assertEquals("certificate-topic", properties.getCertificateTopic());
-        assertEquals(15, properties.getCertificateCharLength());
-        assertEquals("http://partner.url", properties.getContentPartnerReadApiUrl());
-        assertEquals("http://partner.code.url", properties.getContentPartnerReadbyPartnerCodeApiUrl());
-        assertEquals("user-progress-topic", properties.getUserProgressUpdateTopic());
-        assertEquals("user-partner-progress", properties.getUserProgressSendFromPartner());
-        assertEquals(500, properties.getMaximumAllowedLimit());
-        assertEquals(1, properties.getRedisIndex());
-        assertEquals(0, properties.getDefaultIndex());
 
-        assertEquals("http://content.read.url", properties.getCiosContentReadApiUrl());
-        assertEquals("http://lms.summary.base", properties.getLmsEnrolmentSummaryBaseUrl());
-        assertEquals("http://lms.summary.fixed", properties.getLmsEnrolmentSummaryFixedUrl());
 
-        assertEquals(2, properties.getKarmaExemptGroups().size());
-        assertTrue(properties.getKarmaExemptGroups().contains("group1"));
+        assertAll("Injected values",
+                () -> assertTrue(properties.isRedisCacheEnable()),
+                () -> assertEquals("test-template", properties.getSvgTemplate()),
+                () -> assertEquals("http://base.url", properties.getBaseUrl()),
+                () -> assertEquals("http://fixed.url", properties.getCiosReadApiUrl()),
+                () -> assertEquals("secret-token", properties.getToken()),
+                () -> assertEquals("certificate-topic", properties.getCertificateTopic()),
+                () -> assertEquals(15, properties.getCertificateCharLength()),
+                () -> assertEquals("http://partner.url", properties.getContentPartnerReadApiUrl()),
+                () -> assertEquals("http://partner.code.url", properties.getContentPartnerReadbyPartnerCodeApiUrl()),
+                () -> assertEquals("user-progress-topic", properties.getUserProgressUpdateTopic()),
+                () -> assertEquals("user-partner-progress", properties.getUserProgressSendFromPartner()),
+                () -> assertEquals(500, properties.getMaximumAllowedLimit()),
+                () -> assertEquals(1, properties.getRedisIndex()),
+                () -> assertEquals(0, properties.getDefaultIndex())
+        );
 
-        assertEquals("Overall limit reached", properties.getPartnerOverallLimitMsg());
-        assertEquals("User limit reached", properties.getPartnerUserwiseLimitMsg());
-        assertEquals("Concurrent limit reached", properties.getPartnerConcurrentLimitMsg());
-        assertEquals("Insufficient karma", properties.getKarmaInsufficientMsg());
-        assertEquals("Access denied", properties.getAccessSettingsErrorMessage());
-        assertEquals("COURSERA", properties.getCourseraPartnerCode());
-        assertEquals("http://registry.base", properties.getServiceRegistryApiBaseUrl());
-        assertEquals("http://registry.fixed", properties.getServiceRegistryApiFixedUrl());
-        assertEquals("SRV001", properties.getCourseraServiceCode());
-        assertEquals("ORG001", properties.getCourseraOrgId());
+        assertAll("Injected values1",
+                () -> assertTrue(properties.isRedisCacheEnable()),
+                () -> assertEquals("test-template", properties.getSvgTemplate()),
+                () -> assertEquals("http://base.url", properties.getBaseUrl()),
+                () -> assertEquals("http://fixed.url", properties.getCiosReadApiUrl()),
+                () -> assertEquals("secret-token", properties.getToken()),
+                () -> assertEquals("certificate-topic", properties.getCertificateTopic()),
+                () -> assertEquals(15, properties.getCertificateCharLength()),
+                () -> assertEquals("http://partner.url", properties.getContentPartnerReadApiUrl()),
+                () -> assertEquals("http://partner.code.url", properties.getContentPartnerReadbyPartnerCodeApiUrl()),
+                () -> assertEquals("user-progress-topic", properties.getUserProgressUpdateTopic()),
+                () -> assertEquals("user-partner-progress", properties.getUserProgressSendFromPartner()),
+                () -> assertEquals(500, properties.getMaximumAllowedLimit()),
+                () -> assertEquals(1, properties.getRedisIndex()),
+                () -> assertEquals(0, properties.getDefaultIndex())
+        );
+
+        assertAll("Injected values1",
+                () -> assertEquals("http://content.read.url", properties.getCiosContentReadApiUrl()),
+                () -> assertEquals("http://lms.summary.base", properties.getLmsEnrolmentSummaryBaseUrl()),
+                () -> assertEquals("http://lms.summary.fixed", properties.getLmsEnrolmentSummaryFixedUrl()),
+                () -> assertEquals(2, properties.getKarmaExemptGroups().size()),
+                () -> assertTrue(properties.getKarmaExemptGroups().contains("group1")),
+                () -> assertEquals("Overall limit reached", properties.getPartnerOverallLimitMsg()),
+                () -> assertEquals("User limit reached", properties.getPartnerUserwiseLimitMsg()),
+                () -> assertEquals("Concurrent limit reached", properties.getPartnerConcurrentLimitMsg()),
+                () -> assertEquals("Insufficient karma", properties.getKarmaInsufficientMsg()),
+                () -> assertEquals("Access denied", properties.getAccessSettingsErrorMessage()),
+                () -> assertEquals("COURSERA", properties.getCourseraPartnerCode()),
+                () -> assertEquals("http://registry.base", properties.getServiceRegistryApiBaseUrl()),
+                () -> assertEquals("http://registry.fixed", properties.getServiceRegistryApiFixedUrl()),
+                () -> assertEquals("SRV001", properties.getCourseraServiceCode()),
+                () -> assertEquals("ORG001", properties.getCourseraOrgId())
+        );
+
 
         // Verify Setters
         properties.setRedisCacheEnable(false);

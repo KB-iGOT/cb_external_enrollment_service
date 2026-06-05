@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class RestExceptionHandling {
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity handleException(Exception ex) {
+    public ResponseEntity<ErrorResponse> handleException(Exception ex) {
         log.debug("RestExceptionHandler::handleException::" + ex);
         HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
         ErrorResponse errorResponse = null;
@@ -39,7 +39,7 @@ public class RestExceptionHandling {
                 log.error(CustomException.getMessage());
             }
 
-            return new ResponseEntity<>(errorResponse, status);
+            return new ResponseEntity<ErrorResponse>(errorResponse, status);
         }
         errorResponse = ErrorResponse.builder()
                 .code("ERROR")

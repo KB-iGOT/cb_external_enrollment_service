@@ -329,7 +329,6 @@ class KafkaConsumerTest {
                 any())).thenReturn(userList);
 
         when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
-        // when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
 
         // Explicitly mock the producer.push method with the exact topic name
         doNothing().when(producer).push(eq("certTopic"), any(JsonNode.class));
