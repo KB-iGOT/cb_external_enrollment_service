@@ -27,7 +27,7 @@ public class RedisConfig {
   @Value("${spring.redis.default.index}")
   private int defaultIndex;
 
-  private final long redisTimeout = 60000;
+  private final static long redisTimeout = 60000;
 
   @Bean
   @Primary
