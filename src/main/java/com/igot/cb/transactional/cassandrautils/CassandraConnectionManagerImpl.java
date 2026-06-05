@@ -12,7 +12,7 @@ import com.datastax.oss.driver.internal.core.retry.DefaultRetryPolicy;
 import com.datastax.oss.driver.internal.core.time.AtomicTimestampGenerator;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.PropertiesCache;
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.HttpStatus;

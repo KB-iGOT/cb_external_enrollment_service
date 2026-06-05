@@ -5,7 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.igot.cb.authentication.util.AccessTokenValidator;
+import org.igot.common.auth.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
 import com.igot.cb.enrollment.entity.CiosEnrolmentStatus;
 import com.igot.cb.enrollment.model.AccessControl;
@@ -28,7 +28,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.function.Supplier;
 
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;

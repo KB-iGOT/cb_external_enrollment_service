@@ -1,7 +1,7 @@
 package com.igot.cb.util;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 import com.networknt.schema.JsonSchema;
 import com.networknt.schema.JsonSchemaFactory;
 import com.networknt.schema.ValidationMessage;
