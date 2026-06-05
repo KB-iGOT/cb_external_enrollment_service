@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
  * <p>
  * Manages Cassandra connections and sessions.
  */
-@Component
+@Component("cbCassandraConnectionManager")
 @Slf4j
 public class CassandraConnectionManagerImpl implements CassandraConnectionManager {
 
