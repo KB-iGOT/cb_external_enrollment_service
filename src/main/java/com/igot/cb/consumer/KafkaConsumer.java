@@ -14,7 +14,7 @@ import java.io.InputStream;
 
 
 import com.igot.cb.util.cache.CacheService;
-import com.igot.cb.util.exceptions.CustomException;
+import org.igot.common.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.WordUtils;
@@ -219,7 +219,7 @@ public class KafkaConsumer {
                 LocalDateTime dateTime = LocalDateTime.parse(dateString, formatter);
                 return dateTime.toInstant(ZoneOffset.UTC);
             } catch (DateTimeParseException e2) {
-                e2.printStackTrace();
+                log.error("Failed to parse date string: {}", dateString, e2);
                 return null;
             }
         }

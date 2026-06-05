@@ -31,7 +31,7 @@ import org.springframework.stereotype.Component;
  * @author Mahesh RV
  * @author Ruksana
  */
-@Component
+@Component("cbCassandraOperation")
 @Slf4j
 public class CassandraOperationImpl implements CassandraOperation {
 
