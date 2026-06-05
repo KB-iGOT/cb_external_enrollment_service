@@ -1185,4 +1185,146 @@ class EnrollmentServiceImplTest {
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
         assertEquals("CourseId is mandatory", response.getParams().getMsg());
     }
+
+    @Test
+    void testProcessEnrollmentSuccess() throws Exception {
+
+        String userId = "user1";
+        String courseId = "course1";
+        String partnerId = "partner1";
+        String token = "token";
+
+        ObjectMapper mapper = new ObjectMapper();
+
+        JsonNode contentResponse =
+                mapper.readTree("{\"accessSettingsEnabled\":false}");
+
+        JsonNode providerResponse =
+                mapper.readTree("""
+                {
+                    "data":{
+                        "partnerCode":"udemy"
+                    }
+                }
+                """);
+
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put("firstName", "Test");
+
+        when(transformUtility.callCiosContentReadAPi(courseId))
+                .thenReturn(contentResponse);
+
+        when(transformUtility.callContentPartnerReadApi(partnerId))
+                .thenReturn(providerResponse);
+
+        when(transformUtility.readUserDetails(userId))
+                .thenReturn(userProfile);
+
+        /*
+         * Private methods cannot be mocked.
+         * Therefore provide input data that naturally
+         * passes all validations.
+         */
+
+        SBApiResponse response = new SBApiResponse();
+
+        SBApiResponse result =
+                ReflectionTestUtils.invokeMethod(
+                        enrollmentService,
+                        "processEnrolment",
+                        response,
+                        userId,
+                        courseId,
+                        partnerId,
+                        token);
+
+        assertNotNull(result);
+    }
+
+
+    @Test
+    void testProcessEnrollmentException() {
+
+        String userId = "user1";
+        String courseId = "course1";
+        String partnerId = "partner1";
+        String token = "token";
+
+        when(transformUtility.callCiosContentReadAPi(courseId))
+                .thenThrow(new RuntimeException("failure"));
+
+        SBApiResponse failedResponse = new SBApiResponse();
+
+        when(transformUtility.buildFailedResponse(
+                any(),
+                contains(Constants.ENROLLMENT_ERROR),
+                eq(HttpStatus.INTERNAL_SERVER_ERROR)))
+                .thenReturn(failedResponse);
+
+        SBApiResponse result =
+                ReflectionTestUtils.invokeMethod(
+                        enrollmentService,
+                        "processEnrolment",
+                        new SBApiResponse(),
+                        userId,
+                        courseId,
+                        partnerId,
+                        token);
+
+        assertSame(failedResponse, result);
+    }
+
+
+    @Test
+    void testProcessEnrollmentCourseraInviteFailure() throws Exception {
+
+        ObjectMapper mapper = new ObjectMapper();
+
+        JsonNode contentResponse =
+                mapper.readTree("{\"accessSettingsEnabled\":false}");
+
+        JsonNode providerResponse =
+                mapper.readTree("""
+                {
+                  "data":{
+                     "partnerCode":"coursera"
+                  }
+                }
+                """);
+
+        when(transformUtility.callCiosContentReadAPi(anyString()))
+                .thenReturn(contentResponse);
+
+        when(transformUtility.callContentPartnerReadApi(anyString()))
+                .thenReturn(providerResponse);
+
+        when(transformUtility.readUserDetails(anyString()))
+                .thenReturn(new HashMap<>());
+
+        when(cbServerProperties.getCourseraPartnerCode())
+                .thenReturn("coursera");
+
+        when(transformUtility.callCourseraInviteApi(any(), any()))
+                .thenReturn(false);
+
+        SBApiResponse failedResponse = new SBApiResponse();
+
+        when(transformUtility.buildFailedResponse(
+                any(),
+                eq("User invitation failed on Coursera"),
+                eq(HttpStatus.BAD_REQUEST)))
+                .thenReturn(failedResponse);
+
+        SBApiResponse result =
+                ReflectionTestUtils.invokeMethod(
+                        enrollmentService,
+                        "processEnrolment",
+                        new SBApiResponse(),
+                        "user1",
+                        "course1",
+                        "partner1",
+                        "token");
+
+        assertSame(failedResponse, result);
+    }
 }
