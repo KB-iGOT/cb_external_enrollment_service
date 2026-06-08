@@ -39,6 +39,12 @@ public class EnrollmentController {
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
+  @PostMapping("/v1/courselist/ngo/byuserid")
+  public ResponseEntity<SBApiResponse> readByUserIdNgo(@RequestBody Map<String, Object> searchRequest, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
+    SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
+    return new ResponseEntity<>(response, HttpStatus.OK);
+  }
+
   @GetMapping("/v1/readby/useridcourseid/{courseid}")
   public ResponseEntity<SBApiResponse> readByUserIdAndCourseId(@PathVariable String courseid, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
     SBApiResponse response = enrollmentService.readByUserIdAndCourseId(courseid,token);
