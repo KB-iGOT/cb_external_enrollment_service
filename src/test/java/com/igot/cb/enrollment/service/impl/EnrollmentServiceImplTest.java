@@ -1222,7 +1222,7 @@ class EnrollmentServiceImplTest {
         assertEquals(Constants.FAILED, response.getParams().getStatus());
         assertEquals("User not enrolled into the course",
                 response.getParams().getMsg());
-        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertEquals(HttpStatus.NOT_FOUND, response.getResponseCode());
     }
 
     @Test

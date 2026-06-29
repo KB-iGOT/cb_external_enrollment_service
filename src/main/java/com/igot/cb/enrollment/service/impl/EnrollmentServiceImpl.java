@@ -798,7 +798,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             } else {
                 response.getParams().setMsg("User not enrolled into the course");
                 response.getParams().setStatus(Constants.FAILED);
-                response.setResponseCode(HttpStatus.OK);
+                response.setResponseCode(HttpStatus.NOT_FOUND);
             }
             return response;
         } catch (Exception e) {
