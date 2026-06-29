@@ -448,7 +448,12 @@ public class TransformUtility {
                     entity,
                     JsonNode.class
             );
-            return response.getBody();
+            JsonNode responseBody = response.getBody();
+            if (responseBody == null) {
+                log.error("CIOS search content API returned null response body. Status: {}", response.getStatusCode());
+                throw new CustomException(Constants.ERROR, "Empty response received from CIOS search content API", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            return responseBody;
         } catch (Exception e) {
             log.error("Error calling CIOS search content API", e);
             throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
