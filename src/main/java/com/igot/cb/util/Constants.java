@@ -127,6 +127,15 @@ public class Constants {
     public static final String IS_ACTIVE = "isActive";
     public static final String COURSES = "courses";
     public static final String FIRST_NAME = "firstname";
+    public static final String CONTENT_ID = "contentId";
+    public static final String CIOS_ENROLLMENT_READ_BY_EXTERNAL_ID = "api.cios.enrollment.read.byExternalId";
+    public static final String ACCEPT = "Accept";
+    public static final String CONTENT_TYPE = "Content-Type";
+    public static final String APPLICATION_JSON = "application/json";
+    public static final String PAGE_NUMBER = "pageNumber";
+    public static final String PAGE_SIZE = "pageSize";
+    public static final String FILTER_CRITERIA_MAP = "filterCriteriaMap";
+    public static final String REQUESTED_FIELDS = "requestedFields";
 
     private Constants() {
     }
