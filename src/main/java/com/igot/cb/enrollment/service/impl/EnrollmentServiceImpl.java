@@ -29,6 +29,7 @@ import java.util.*;
 import java.util.function.Supplier;
 
 import com.igot.cb.util.exceptions.CustomException;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
@@ -40,34 +41,26 @@ import org.springframework.stereotype.Service;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class EnrollmentServiceImpl implements EnrollmentService {
 
-    @Autowired
-    private AccessTokenValidator accessTokenValidator;
+    private final AccessTokenValidator accessTokenValidator;
 
-    @Autowired
-    private CassandraOperation cassandraOperation;
+    private final CassandraOperation cassandraOperation;
 
-    @Autowired
-    private ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
 
-    @Autowired
-    CacheService cacheService;
+    private final CacheService cacheService;
 
-    @Autowired
-    private CbServerProperties cbServerProperties;
+    private final CbServerProperties cbServerProperties;
 
-    @Autowired
-    private CiosContentRepository contentRepository;
+    private final CiosContentRepository contentRepository;
 
-    @Autowired
-    private TransformUtility transformUtility;
+    private final TransformUtility transformUtility;
 
-    @Autowired
-    private Producer producer;
+    private final Producer producer;
 
-    @Autowired
-    private PayloadValidation payloadValidation;
+    private final PayloadValidation payloadValidation;
 
     private final Map<String, Integer> statusMap = CiosEnrolmentStatus.toMap();
 
@@ -771,6 +764,48 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return transformUtility.buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
         }
         return response;
+    }
+
+    @Override
+    public SBApiResponse getUserEnrolmentByExternalId(String userId, String externalId, String partnerCode) {
+        log.info("EnrollmentService::getUserEnrolmentByExternalId:inside the method");
+        SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_BY_EXTERNAL_ID);
+        try {
+            if (StringUtils.isBlank(userId) || StringUtils.isBlank(externalId) || StringUtils.isBlank(partnerCode)) {
+                return transformUtility.buildFailedResponse(response,
+                        "userId, externalId and partnerCode are mandatory", HttpStatus.BAD_REQUEST);
+            }
+            String contentId = transformUtility.getContentIdByExternalId(externalId, partnerCode);
+            if (StringUtils.isBlank(contentId)) {
+                return transformUtility.buildFailedResponse(response,
+                        "No content found for given courseId and partnerCode", HttpStatus.BAD_REQUEST);
+            }
+
+            Map<String, Object> propertyMap = new HashMap<>();
+            propertyMap.put(Constants.USER_ID, userId);
+            propertyMap.put(Constants.COURSE_ID, contentId);
+
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByProperties(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                    propertyMap,
+                    null
+            );
+
+            if (CollectionUtils.isNotEmpty(userEnrollmentList)) {
+                response.getParams().setMsg("User already enrolled into the course");
+                response.getParams().setStatus(Constants.SUCCESS);
+            } else {
+                response.getParams().setMsg("User not enrolled into the course");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.OK);
+            }
+            return response;
+        } catch (Exception e) {
+            String errMsg = "Error while fetching user enrolment by externalId. " + e.getMessage();
+            log.error(errMsg, e);
+            return transformUtility.buildFailedResponse(response, errMsg, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
 }

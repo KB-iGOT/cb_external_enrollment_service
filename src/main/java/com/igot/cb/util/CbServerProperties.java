@@ -96,4 +96,7 @@ public class CbServerProperties {
 
     @Value("${spring.redis.default.index}")
     private int defaultIndex;
+
+    @Value("${cios.search.content.api.endpoint}")
+    private String ciosSearchContentApiEndPoint;
 }
