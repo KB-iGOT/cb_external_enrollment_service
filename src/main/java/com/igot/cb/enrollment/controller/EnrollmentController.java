@@ -4,16 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.igot.cb.enrollment.service.EnrollmentService;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.dto.SBApiResponse;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
@@ -54,6 +47,15 @@ public class EnrollmentController {
   @PostMapping("/v1/validation")
   public ResponseEntity<SBApiResponse> enrolValidation(@RequestBody JsonNode userCourseEnroll, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
     SBApiResponse response = enrollmentService.enrolValidation(userCourseEnroll, token);
+    return new ResponseEntity<>(response, response.getResponseCode());
+  }
+
+  @GetMapping("/v1/enrollment/status")
+  public ResponseEntity<SBApiResponse> getUserEnrolmentByExternalId(
+          @RequestParam String userId,
+          @RequestParam String courseId,
+          @RequestHeader("partnerCode") String partnerCode) {
+    SBApiResponse response = enrollmentService.getUserEnrolmentByExternalId(userId, courseId, partnerCode);
     return new ResponseEntity<>(response, response.getResponseCode());
   }
 }

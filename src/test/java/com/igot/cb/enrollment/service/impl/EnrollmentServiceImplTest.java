@@ -8,13 +8,11 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
-import java.time.LocalDate;
 import java.util.*;
 
 import com.igot.cb.enrollment.model.AccessControl;
@@ -164,8 +162,7 @@ class EnrollmentServiceImplTest {
     @Test
     @DisplayName("enrollUser: should return error if user already enrolled")
     void enrollUser_alreadyEnrolled() {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode userCourseEnroll = objectMapper.createObjectNode();
+        ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
         userCourseEnroll.put("courseId", "course1");
         userCourseEnroll.put("partnerId", "partner1");
         String token = "jwt.token";
@@ -250,13 +247,13 @@ class EnrollmentServiceImplTest {
         requestBody.put(Constants.STATUS, "In-Progress");
         searchRequest.put(Constants.REQUEST, requestBody);
 
-        Map<String, Object> record = new HashMap<>();
-        record.put("courseid", "c1");
-        record.put(Constants.STATUS, 1);
-        record.put(Constants.UPDATED_ON, Instant.now());
+        Map<String, Object> enrolmentMap = new HashMap<>();
+        enrolmentMap.put("courseid", "c1");
+        enrolmentMap.put(Constants.STATUS, 1);
+        enrolmentMap.put(Constants.UPDATED_ON, Instant.now());
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
-                .thenReturn(Collections.singletonList(record));
+                .thenReturn(Collections.singletonList(enrolmentMap));
 
         Map<String, Object> contentData = new HashMap<>();
         contentData.put("content", new HashMap<>());
@@ -268,7 +265,6 @@ class EnrollmentServiceImplTest {
         SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
         System.out.println(response.getResult());
         assertEquals(HttpStatus.OK, response.getResponseCode());
-        // assertTrue(((Map<?, ?>)response.getResult()).containsKey("courses"));
     }
 
     @Test
@@ -380,11 +376,11 @@ class EnrollmentServiceImplTest {
 
         List<Map<String, Object>> records = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
-            Map<String, Object> record = new HashMap<>();
-            record.put("courseid", "c" + i);
-            record.put(Constants.STATUS, 0);
-            record.put(Constants.UPDATED_ON, Instant.now());
-            records.add(record);
+            Map<String, Object> enrolmentMap = new HashMap<>();
+            enrolmentMap.put("courseid", "c" + i);
+            enrolmentMap.put(Constants.STATUS, 0);
+            enrolmentMap.put(Constants.UPDATED_ON, Instant.now());
+            records.add(enrolmentMap);
         }
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
@@ -417,11 +413,11 @@ class EnrollmentServiceImplTest {
 
         List<Map<String, Object>> records = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
-            Map<String, Object> record = new HashMap<>();
-            record.put("courseid", "c" + i);
-            record.put(Constants.STATUS, 0);
-            record.put(Constants.UPDATED_ON, Instant.now());
-            records.add(record);
+            Map<String, Object> enrolmentMap = new HashMap<>();
+            enrolmentMap.put("courseid", "c" + i);
+            enrolmentMap.put(Constants.STATUS, 0);
+            enrolmentMap.put(Constants.UPDATED_ON, Instant.now());
+            records.add(enrolmentMap);
         }
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
@@ -484,11 +480,11 @@ class EnrollmentServiceImplTest {
         String token = "token";
         String userId = "user1";
         String courseId = "c1";
-        Map<String, Object> record = new HashMap<>();
-        record.put("courseid", courseId);
-        record.put("userid", userId);
+        Map<String, Object> enrolmentMap = new HashMap<>();
+        enrolmentMap.put("courseid", courseId);
+        enrolmentMap.put("userid", userId);
 
-        List<Map<String, Object>> records = Collections.singletonList(record);
+        List<Map<String, Object>> records = Collections.singletonList(enrolmentMap);
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
@@ -507,11 +503,9 @@ class EnrollmentServiceImplTest {
         String token = "token";
         String userId = "user1";
         String courseId = "c1";
-        Map<String, Object> record = new HashMap<>();
-        // record.put("courseid", courseId);
-        // record.put("userid", userId);
+        Map<String, Object> enrolmentMap = new HashMap<>();
 
-        List<Map<String, Object>> records = Collections.singletonList(record);
+        List<Map<String, Object>> records = Collections.singletonList(enrolmentMap);
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
@@ -573,8 +567,7 @@ class EnrollmentServiceImplTest {
     @Test
     @DisplayName("userProgressUpdate: returns success")
     void userProgressUpdate_success() {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode jsonNode = objectMapper.createObjectNode();
+        ObjectNode jsonNode = new ObjectMapper().createObjectNode();
         jsonNode.put("completion_date", "2023-12-01 12:12:12");
         String partnerCode = "partner";
 
@@ -649,7 +642,6 @@ class EnrollmentServiceImplTest {
         ciosData.put("content", contentMap);
 
         CiosContentEntity entity = mock(CiosContentEntity.class);
-        ObjectMapper objectMapper = new ObjectMapper();
         JsonNode jsonNode = objectMapper.valueToTree(ciosData);
         when(entity.getCiosData()).thenReturn(jsonNode);
 
@@ -832,8 +824,6 @@ class EnrollmentServiceImplTest {
     void handleAccessControlledEnrollment() {
         String userId = "user1";
         String courseId = "course1";
-        String partnerId = "partner1";
-        SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.USER, userId);
 
@@ -857,7 +847,6 @@ class EnrollmentServiceImplTest {
     void handleAccessControlledEnrollment_failure() {
         String userId = "user1";
         String courseId = "course1";
-        String partnerId = "partner1";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.USER, userId);
@@ -885,8 +874,6 @@ class EnrollmentServiceImplTest {
     void handleAccessControlledEnrollment_accessControlNull() {
         String userId = "user1";
         String courseId = "course1";
-        String partnerId = "partner1";
-        SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.USER, userId);
 
@@ -1157,7 +1144,7 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    void enrolValidation_Success() throws Exception {
+    void enrolValidation_Success() {
         ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
         userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
         userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
@@ -1197,36 +1184,89 @@ class EnrollmentServiceImplTest {
         assertEquals("CourseId is mandatory", response.getParams().getMsg());
     }
 
-    // @Test
-    // void enrolUser_CourseraInvite_Success() throws Exception {
-    // ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
-    // userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
-    // userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
-    // String token = "valid.token";
+    @Test
+    @DisplayName("getUserEnrolmentByExternalId: should return success when user is already enrolled")
+    void getUserEnrolmentByExternalId_UserAlreadyEnrolled() {
 
-    // when(accessTokenValidator.verifyUserToken(token)).thenReturn("user1");
-    // when(transformUtility.readUserDetails("user1")).thenReturn(Map.of(Constants.ID,
-    // "user1"));
+        when(transformUtility.getContentIdByExternalId("course1", "partner1"))
+                .thenReturn("content1");
 
-    // ObjectNode contentResponse = new ObjectMapper().createObjectNode();
-    // when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        when(cassandraOperation.getRecordsByProperties(
+                any(), any(), anyMap(), isNull()))
+                .thenReturn(Collections.singletonList(new HashMap<>()));
 
-    // ObjectNode providerResponse = new ObjectMapper().createObjectNode();
-    // ObjectNode data = new ObjectMapper().createObjectNode();
-    // data.put(Constants.PARTNER_CODE, "COURSERA");
-    // providerResponse.set(Constants.DATA, data);
-    // when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        SBApiResponse response =
+                enrollmentService.getUserEnrolmentByExternalId(
+                        "user1", "course1", "partner1");
 
-    // when(cbServerProperties.getCourseraPartnerCode()).thenReturn("COURSERA");
-    // // when(transformUtility.callCourseraInviteApi(eq(contentResponse),
-    // // any())).thenReturn(true);
-    // // when(transformUtility.readUserKarmaPoints(anyString(),
-    // // anyString())).thenReturn(0L);
+        assertEquals(Constants.SUCCESS, response.getParams().getStatus());
+        assertEquals("User already enrolled into the course",
+                response.getParams().getMsg());
+    }
 
-    // SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll,
-    // token);
+    @Test
+    @DisplayName("getUserEnrolmentByExternalId: should return failed status when user is not enrolled")
+    void getUserEnrolmentByExternalId_UserNotEnrolled() {
 
-    // assertEquals(HttpStatus.OK, response.getResponseCode());
-    // verify(transformUtility).callCourseraInviteApi(eq(contentResponse), any());
-    // }
+        when(transformUtility.getContentIdByExternalId("course1", "partner1"))
+                .thenReturn("content1");
+
+        when(cassandraOperation.getRecordsByProperties(
+                any(), any(), anyMap(), isNull()))
+                .thenReturn(Collections.emptyList());
+
+        SBApiResponse response =
+                enrollmentService.getUserEnrolmentByExternalId(
+                        "user1", "course1", "partner1");
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals("User not enrolled into the course",
+                response.getParams().getMsg());
+        assertEquals(HttpStatus.NOT_FOUND, response.getResponseCode());
+    }
+
+    @Test
+    @DisplayName("getUserEnrolmentByExternalId: should return bad request for missing inputs")
+    void getUserEnrolmentByExternalId_MissingInputs() {
+
+        SBApiResponse response =
+                enrollmentService.getUserEnrolmentByExternalId(
+                        "", "course1", "partner1");
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("userId, externalId and partnerCode are mandatory",
+                response.getParams().getMsg());
+    }
+
+    @Test
+    @DisplayName("getUserEnrolmentByExternalId: should return bad request when content is not found")
+    void getUserEnrolmentByExternalId_ContentNotFound() {
+
+        when(transformUtility.getContentIdByExternalId("course1", "partner1"))
+                .thenReturn(null);
+
+        SBApiResponse response =
+                enrollmentService.getUserEnrolmentByExternalId(
+                        "user1", "course1", "partner1");
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("No content found for given courseId and partnerCode",
+                response.getParams().getMsg());
+    }
+
+    @Test
+    @DisplayName("getUserEnrolmentByExternalId: should handle exception")
+    void getUserEnrolmentByExternalId_Exception() {
+
+        when(transformUtility.getContentIdByExternalId("course1", "partner1"))
+                .thenThrow(new RuntimeException("Test exception"));
+
+        SBApiResponse response =
+                enrollmentService.getUserEnrolmentByExternalId(
+                        "user1", "course1", "partner1");
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertTrue(response.getParams().getMsg()
+                .contains("Error while fetching user enrolment by externalId."));
+    }
 }

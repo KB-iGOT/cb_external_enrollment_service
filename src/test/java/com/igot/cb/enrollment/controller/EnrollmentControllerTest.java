@@ -111,4 +111,23 @@ class EnrollmentControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(mockResponse, response.getBody());
     }
+
+    @Test
+    void testGetUserEnrolmentByExternalId_Success() {
+        String userId = "user123";
+        String courseId = "course123";
+        String partnerCode = "partner123";
+
+        SBApiResponse mockResponse = new SBApiResponse();
+        mockResponse.setResponseCode(HttpStatus.OK);
+
+        when(enrollmentService.getUserEnrolmentByExternalId(userId, courseId, partnerCode))
+                .thenReturn(mockResponse);
+
+        ResponseEntity<SBApiResponse> response =
+                enrollmentController.getUserEnrolmentByExternalId(userId, courseId, partnerCode);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(mockResponse, response.getBody());
+    }
 }

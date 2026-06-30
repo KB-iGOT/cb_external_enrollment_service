@@ -62,7 +62,7 @@ class TransformUtilityTest {
     private static final String DUMMY_PARTNER_CODE = "partnerCode";
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws JsonProcessingException {
         lenient().when(mapper.valueToTree(any()))
                 .thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
         lenient().when(mapper.convertValue(any(), eq(JsonNode.class)))
@@ -72,6 +72,12 @@ class TransformUtilityTest {
                 .thenAnswer(invocation -> realMapper.valueToTree(invocation.getArgument(0)));
         lenient().when(mapper.convertValue(any(), eq(JsonNode.class)))
                 .thenAnswer(invocation -> realMapper.convertValue(invocation.getArgument(0), JsonNode.class));
+        lenient().when(mapper.createObjectNode())
+                .thenAnswer(invocation -> realMapper.createObjectNode());
+
+        lenient().when(mapper.readValue(anyString(), eq(String.class)))
+                .thenAnswer(invocation ->
+                        realMapper.readValue(invocation.getArgument(0, String.class), String.class));
     }
 
     @Test
@@ -687,5 +693,144 @@ class TransformUtilityTest {
         assertEquals(Constants.SUCCESS, result.getParams().getStatus());
         assertEquals("Success Msg", result.getParams().getMsg());
         assertEquals(HttpStatus.OK, result.getResponseCode());
+    }
+
+    @Test
+    void searchContentByExternalId_Success() {
+        when(cbServerProperties.getBaseUrl()).thenReturn("http://localhost");
+        when(cbServerProperties.getCiosSearchContentApiEndPoint()).thenReturn("/search");
+
+        ObjectNode response = realMapper.createObjectNode();
+        response.putArray(Constants.DATA);
+
+        when(restTemplate.exchange(
+                eq("http://localhost/search"),
+                eq(HttpMethod.POST),
+                any(HttpEntity.class),
+                eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(response, HttpStatus.OK));
+
+        JsonNode result = transformUtility.searchContentByExternalId("course1", "partner1");
+
+        assertNotNull(result);
+        assertTrue(result.has(Constants.DATA));
+    }
+
+    @Test
+    void searchContentByExternalId_Exception() {
+
+        when(cbServerProperties.getBaseUrl()).thenReturn("http://localhost");
+        when(cbServerProperties.getCiosSearchContentApiEndPoint()).thenReturn("/search");
+
+        when(restTemplate.exchange(
+                anyString(),
+                eq(HttpMethod.POST),
+                any(HttpEntity.class),
+                eq(JsonNode.class)))
+                .thenThrow(new RuntimeException("API Error"));
+
+        assertThrows(CustomException.class,
+                () -> transformUtility.searchContentByExternalId("course1", "partner1"));
+    }
+
+    @Test
+    void getContentIdByExternalId_FromCache() throws Exception {
+
+        String cacheKey = Constants.EXTERNAL_ID + "course1"
+                + Constants.PARTNER_CODE + "partner1";
+
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+
+        when(cacheService.getCache(cacheKey, 1))
+                .thenReturn("\"content123\"");
+
+        when(mapper.readValue("\"content123\"", String.class))
+                .thenReturn("content123");
+
+        String result =
+                transformUtility.getContentIdByExternalId("course1", "partner1");
+
+        assertEquals("content123", result);
+
+        verify(restTemplate, never())
+                .exchange(anyString(), any(), any(), eq(JsonNode.class));
+    }
+
+    @Test
+    void getContentIdByExternalId_FromApi() {
+
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+        when(cbServerProperties.getBaseUrl()).thenReturn("http://localhost");
+        when(cbServerProperties.getCiosSearchContentApiEndPoint()).thenReturn("/search");
+
+        when(cacheService.getCache(anyString(), anyInt()))
+                .thenReturn(null);
+
+        ObjectNode data = realMapper.createObjectNode();
+        data.put(Constants.CONTENT_ID, "content123");
+
+        ObjectNode response = realMapper.createObjectNode();
+        response.putArray(Constants.DATA).add(data);
+
+        when(restTemplate.exchange(
+                anyString(),
+                eq(HttpMethod.POST),
+                any(HttpEntity.class),
+                eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(response, HttpStatus.OK));
+
+        String result =
+                transformUtility.getContentIdByExternalId("course1", "partner1");
+
+        assertEquals("content123", result);
+
+        verify(cacheService).putCache(
+                anyString(),
+                eq(1),
+                eq("content123"));
+    }
+
+    @Test
+    void getContentIdByExternalId_NoContentFound() {
+
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+        when(cbServerProperties.getBaseUrl()).thenReturn("http://localhost");
+        when(cbServerProperties.getCiosSearchContentApiEndPoint()).thenReturn("/search");
+
+        when(cacheService.getCache(anyString(), anyInt()))
+                .thenReturn(null);
+
+        ObjectNode response = realMapper.createObjectNode();
+        response.putArray(Constants.DATA);
+
+        when(restTemplate.exchange(
+                anyString(),
+                eq(HttpMethod.POST),
+                any(HttpEntity.class),
+                eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(response, HttpStatus.OK));
+
+        String result =
+                transformUtility.getContentIdByExternalId("course1", "partner1");
+
+        assertNull(result);
+    }
+
+    @Test
+    void getContentIdByExternalId_CacheReadException() throws Exception {
+
+        String cacheKey = Constants.EXTERNAL_ID + "course1"
+                + Constants.PARTNER_CODE + "partner1";
+
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+
+        when(cacheService.getCache(cacheKey, 1))
+                .thenReturn("\"content123\"");
+
+        when(mapper.readValue(anyString(), eq(String.class)))
+                .thenThrow(new JsonProcessingException("parse error") {});
+
+        assertThrows(CustomException.class,
+                () -> transformUtility.getContentIdByExternalId("course1", "partner1"));
     }
 }

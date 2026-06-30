@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
@@ -18,6 +19,7 @@ import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.tomcat.util.bcel.Const;
 import org.joda.time.DateTime;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
@@ -138,8 +140,8 @@ public class TransformUtility {
             );
             if (response.getStatusCode().is2xxSuccessful()) {
                 JsonNode body = response.getBody();
-                if (body != null && body.has("result")) {
-                    return body.path("result");
+                if (body != null && body.has(Constants.RESULT)) {
+                    return body.path(Constants.RESULT);
                 } else {
                     log.error("CIOS read API returned null or missing 'result' field");
                     throw new CustomException(Constants.ERROR, "Invalid response body from CIOS read API", HttpStatus.INTERNAL_SERVER_ERROR);
@@ -158,8 +160,8 @@ public class TransformUtility {
         log.info("KafkaConsumer :: callContentPartnerReadByPartnerCodeApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadbyPartnerCodeApiUrl() + partnerCode;
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Accept", "application/json"); // Indicate JSON response
-        headers.set("Content-Type", "application/json");
+        headers.set(Constants.ACCEPT, Constants.APPLICATION_JSON); // Indicate JSON response
+        headers.set(Constants.CONTENT_TYPE, Constants.APPLICATION_JSON);
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<JsonNode> response = restTemplate.exchange(
                 url,
@@ -169,8 +171,8 @@ public class TransformUtility {
         );
         if (response.getStatusCode().is2xxSuccessful()) {
             JsonNode jsonNode = response.getBody();
-            if (jsonNode != null && jsonNode.has("result")) {
-                return jsonNode.path("result");
+            if (jsonNode != null && jsonNode.has(Constants.RESULT)) {
+                return jsonNode.path(Constants.RESULT);
             } else {
                 log.error("Response body is null or missing 'result' field");
                 throw new CustomException(Constants.ERROR, "Invalid or null response body", HttpStatus.INTERNAL_SERVER_ERROR);
@@ -210,8 +212,9 @@ public class TransformUtility {
         log.info("TransformUtility :: readUserDetails");
         try {
             String cachedJson = cacheService.getCache(Constants.UAER_DETAILS + userid, cbServerProperties.getRedisIndex());
-            if(StringUtils.isNotBlank(cachedJson)){
-                return mapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {});
+            if (StringUtils.isNotBlank(cachedJson)) {
+                return mapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {
+                });
             }
             Map<String, Object> propertyMap = new HashMap<>();
             propertyMap.put("id", userid);
@@ -226,7 +229,7 @@ public class TransformUtility {
                 return userEnrollmentList.get(0);
             }
             return Map.of();
-        }catch (Exception e) {
+        } catch (Exception e) {
             log.error("Error while fetching user details for userId: {} {}", userid, e);
             return Map.of();
         }
@@ -255,7 +258,7 @@ public class TransformUtility {
 
     public Long readUserKarmaPoints(String userId, String token) {
         log.info("TransformUtility :: readUserKarmaPoints");
-        String cachedJson = cacheService.getCache(Constants.USER_KARMA_POINTS + userId,cbServerProperties.getDefaultIndex());
+        String cachedJson = cacheService.getCache(Constants.USER_KARMA_POINTS + userId, cbServerProperties.getDefaultIndex());
         if (StringUtils.isNotEmpty(cachedJson)) {
             log.info("TransformUtility::readUserKarmaPoints:Record coming from redis cache");
             return Long.valueOf(cachedJson);
@@ -287,7 +290,7 @@ public class TransformUtility {
         }
     }
 
-    public boolean callCourseraInviteApi(JsonNode contentResponse,Map<String, Object> userProfile){
+    public boolean callCourseraInviteApi(JsonNode contentResponse, Map<String, Object> userProfile) {
         String userId = String.valueOf(userProfile.get(Constants.ID));
         try {
             log.info("TransformUtility :: callCourseraInviteApi");
@@ -381,5 +384,79 @@ public class TransformUtility {
         response.getParams().setStatus(Constants.SUCCESS);
         response.setResponseCode(status);
         return response;
+    }
+
+    public JsonNode searchContentByExternalId(String externalId, String partnerCode) {
+        try {
+            ObjectNode filterCriteriaMap = mapper.createObjectNode();
+            filterCriteriaMap.put("contentPartner.partnerCode", partnerCode);
+            filterCriteriaMap.put(Constants.EXTERNAL_ID, externalId);
+
+            ObjectNode requestBody = mapper.createObjectNode();
+            requestBody.set(Constants.FILTER_CRITERIA_MAP, filterCriteriaMap);
+            requestBody.putArray(Constants.REQUESTED_FIELDS).add(Constants.CONTENT_ID);
+            requestBody.put(Constants.PAGE_NUMBER, 0);
+            requestBody.put(Constants.PAGE_SIZE, 1);
+            return postApiCall(requestBody);
+        } catch (Exception e) {
+            log.error("Error searching CIOS content for externalId: {}, partnerCode: {}", externalId, partnerCode, e);
+            throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Resolves contentId for an externalId + partnerCode, redis-cache first, then CIOS search API.
+     */
+    public String getContentIdByExternalId(String externalId, String partnerCode) {
+        String cacheKey = Constants.EXTERNAL_ID + externalId + Constants.PARTNER_CODE + partnerCode;
+
+        String cachedContentId = cacheService.getCache(cacheKey, cbServerProperties.getRedisIndex());
+        if (StringUtils.isNotBlank(cachedContentId)) {
+            log.info("contentId for externalId: {}, partnerCode: {} served from redis cache", externalId, partnerCode);
+            try {
+                return mapper.readValue(cachedContentId, String.class);
+            } catch (JsonProcessingException e) {
+                throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+        }
+
+        JsonNode searchResponse = searchContentByExternalId(externalId, partnerCode);
+        if (searchResponse == null
+                || !searchResponse.has(Constants.DATA)
+                || searchResponse.get(Constants.DATA).isEmpty()) {
+            log.error("No content found in CIOS for externalId: {}, partnerCode: {}", externalId, partnerCode);
+            return null;
+        }
+
+        String contentId = searchResponse.get(Constants.DATA).path(0).path(Constants.CONTENT_ID).asText("");
+        if (StringUtils.isNotBlank(contentId)) {
+            cacheService.putCache(cacheKey, cbServerProperties.getRedisIndex(), contentId);
+        }
+        return contentId;
+    }
+
+    private JsonNode postApiCall(JsonNode requestBody) {
+        try {
+            String url = cbServerProperties.getBaseUrl() + cbServerProperties.getCiosSearchContentApiEndPoint();
+            HttpHeaders headers = new HttpHeaders();
+            headers.set(Constants.ACCEPT, Constants.APPLICATION_JSON);
+            headers.set(Constants.CONTENT_TYPE, Constants.APPLICATION_JSON);
+            HttpEntity<JsonNode> entity = new HttpEntity<>(requestBody, headers);
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.POST,
+                    entity,
+                    JsonNode.class
+            );
+            JsonNode responseBody = response.getBody();
+            if (responseBody == null) {
+                log.error("CIOS search content API returned null response body. Status: {}", response.getStatusCode());
+                throw new CustomException(Constants.ERROR, "Empty response received from CIOS search content API", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            return responseBody;
+        } catch (Exception e) {
+            log.error("Error calling CIOS search content API", e);
+            throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 }
