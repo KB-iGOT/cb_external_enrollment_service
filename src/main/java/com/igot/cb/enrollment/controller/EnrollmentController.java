@@ -50,7 +50,7 @@ public class EnrollmentController {
     return new ResponseEntity<>(response, response.getResponseCode());
   }
 
-  @GetMapping("/v1/enrolment")
+  @GetMapping("/v1/enrollment/status")
   public ResponseEntity<SBApiResponse> getUserEnrolmentByExternalId(
           @RequestParam String userId,
           @RequestParam String courseId,
