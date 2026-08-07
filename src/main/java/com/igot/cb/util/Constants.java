@@ -49,6 +49,7 @@ public class Constants {
     public static final String CIOS_ENROLLMENT_CREATE="ciosenroll.v1.create";
     public static final String CIOS_ENROLLMENT_READ_COURSELIST="ciosenroll.v1.courselist.byuserid";
     public static final String CIOS_ENROLLMENT_READ_COURSEID="ciosenroll.v1.readby.useridcourseid";
+    public static final String CIOS_ENROLLMENT_READ_COURSELIST_BY_PARTNER="ciosenroll.v1.courselist.byuserandpartner";
     public static final String USER_ID="userid";
     public static final String COURSE_ID="courseid";
     public static final String STATUS="status";

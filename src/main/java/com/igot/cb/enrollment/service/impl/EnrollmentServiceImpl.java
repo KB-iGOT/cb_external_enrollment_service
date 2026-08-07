@@ -191,6 +191,99 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     @Override
+    public SBApiResponse readByUserIdAndPartnerId(Map<String, Object> searchRequest, String token) {
+        log.info("EnrollmentService::readByUserIdAndPartnerId:inside the method");
+        SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSELIST_BY_PARTNER);
+        try {
+            if (MapUtils.isEmpty(searchRequest)) {
+                response.getParams().setMsg("Request is not proper, please include request body.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+            String partnerId = (String) searchRequest.get(Constants.PARTNER_ID);
+            if (StringUtils.isEmpty(partnerId)) {
+                response.getParams().setMsg("Request is not proper, please provide partnerId in request body.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+            // status must be one of the CiosEnrolmentStatus labels (same values accepted by the
+            // existing /v1/courselist/byuserid API): "In-Progress", "Completed", "All".
+            String status = (String) searchRequest.get(Constants.STATUS);
+            if (StringUtils.isEmpty(status)) {
+                response.getParams().setMsg("Request is not proper, please provide status in request body.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+            if (statusMap.get(status) == null) {
+                response.getParams().setMsg("Request is not proper, please provide proper value of status (In-Progress, Completed, All).");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+
+            String userId = accessTokenValidator.verifyUserToken(token);
+            log.info("UserId from auth token {}", userId);
+            if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
+                response.getParams().setMsg(Constants.USER_ID_DOESNT_EXIST);
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+
+            // Same base query as readByUserId: fetch every active enrolment record for this user,
+            // irrespective of partner. partnerId and status are then applied as in-code filters below,
+            // rather than pushed into the Cassandra query.
+            Map<String, Object> propertyMap = new HashMap<>();
+            propertyMap.put(Constants.USER_ID, userId);
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                    propertyMap,
+                    null,
+                    null
+            );
+
+            userEnrollmentList = userEnrollmentList.stream()
+                    .filter(enrolment -> partnerId.equalsIgnoreCase((String) enrolment.get(Constants.PARTNER_ID_REQ)))
+                    .toList();
+
+            Integer statusValue = statusMap.get(status);
+            if (statusValue != -1) {
+                userEnrollmentList = userEnrollmentList.stream()
+                        .filter(enrolment -> (int) enrolment.get(Constants.STATUS) == statusValue)
+                        .toList();
+            }
+
+            List<Map<String, Object>> courses = new ArrayList<>();
+            if (!userEnrollmentList.isEmpty()) {
+                for (Map<String, Object> enrollment : userEnrollmentList) {
+                    String courseId = (String) enrollment.get(Constants.COURSE_ID);
+                    Map<String, Object> data = fetchDataByContentId(courseId);
+                    enrollment.put(Constants.CONTENT, data.get(Constants.CONTENT));
+                    courses.add(enrollment);
+                }
+                response.put(Constants.COURSES, courses);
+                response.setResponseCode(HttpStatus.OK);
+            } else {
+                response.getParams().setMsg("User has no courses with this provider matching the given status");
+                response.getParams().setStatus(Constants.SUCCESS);
+                response.setResponseCode(HttpStatus.OK);
+            }
+            return response;
+        } catch (Exception e) {
+            String errMsg = "Error while performing operation." + e.getMessage();
+            log.error(errMsg, e);
+            response.getParams().setMsg(errMsg);
+            response.getParams().setStatus(Constants.FAILED);
+            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        return response;
+    }
+
+    @Override
     public SBApiResponse readByUserIdAndCourseId(String courseid, String token) {
         log.info("EnrollmentService::readByUserIdAndCourseId:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSEID);

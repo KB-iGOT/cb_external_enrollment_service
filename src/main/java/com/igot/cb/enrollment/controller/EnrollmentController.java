@@ -58,4 +58,12 @@ public class EnrollmentController {
     SBApiResponse response = enrollmentService.getUserEnrolmentByExternalId(userId, courseId, partnerCode);
     return new ResponseEntity<>(response, response.getResponseCode());
   }
+
+  @PostMapping("/v1/courselist/byuserandpartner")
+  public ResponseEntity<SBApiResponse> readByUserIdAndPartnerId(
+          @RequestBody Map<String, Object> searchRequest,
+          @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
+    SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+    return new ResponseEntity<>(response, response.getResponseCode() != null ? response.getResponseCode() : HttpStatus.OK);
+  }
 }
