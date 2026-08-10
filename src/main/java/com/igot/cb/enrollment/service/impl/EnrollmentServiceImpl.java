@@ -233,38 +233,78 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
 
-            // Same base query as readByUserId: fetch every active enrolment record for this user,
-            // irrespective of partner. partnerId and status are then applied as in-code filters below,
-            // rather than pushed into the Cassandra query.
-            Map<String, Object> propertyMap = new HashMap<>();
-            propertyMap.put(Constants.USER_ID, userId);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                    propertyMap,
-                    null,
-                    null
-            );
-
-            userEnrollmentList = userEnrollmentList.stream()
-                    .filter(enrolment -> partnerId.equalsIgnoreCase((String) enrolment.get(Constants.PARTNER_ID_REQ)))
-                    .toList();
-
+            // Check Redis first for the minimal per-user enrolment map (courseId -> {partnerId, status}).
+            // Only if it isn't present there do we fall back to Cassandra - once - and then
+            // populate Redis so every subsequent call for this user is served from Redis alone.
+            // No TTL is set: once populated, the entry is not re-queried again.
             Integer statusValue = statusMap.get(status);
-            if (statusValue != -1) {
-                userEnrollmentList = userEnrollmentList.stream()
-                        .filter(enrolment -> (int) enrolment.get(Constants.STATUS) == statusValue)
-                        .toList();
+            String enrolmentRedisKey = Constants.USER_ENROLMENTS_PREFIX + userId;
+            int redisDbIndex = cbServerProperties.getRedisIndex();
+            Map<Object, Object> enrolmentHash = cacheService.getAllHashFields(enrolmentRedisKey, redisDbIndex);
+
+            if (MapUtils.isEmpty(enrolmentHash)) {
+                log.info("No enrolment map found in Redis for user {}, building it from Cassandra", userId);
+                Map<String, Object> propertyMap = new HashMap<>();
+                propertyMap.put(Constants.USER_ID, userId);
+                List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                        Constants.KEYSPACE_SUNBIRD_COURSES,
+                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                        propertyMap,
+                        null,
+                        null
+                );
+
+                Map<String, String> hashToCache = new HashMap<>();
+                Map<Object, Object> rebuiltHash = new HashMap<>();
+                for (Map<String, Object> enrolment : userEnrollmentList) {
+                    String cId = (String) enrolment.get(Constants.COURSE_ID);
+                    Map<String, Object> minimalInfo = new HashMap<>();
+                    minimalInfo.put(Constants.PARTNER_ID_REQ, enrolment.get(Constants.PARTNER_ID_REQ));
+                    minimalInfo.put(Constants.STATUS, enrolment.get(Constants.STATUS));
+                    String json = objectMapper.writeValueAsString(minimalInfo);
+                    hashToCache.put(cId, json);
+                    rebuiltHash.put(cId, json);
+                }
+                if (!hashToCache.isEmpty()) {
+                    cacheService.putAllHashFields(enrolmentRedisKey, redisDbIndex, hashToCache);
+                }
+                enrolmentHash = rebuiltHash;
+            } else {
+                log.info("Enrolment map for user {} fetched from Redis", userId);
             }
 
             List<Map<String, Object>> courses = new ArrayList<>();
-            if (!userEnrollmentList.isEmpty()) {
-                for (Map<String, Object> enrollment : userEnrollmentList) {
-                    String courseId = (String) enrollment.get(Constants.COURSE_ID);
-                    Map<String, Object> data = fetchDataByContentId(courseId);
-                    enrollment.put(Constants.CONTENT, data.get(Constants.CONTENT));
-                    courses.add(enrollment);
+            for (Map.Entry<Object, Object> entry : enrolmentHash.entrySet()) {
+                String courseId = String.valueOf(entry.getKey());
+                Map<String, Object> enrolmentInfo;
+                try {
+                    enrolmentInfo = objectMapper.readValue((String) entry.getValue(), new TypeReference<Map<String, Object>>() {});
+                } catch (JsonProcessingException e) {
+                    log.error("Error while parsing cached enrolment info for user {} course {}: {}", userId, courseId, e.getMessage());
+                    continue;
                 }
+
+                String cachedPartnerId = (String) enrolmentInfo.get(Constants.PARTNER_ID_REQ);
+                if (!partnerId.equalsIgnoreCase(cachedPartnerId)) {
+                    continue;
+                }
+                if (statusValue != -1) {
+                    int cachedStatus = ((Number) enrolmentInfo.get(Constants.STATUS)).intValue();
+                    if (cachedStatus != statusValue) {
+                        continue;
+                    }
+                }
+
+                Map<String, Object> data = fetchDataByContentId(courseId);
+                Map<String, Object> course = new HashMap<>();
+                course.put(Constants.COURSE_ID, courseId);
+                course.put(Constants.PARTNER_ID_REQ, cachedPartnerId);
+                course.put(Constants.STATUS, enrolmentInfo.get(Constants.STATUS));
+                course.put(Constants.CONTENT, data.get(Constants.CONTENT));
+                courses.add(course);
+            }
+
+            if (!courses.isEmpty()) {
                 response.put(Constants.COURSES, courses);
                 response.setResponseCode(HttpStatus.OK);
             } else {
@@ -274,8 +314,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
             return response;
         } catch (Exception e) {
-            String errMsg = "Error while performing operation." + e.getMessage();
-            log.error(errMsg, e);
+            String errMsg = "Error while performing operation. " + e.getMessage();
+            log.error("Error while performing operation. {}", e.getMessage(), e);
             response.getParams().setMsg(errMsg);
             response.getParams().setStatus(Constants.FAILED);
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);

@@ -106,6 +106,7 @@ public class Constants {
     public static final String RESULT = "result";
     public static final String DATA = "data";
     public static final String USER_KARMA_POINTS = "user:karmaPoints:";
+    public static final String USER_ENROLMENTS_PREFIX = "user:enrolments:";
     public static final String USER_WISE_LIMIT_ENABLED = "isUserWiseLimitEnabled";
     public static final String CONCURRENT_LIMIT_ENABLED = "isConcurrentLimitEnabled";
     public static final String KARMA_POINTS_ENABLED = "addKarmaPointEnabled";

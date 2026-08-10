@@ -475,6 +475,294 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
+    @DisplayName("readByUserIdAndPartnerId: should return courses filtered by partnerId and status, read from Redis")
+    void readByUserIdAndPartnerId_returnsCourses() throws JsonProcessingException {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        String json1 = "{\"partnerid\":\"partner1\",\"status\":0}";
+        String json2 = "{\"partnerid\":\"partner2\",\"status\":0}";
+        Map<Object, Object> hash = new HashMap<>();
+        hash.put("c1", json1);
+        hash.put("c2", json2);
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(hash);
+
+        Map<String, Object> info1 = new HashMap<>();
+        info1.put(Constants.PARTNER_ID_REQ, "partner1");
+        info1.put(Constants.STATUS, 0);
+        Map<String, Object> info2 = new HashMap<>();
+        info2.put(Constants.PARTNER_ID_REQ, "partner2");
+        info2.put(Constants.STATUS, 0);
+        when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
+        when(objectMapper.readValue(eq(json2), any(TypeReference.class))).thenReturn(info2);
+
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId("c1");
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+        assertNotNull(courses);
+        assertEquals(1, courses.size());
+        assertEquals("c1", courses.get(0).get(Constants.COURSE_ID));
+        verify(enrollmentService, times(1)).fetchDataByContentId(anyString());
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return courses regardless of status when status is All")
+    void readByUserIdAndPartnerId_statusAll() throws JsonProcessingException {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "All");
+
+        String json1 = "{\"partnerid\":\"partner1\",\"status\":0}";
+        String json2 = "{\"partnerid\":\"partner1\",\"status\":2}";
+        Map<Object, Object> hash = new HashMap<>();
+        hash.put("c1", json1);
+        hash.put("c2", json2);
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(hash);
+
+        Map<String, Object> info1 = new HashMap<>();
+        info1.put(Constants.PARTNER_ID_REQ, "partner1");
+        info1.put(Constants.STATUS, 0);
+        Map<String, Object> info2 = new HashMap<>();
+        info2.put(Constants.PARTNER_ID_REQ, "partner1");
+        info2.put(Constants.STATUS, 2);
+        when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
+        when(objectMapper.readValue(eq(json2), any(TypeReference.class))).thenReturn(info2);
+
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId(anyString());
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+        assertNotNull(courses);
+        assertEquals(2, courses.size());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should fall back to Cassandra on Redis cache miss and populate Redis for next time")
+    void readByUserIdAndPartnerId_cacheMissPopulatesRedis() throws JsonProcessingException {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        // Redis cache miss - nothing cached yet for this user
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(Collections.emptyMap());
+
+        Map<String, Object> enrollment1 = new HashMap<>();
+        enrollment1.put(Constants.COURSE_ID, "c1");
+        enrollment1.put(Constants.PARTNER_ID_REQ, "partner1");
+        enrollment1.put(Constants.STATUS, 0);
+
+        Map<String, Object> enrollment2 = new HashMap<>();
+        enrollment2.put(Constants.COURSE_ID, "c2");
+        enrollment2.put(Constants.PARTNER_ID_REQ, "partner2");
+        enrollment2.put(Constants.STATUS, 0);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(Arrays.asList(enrollment1, enrollment2));
+
+        String json1 = "{\"partnerid\":\"partner1\",\"status\":0}";
+        String json2 = "{\"partnerid\":\"partner2\",\"status\":0}";
+        when(objectMapper.writeValueAsString(argThat(o -> o instanceof Map
+                && "partner1".equals(((Map<?, ?>) o).get(Constants.PARTNER_ID_REQ))))).thenReturn(json1);
+        when(objectMapper.writeValueAsString(argThat(o -> o instanceof Map
+                && "partner2".equals(((Map<?, ?>) o).get(Constants.PARTNER_ID_REQ))))).thenReturn(json2);
+
+        Map<String, Object> info1 = new HashMap<>();
+        info1.put(Constants.PARTNER_ID_REQ, "partner1");
+        info1.put(Constants.STATUS, 0);
+        when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
+
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId("c1");
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+        assertNotNull(courses);
+        assertEquals(1, courses.size());
+        assertEquals("c1", courses.get(0).get(Constants.COURSE_ID));
+
+        // Cassandra was queried exactly once (the cache-miss fallback), and Redis was
+        // populated in a single bulk write so subsequent calls won't hit Cassandra again.
+        verify(cassandraOperation, times(1)).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
+        verify(cacheService).putAllHashFields(
+                eq(Constants.USER_ENROLMENTS_PREFIX + userId),
+                eq(cbServerProperties.getRedisIndex()),
+                argThat(map -> map.size() == 2 && json1.equals(map.get("c1")) && json2.equals(map.get("c2"))));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for empty request")
+    void readByUserIdAndPartnerId_emptyRequest() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("Request is not proper"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for missing partnerId")
+    void readByUserIdAndPartnerId_missingPartnerId() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.STATUS, "In-Progress");
+        // No partnerId
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("please provide partnerId"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for missing status")
+    void readByUserIdAndPartnerId_missingStatus() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        // No status
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("please provide status in request body"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for invalid status")
+    void readByUserIdAndPartnerId_invalidStatus() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "InvalidStatus");
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("please provide proper value of status"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for invalid token")
+    void readByUserIdAndPartnerId_invalidToken() {
+        String token = "invalid.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(Constants.UNAUTHORIZED);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains(Constants.USER_ID_DOESNT_EXIST));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should handle no courses matching the given partner")
+    void readByUserIdAndPartnerId_noMatchingPartner() throws JsonProcessingException {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partnerX");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        String json1 = "{\"partnerid\":\"partner1\",\"status\":0}";
+        Map<Object, Object> hash = new HashMap<>();
+        hash.put("c1", json1);
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(hash);
+
+        Map<String, Object> info1 = new HashMap<>();
+        info1.put(Constants.PARTNER_ID_REQ, "partner1");
+        info1.put(Constants.STATUS, 0);
+        when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("no courses with this provider"));
+        // Redis already had data for this user, so Cassandra should not be touched.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should handle empty enrolment map in both Redis and Cassandra")
+    void readByUserIdAndPartnerId_emptyEnrollmentList() {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        // Redis cache miss, and the Cassandra fallback also finds nothing for this user.
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(Collections.emptyMap());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("no courses with this provider"));
+        // Nothing to cache, so Redis is not written to.
+        verify(cacheService, times(0)).putAllHashFields(any(), anyInt(), any());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should handle exceptions")
+    void readByUserIdAndPartnerId_exception() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        doThrow(new RuntimeException("Test exception")).when(accessTokenValidator).verifyUserToken(token);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("Error while performing operation"));
+    }
+
+    @Test
     @DisplayName("readByUserIdAndCourseId: returns enrollment if found")
     void readByUserIdAndCourseId_found() {
         String token = "token";
