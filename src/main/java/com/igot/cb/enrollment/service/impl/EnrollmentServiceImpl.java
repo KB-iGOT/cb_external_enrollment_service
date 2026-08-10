@@ -191,6 +191,139 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     @Override
+    public SBApiResponse readByUserIdAndPartnerId(Map<String, Object> searchRequest, String token) {
+        log.info("EnrollmentService::readByUserIdAndPartnerId:inside the method");
+        SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSELIST_BY_PARTNER);
+        try {
+            if (MapUtils.isEmpty(searchRequest)) {
+                response.getParams().setMsg("Request is not proper, please include request body.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+            String partnerId = (String) searchRequest.get(Constants.PARTNER_ID);
+            if (StringUtils.isEmpty(partnerId)) {
+                response.getParams().setMsg("Request is not proper, please provide partnerId in request body.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+            // status must be one of the CiosEnrolmentStatus labels (same values accepted by the
+            // existing /v1/courselist/byuserid API): "In-Progress", "Completed", "All".
+            String status = (String) searchRequest.get(Constants.STATUS);
+            if (StringUtils.isEmpty(status)) {
+                response.getParams().setMsg("Request is not proper, please provide status in request body.");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+            if (statusMap.get(status) == null) {
+                response.getParams().setMsg("Request is not proper, please provide proper value of status (In-Progress, Completed, All).");
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+
+            String userId = accessTokenValidator.verifyUserToken(token);
+            log.info("UserId from auth token {}", userId);
+            if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
+                response.getParams().setMsg(Constants.USER_ID_DOESNT_EXIST);
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+
+            // Check Redis first for the minimal per-user enrolment map (courseId -> {partnerId, status}).
+            // Only if it isn't present there do we fall back to Cassandra - once - and then
+            // populate Redis so every subsequent call for this user is served from Redis alone.
+            // No TTL is set: once populated, the entry is not re-queried again.
+            Integer statusValue = statusMap.get(status);
+            String enrolmentRedisKey = Constants.USER_ENROLMENTS_PREFIX + userId;
+            int redisDbIndex = cbServerProperties.getRedisIndex();
+            Map<Object, Object> enrolmentHash = cacheService.getAllHashFields(enrolmentRedisKey, redisDbIndex);
+
+            if (MapUtils.isEmpty(enrolmentHash)) {
+                log.info("No enrolment map found in Redis for user {}, building it from Cassandra", userId);
+                Map<String, Object> propertyMap = new HashMap<>();
+                propertyMap.put(Constants.USER_ID, userId);
+                List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                        Constants.KEYSPACE_SUNBIRD_COURSES,
+                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                        propertyMap,
+                        null,
+                        null
+                );
+
+                Map<String, String> hashToCache = new HashMap<>();
+                Map<Object, Object> rebuiltHash = new HashMap<>();
+                for (Map<String, Object> enrolment : userEnrollmentList) {
+                    String cId = (String) enrolment.get(Constants.COURSE_ID);
+                    Map<String, Object> minimalInfo = new HashMap<>();
+                    minimalInfo.put(Constants.PARTNER_ID_REQ, enrolment.get(Constants.PARTNER_ID_REQ));
+                    minimalInfo.put(Constants.STATUS, enrolment.get(Constants.STATUS));
+                    String json = objectMapper.writeValueAsString(minimalInfo);
+                    hashToCache.put(cId, json);
+                    rebuiltHash.put(cId, json);
+                }
+                if (!hashToCache.isEmpty()) {
+                    cacheService.putAllHashFields(enrolmentRedisKey, redisDbIndex, hashToCache);
+                }
+                enrolmentHash = rebuiltHash;
+            } else {
+                log.info("Enrolment map for user {} fetched from Redis", userId);
+            }
+
+            List<Map<String, Object>> courses = new ArrayList<>();
+            for (Map.Entry<Object, Object> entry : enrolmentHash.entrySet()) {
+                String courseId = String.valueOf(entry.getKey());
+                Map<String, Object> enrolmentInfo;
+                try {
+                    enrolmentInfo = objectMapper.readValue((String) entry.getValue(), new TypeReference<Map<String, Object>>() {});
+                } catch (JsonProcessingException e) {
+                    log.error("Error while parsing cached enrolment info for user {} course {}: {}", userId, courseId, e.getMessage());
+                    continue;
+                }
+
+                String cachedPartnerId = (String) enrolmentInfo.get(Constants.PARTNER_ID_REQ);
+                if (!partnerId.equalsIgnoreCase(cachedPartnerId)) {
+                    continue;
+                }
+                if (statusValue != -1) {
+                    int cachedStatus = ((Number) enrolmentInfo.get(Constants.STATUS)).intValue();
+                    if (cachedStatus != statusValue) {
+                        continue;
+                    }
+                }
+
+                Map<String, Object> data = fetchDataByContentId(courseId);
+                Map<String, Object> course = new HashMap<>();
+                course.put(Constants.COURSE_ID, courseId);
+                course.put(Constants.PARTNER_ID_REQ, cachedPartnerId);
+                course.put(Constants.STATUS, enrolmentInfo.get(Constants.STATUS));
+                course.put(Constants.CONTENT, data.get(Constants.CONTENT));
+                courses.add(course);
+            }
+
+            if (!courses.isEmpty()) {
+                response.put(Constants.COURSES, courses);
+                response.setResponseCode(HttpStatus.OK);
+            } else {
+                response.getParams().setMsg("User has no courses with this provider matching the given status");
+                response.getParams().setStatus(Constants.SUCCESS);
+                response.setResponseCode(HttpStatus.OK);
+            }
+            return response;
+        } catch (Exception e) {
+            String errMsg = "Error while performing operation. " + e.getMessage();
+            log.error("Error while performing operation. {}", e.getMessage(), e);
+            response.getParams().setMsg(errMsg);
+            response.getParams().setStatus(Constants.FAILED);
+            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        return response;
+    }
+
+    @Override
     public SBApiResponse readByUserIdAndCourseId(String courseid, String token) {
         log.info("EnrollmentService::readByUserIdAndCourseId:inside the method");
         SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSEID);
