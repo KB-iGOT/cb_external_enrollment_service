@@ -599,6 +599,14 @@ class EnrollmentServiceImplTest {
         info1.put(Constants.STATUS, 0);
         when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
 
+        // c2 belongs to partner2, so it gets filtered out - but the loop still parses every
+        // cached entry before filtering, so this needs to be stubbed too or objectMapper.readValue
+        // returns null for it and NPEs when the code reads PARTNER_ID_REQ off that null.
+        Map<String, Object> info2 = new HashMap<>();
+        info2.put(Constants.PARTNER_ID_REQ, "partner2");
+        info2.put(Constants.STATUS, 0);
+        when(objectMapper.readValue(eq(json2), any(TypeReference.class))).thenReturn(info2);
+
         Map<String, Object> contentData = new HashMap<>();
         contentData.put(Constants.CONTENT, new HashMap<>());
         doReturn(contentData).when(enrollmentService).fetchDataByContentId("c1");
@@ -614,10 +622,15 @@ class EnrollmentServiceImplTest {
 
         // Cassandra was queried exactly once (the cache-miss fallback), and Redis was
         // populated in a single bulk write so subsequent calls won't hit Cassandra again.
+        // Note: the redis index is captured into a local variable before the verify call -
+        // calling cbServerProperties.getRedisIndex() (a mock method) inline inside eq(...)
+        // while other matchers are being built on the same argument list confuses Mockito's
+        // matcher stack and throws InvalidUseOfMatchers.
+        int redisIndex = cbServerProperties.getRedisIndex();
         verify(cassandraOperation, times(1)).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
         verify(cacheService).putAllHashFields(
                 eq(Constants.USER_ENROLMENTS_PREFIX + userId),
-                eq(cbServerProperties.getRedisIndex()),
+                eq(redisIndex),
                 argThat(map -> map.size() == 2 && json1.equals(map.get("c1")) && json2.equals(map.get("c2"))));
     }
 
