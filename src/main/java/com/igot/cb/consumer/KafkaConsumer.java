@@ -22,6 +22,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
@@ -57,7 +58,7 @@ public class KafkaConsumer {
     private CacheService cacheService;
 
     @KafkaListener(topics = "${spring.kafka.enrolment.counter.update.topic.name}", groupId = "${spring.kafka.enrolment.counter.update.consumer.group.id}")
-    public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data) {
+    public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
         log.info("KafkaConsumer::enrolmentCounterUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
             Map<String, Object> event = mapper.readValue(data.value(), new TypeReference<Map<String, Object>>() {});
@@ -108,6 +109,8 @@ public class KafkaConsumer {
             }
         } catch (Exception e) {
             log.error("Failed to process enrolment counter update event. Message received: " + data.value(), e);
+        } finally {
+            acknowledgment.acknowledge();
         }
     }
 
@@ -141,7 +144,7 @@ public class KafkaConsumer {
     }
 
     @KafkaListener(topics = "${spring.kafka.cornell.topic.name}", groupId = "${spring.kafka.consumer.group.id}")
-    public void enrollUpdateConsumer(ConsumerRecord<String, String> data) {
+    public void enrollUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
         log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
             ZoneId zoneId = ZoneId.of("UTC");
@@ -192,11 +195,13 @@ public class KafkaConsumer {
 
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
+        } finally {
+            acknowledgment.acknowledge();
         }
     }
 
     @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.progress.send.from.partner.consumer.group.id}")
-    public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data) {
+    public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
         log.info("KafkaConsumer::receiveProgressUpdateFromPartner:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
             JsonNode jsonNode = mapper.readTree(data.value());
@@ -217,6 +222,8 @@ public class KafkaConsumer {
             }
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
+        } finally {
+            acknowledgment.acknowledge();
         }
     }
 

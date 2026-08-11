@@ -9,6 +9,7 @@ import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.config.KafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 
 import java.util.HashMap;
@@ -27,9 +28,6 @@ public class ConsumerConfiguration {
     @Value("${kafka.max.poll.records}")
     private Integer kafkaMaxPollRecords;
 
-    @Value("${kafka.auto.commit.interval.ms}")
-    private Integer kafkaAutoCommitInterval;
-
     @Bean
     KafkaListenerContainerFactory<ConcurrentMessageListenerContainer<String, String>> kafkaListenerContainerFactory() {
 
@@ -37,6 +35,18 @@ public class ConsumerConfiguration {
         factory.setConsumerFactory(consumerFactory());
         factory.setConcurrency(4);
         factory.getContainerProperties().setPollTimeout(3000);
+        // Commit the offset only once a listener method has actually returned (success or a
+        // caught/logged internal failure - our listeners never rethrow), never on a background
+        // timer. With auto-commit, the offset can advance on a fixed interval regardless of
+        // whether processing has finished; a pod restart between that timer firing and the
+        // listener completing silently drops the in-flight event forever, since Kafka believes
+        // it was already committed. MANUAL_IMMEDIATE ties the commit to actual completion
+        // instead, so a restart mid-processing redelivers the event next time rather than
+        // losing it. This does still allow a message to be reprocessed if the pod dies after
+        // the listener returns but before the commit round-trip finishes - normal at-least-once
+        // behavior - so any listener whose side effects aren't naturally safe to repeat still
+        // needs its own idempotency guard rather than relying on the commit strategy alone.
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
         return factory;
     }
 
@@ -50,9 +60,8 @@ public class ConsumerConfiguration {
     public Map<String, Object> consumerConfigs() {
         Map<String, Object> propsMap = new HashMap<>();
         propsMap.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkabootstrapAddress);
-        propsMap.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, true);
+        propsMap.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         propsMap.put(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, "1000");
-        propsMap.put(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG, kafkaAutoCommitInterval);
         propsMap.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "15000");
         propsMap.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         propsMap.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);

@@ -34,6 +34,7 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -75,6 +76,9 @@ class KafkaConsumerTest {
 
     @Mock
     private CacheService cacheService;
+
+    @Mock
+    private Acknowledgment acknowledgment;
 
     @BeforeEach
     void setUp() {
@@ -148,7 +152,7 @@ class KafkaConsumerTest {
                 any())).thenReturn(userList);
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(record);
+        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
 
         // Assert
         verify(producer).push(eq("certTopic"), any(JsonNode.class));
@@ -167,7 +171,7 @@ class KafkaConsumerTest {
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(record);
+        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
 
         // Assert - should not throw exception and log error
         verify(cassandraOperation, never()).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
@@ -197,7 +201,7 @@ class KafkaConsumerTest {
                 eq(1))).thenReturn(Collections.emptyList());
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(record);
+        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
 
         // Assert
         verify(cassandraOperation, never()).updateRecord(any(), any(), any(), any());
@@ -215,7 +219,7 @@ class KafkaConsumerTest {
                 .thenThrow(new RuntimeException("Test exception"));
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(record);
+        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
 
         // Assert - should not throw exception and log error
         verify(cassandraOperation, never()).updateRecord(any(), any(), any(), any());
@@ -246,7 +250,7 @@ class KafkaConsumerTest {
         doNothing().when(producer).push(eq(updateTopic), any(JsonNode.class));
 
         // Act
-        kafkaConsumer.receiveProgressUpdateFromPartner(record);
+        kafkaConsumer.receiveProgressUpdateFromPartner(record, acknowledgment);
 
         // Assert
         verify(producer).push(eq(updateTopic), any(JsonNode.class));
@@ -265,7 +269,7 @@ class KafkaConsumerTest {
         when(transformUtility.callContentPartnerReadByPartnerCodeApi(anyString())).thenReturn(partnerResponse);
 
         // Act
-        kafkaConsumer.receiveProgressUpdateFromPartner(record);
+        kafkaConsumer.receiveProgressUpdateFromPartner(record, acknowledgment);
 
         // Assert
         verify(producer, never()).push(any(), any(JsonNode.class));
@@ -281,7 +285,7 @@ class KafkaConsumerTest {
                 .thenThrow(new RuntimeException("Test exception"));
 
         // Act
-        kafkaConsumer.receiveProgressUpdateFromPartner(record);
+        kafkaConsumer.receiveProgressUpdateFromPartner(record, acknowledgment);
 
         // Assert
         verify(producer, never()).push(any(), any(JsonNode.class));
@@ -541,7 +545,7 @@ class KafkaConsumerTest {
 
         // When & Then: exception should be caught and logged; no exception should be
         // thrown from the method
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> kafkaConsumer.enrollUpdateConsumer(record));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> kafkaConsumer.enrollUpdateConsumer(record, acknowledgment));
     }
 
     @Test
@@ -594,7 +598,7 @@ class KafkaConsumerTest {
         doNothing().when(producer).push(eq("certTopic"), any(JsonNode.class));
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(updatRecord);
+        kafkaConsumer.enrollUpdateConsumer(updatRecord, acknowledgment);
 
         // Assert
         verify(cassandraOperation).updateRecord(anyString(), anyString(), any(), any());
@@ -635,7 +639,7 @@ class KafkaConsumerTest {
         lenient().when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
                 .thenReturn(List.of(Map.of("firstname", "John")));
         ArgumentCaptor<Map<String, Object>> updateCaptor = ArgumentCaptor.forClass(Map.class);
-        kafkaConsumer.enrollUpdateConsumer(updateRecord);
+        kafkaConsumer.enrollUpdateConsumer(updateRecord, acknowledgment);
         verify(cassandraOperation).updateRecord(any(), any(), updateCaptor.capture(), any());
         Map<String, Object> updateMap = updateCaptor.getValue();
         assertNull(updateMap.get(Constants.COMPLETED_ON),
@@ -711,7 +715,7 @@ class KafkaConsumerTest {
         JsonNode result = mapper.createObjectNode(); // "content" is missing
         when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
         ConsumerRecord<String, String> updateRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
-        kafkaConsumer.enrollUpdateConsumer(updateRecord);
+        kafkaConsumer.enrollUpdateConsumer(updateRecord, acknowledgment);
         verify(cassandraOperation, never()).updateRecord(any(), any(), any(), any());
         verify(producer, never()).push(anyString(), any(JsonNode.class));
     }
@@ -736,7 +740,7 @@ class KafkaConsumerTest {
         ConsumerRecord<String, String> updateRecord = new ConsumerRecord<>("t", 0, 0L, "k", payload);
         JsonNode resp = mapper.createObjectNode().put("id", "p1");
         when(transformUtility.callContentPartnerReadByPartnerCodeApi(anyString())).thenReturn(resp);
-        kafkaConsumer.receiveProgressUpdateFromPartner(updateRecord);
+        kafkaConsumer.receiveProgressUpdateFromPartner(updateRecord, acknowledgment);
         verify(producer, never()).push(anyString(), any(JsonNode.class));
     }
 
@@ -793,7 +797,7 @@ class KafkaConsumerTest {
         event.put(Constants.IS_NEW_USER, true);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
         verify(cassandraOperation).incrementCounter(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES),
@@ -826,7 +830,7 @@ class KafkaConsumerTest {
         event.put(Constants.IS_NEW_USER, false);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
         verify(cassandraOperation, org.mockito.Mockito.times(2)).incrementCounter(any(), any(), any(), any());
         verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(
@@ -845,7 +849,7 @@ class KafkaConsumerTest {
         event.put(Constants.IS_NEW_USER, true);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
         // COURSE_ENROLMENTS is recorded for free courses too now - just tagged
         // course_type=free instead of being skipped - so all three counters fire.
@@ -868,7 +872,7 @@ class KafkaConsumerTest {
         event.put(Constants.IS_NEW_USER, false);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
         verify(cassandraOperation, org.mockito.Mockito.times(2)).incrementCounter(any(), any(), any(), any());
         verify(cassandraOperation).incrementCounter(
@@ -900,7 +904,7 @@ class KafkaConsumerTest {
                 any(), any()))
                 .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 7L)));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
         verify(transformUtility).updateContentPartnerLicenseConsumedCount("p1", 7L);
     }
@@ -915,7 +919,7 @@ class KafkaConsumerTest {
         event.put(Constants.IS_NEW_USER, true);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
         // Free enrolments never consume licence capacity, so the partner sync must be
         // skipped entirely even though this is a new user (TOTAL_ENROLMENTS still increments
@@ -933,7 +937,7 @@ class KafkaConsumerTest {
         event.put(Constants.IS_NEW_USER, false);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
         verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(anyString(), anyLong());
     }
@@ -942,7 +946,7 @@ class KafkaConsumerTest {
     void enrolmentCounterUpdateConsumer_malformedJson_doesNotThrow() {
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", "not-valid-json");
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
         verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(any(), any(), any(), any());
     }
