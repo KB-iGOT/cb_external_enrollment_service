@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -878,6 +879,63 @@ class KafkaConsumerTest {
                 any(), any(),
                 argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
                 any());
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_newUserPaidCourse_syncsLicenseConsumedCountToPartner() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        event.put(Constants.IS_NEW_USER, true);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        // Post-increment read-back of the paid TOTAL_ENROLMENTS row - this authoritative
+        // value (not a locally-tracked count) is what gets synced to the partner record.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
+                        && Constants.COURSE_TYPE_PAID.equals(m.get(Constants.COURSE_TYPE_COL))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 7L)));
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+
+        verify(transformUtility).updateContentPartnerLicenseConsumedCount("p1", 7L);
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_newUserFreeCourse_doesNotSyncLicenseConsumedCount() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
+        event.put(Constants.IS_NEW_USER, true);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+
+        // Free enrolments never consume licence capacity, so the partner sync must be
+        // skipped entirely even though this is a new user (TOTAL_ENROLMENTS still increments
+        // on the free row above, just without triggering the partner-record sync).
+        verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(anyString(), anyLong());
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_existingUserPaidCourse_doesNotSyncLicenseConsumedCount() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        event.put(Constants.IS_NEW_USER, false);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+
+        verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(anyString(), anyLong());
     }
 
     @Test

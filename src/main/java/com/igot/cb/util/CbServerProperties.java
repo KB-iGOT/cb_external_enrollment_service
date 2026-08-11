@@ -40,6 +40,9 @@ public class CbServerProperties {
     @Value("${content.partner.readby.partnercode.api.url}")
     private String contentPartnerReadbyPartnerCodeApiUrl;
 
+    @Value("${content.partner.update.api.url}")
+    private String contentPartnerUpdateApiUrl;
+
     @Value("${spring.kafka.cornell.topic.name}")
     private String userProgressUpdateTopic;
 

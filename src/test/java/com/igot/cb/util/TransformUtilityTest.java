@@ -16,6 +16,7 @@ import com.igot.cb.authentication.util.AccessTokenValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
@@ -184,6 +185,160 @@ class TransformUtilityTest {
 
         assertEquals(Constants.ERROR, exception.getCode());
         assertTrue(exception.getMessage().contains("Failed to retrieve externalId"));
+    }
+
+    @Test
+    void updateContentPartnerLicenseConsumedCount_Success() {
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String readApiUrl = "/api/partner/read/";
+        String updateApiUrl = "/api/partner/update";
+        String readUrl = baseUrl + readApiUrl + partnerId;
+        String updateUrl = baseUrl + updateApiUrl;
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getContentPartnerReadApiUrl()).thenReturn(readApiUrl);
+        when(cbServerProperties.getContentPartnerUpdateApiUrl()).thenReturn(updateApiUrl);
+
+        ObjectNode dataNode = realMapper.createObjectNode();
+        dataNode.put("contentPartnerName", "Acme");
+        dataNode.put(Constants.LICENSE_CONSUMED_COUNT, 3);
+        ObjectNode resultNode = realMapper.createObjectNode();
+        resultNode.put(Constants.ID, partnerId);
+        resultNode.set(Constants.DATA, dataNode);
+        ObjectNode readBody = realMapper.createObjectNode();
+        readBody.set(Constants.RESULT, resultNode);
+
+        when(restTemplate.exchange(eq(readUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(readBody, HttpStatus.OK));
+
+        ResponseEntity<JsonNode> updateResponse = new ResponseEntity<>(realMapper.createObjectNode(), HttpStatus.OK);
+        when(restTemplate.exchange(eq(updateUrl), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(updateResponse);
+
+        transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, 7L);
+
+        ArgumentCaptor<HttpEntity> captor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).exchange(eq(updateUrl), eq(HttpMethod.POST), captor.capture(), eq(JsonNode.class));
+        JsonNode sentBody = (JsonNode) captor.getValue().getBody();
+        assertEquals(partnerId, sentBody.get(Constants.ID).asText());
+        // licenseConsumedCount is overwritten with the freshly-read counter value...
+        assertEquals(7L, sentBody.get(Constants.DATA).get(Constants.LICENSE_CONSUMED_COUNT).asLong());
+        // ...while every other existing field on the partner's data is resent unchanged,
+        // since the update endpoint requires the full data object on every call.
+        assertEquals("Acme", sentBody.get(Constants.DATA).get("contentPartnerName").asText());
+    }
+
+    @Test
+    void updateContentPartnerLicenseConsumedCount_LegacyKeys_MigratedAndStripped() {
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String readApiUrl = "/api/partner/read/";
+        String updateApiUrl = "/api/partner/update";
+        String readUrl = baseUrl + readApiUrl + partnerId;
+        String updateUrl = baseUrl + updateApiUrl;
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getContentPartnerReadApiUrl()).thenReturn(readApiUrl);
+        when(cbServerProperties.getContentPartnerUpdateApiUrl()).thenReturn(updateApiUrl);
+
+        // Old partner record: pre-fix misspelled keys, no correct-spelling licenseType at all.
+        ObjectNode dataNode = realMapper.createObjectNode();
+        dataNode.put("contentPartnerName", "Udemy");
+        dataNode.put("liscenceType", "User");
+        dataNode.put("licenceConsumedCount", 0);
+        ObjectNode resultNode = realMapper.createObjectNode();
+        resultNode.put(Constants.ID, partnerId);
+        resultNode.set(Constants.DATA, dataNode);
+        ObjectNode readBody = realMapper.createObjectNode();
+        readBody.set(Constants.RESULT, resultNode);
+
+        when(restTemplate.exchange(eq(readUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(readBody, HttpStatus.OK));
+        when(restTemplate.exchange(eq(updateUrl), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(realMapper.createObjectNode(), HttpStatus.OK));
+
+        transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, 4L);
+
+        ArgumentCaptor<HttpEntity> captor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).exchange(eq(updateUrl), eq(HttpMethod.POST), captor.capture(), eq(JsonNode.class));
+        JsonNode sentData = ((JsonNode) captor.getValue().getBody()).get(Constants.DATA);
+
+        // liscenceType's value is carried over to the correct key...
+        assertEquals("User", sentData.get(Constants.LICENSE_TYPE).asText());
+        // ...and both legacy keys are gone, since additionalProperties:false would otherwise
+        // reject the whole update.
+        assertFalse(sentData.has("liscenceType"));
+        assertFalse(sentData.has("licenceConsumedCount"));
+        // The correct-spelling key carries the fresh authoritative value.
+        assertEquals(4L, sentData.get(Constants.LICENSE_CONSUMED_COUNT).asLong());
+    }
+
+    @Test
+    void updateContentPartnerLicenseConsumedCount_PartnerDataMissing_DoesNotCallUpdate() {
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String readApiUrl = "/api/partner/read/";
+        String readUrl = baseUrl + readApiUrl + partnerId;
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getContentPartnerReadApiUrl()).thenReturn(readApiUrl);
+
+        // "result" is present but has no nested "data" - nothing to merge the new count into.
+        ObjectNode resultNode = realMapper.createObjectNode();
+        resultNode.put(Constants.ID, partnerId);
+        ObjectNode readBody = realMapper.createObjectNode();
+        readBody.set(Constants.RESULT, resultNode);
+
+        when(restTemplate.exchange(eq(readUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(readBody, HttpStatus.OK));
+
+        transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, 5L);
+
+        verify(restTemplate, never()).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class));
+    }
+
+    @Test
+    void updateContentPartnerLicenseConsumedCount_UpdateCallFails_LogsAndDoesNotThrow() {
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String readApiUrl = "/api/partner/read/";
+        String updateApiUrl = "/api/partner/update";
+        String readUrl = baseUrl + readApiUrl + partnerId;
+        String updateUrl = baseUrl + updateApiUrl;
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getContentPartnerReadApiUrl()).thenReturn(readApiUrl);
+        when(cbServerProperties.getContentPartnerUpdateApiUrl()).thenReturn(updateApiUrl);
+
+        ObjectNode dataNode = realMapper.createObjectNode();
+        dataNode.put("contentPartnerName", "Acme");
+        ObjectNode resultNode = realMapper.createObjectNode();
+        resultNode.put(Constants.ID, partnerId);
+        resultNode.set(Constants.DATA, dataNode);
+        ObjectNode readBody = realMapper.createObjectNode();
+        readBody.set(Constants.RESULT, resultNode);
+
+        when(restTemplate.exchange(eq(readUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(readBody, HttpStatus.OK));
+        when(restTemplate.exchange(eq(updateUrl), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        assertDoesNotThrow(() -> transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, 5L));
+    }
+
+    @Test
+    void updateContentPartnerLicenseConsumedCount_ExceptionDuringRead_SwallowedNotThrown() {
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String readApiUrl = "/api/partner/read/";
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getContentPartnerReadApiUrl()).thenReturn(readApiUrl);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenThrow(new RuntimeException("boom"));
+
+        assertDoesNotThrow(() -> transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, 5L));
     }
 
     @Test

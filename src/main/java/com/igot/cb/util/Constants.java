@@ -123,6 +123,10 @@ public class Constants {
     public static final String LICENSE_TYPE = "licenseType";
     public static final String LICENSE_TYPE_USER = "User";
     public static final String LICENSE_TYPE_COURSE = "Course";
+    public static final String LICENSE_CONSUMED_COUNT = "licenseConsumedCount";
+    // Pre-fix, misspelled keys some older partner records still carry in cb-pores.
+    public static final String LEGACY_LICENSE_TYPE = "liscenceType";
+    public static final String LEGACY_LICENSE_CONSUMED_COUNT = "licenceConsumedCount";
     public static final String IS_NEW_USER = "isNewUser";
     public static final String COURSE_TYPE = "courseType";
     public static final String COURSE_ENROL_LIMIT = "courseEnrolLimit";

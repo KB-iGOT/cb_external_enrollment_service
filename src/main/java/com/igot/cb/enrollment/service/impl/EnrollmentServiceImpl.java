@@ -575,30 +575,22 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
 
         String licenseType = getLicenseType(providerResponse);
-        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType)) {
-            // licenseType == user: the lookup table is retired for this path - the counter table
-            // is the new source for overall/userwise limits. courseType is always paid here.
+        if (Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)) {
+            // licenseType == course: every enrolment consumes a licence unit - there is no
+            // new-user exemption - so isNewUser is always true here, which simply means
+            // "always increment TOTAL_ENROLMENTS" on the consumer side; it re-uses the same
+            // flag/gate rather than needing a separate one.
+            String courseType = getCourseType(contentResponse);
+            publishCounterUpdateEvent(partnerId, userId, courseId, courseType, true);
+        } else {
+            // licenseType == user, or not yet configured on this partner - both are now
+            // treated as the user-licence model; the old lookup table is fully retired, the
+            // counter table is the only source for overall/userwise limits regardless of
+            // whether licenseType has been explicitly set. courseType is always paid here.
             // "New user" must be re-read fresh right now, before any counter is touched, since
             // this increment is the thing that would otherwise make the user look "existing".
             boolean isNewUser = isNewUserForPartner(partnerId, userId);
             publishCounterUpdateEvent(partnerId, userId, courseId, Constants.COURSE_TYPE_PAID, isNewUser);
-        } else if (Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)) {
-            // licenseType == course: the lookup table is retired here too. Every enrolment
-            // consumes a licence unit - there is no new-user exemption - so isNewUser is always
-            // true here, which simply means "always increment TOTAL_ENROLMENTS" on the consumer
-            // side; it re-uses the same flag/gate rather than needing a separate one.
-            String courseType = getCourseType(contentResponse);
-            publishCounterUpdateEvent(partnerId, userId, courseId, courseType, true);
-        } else {
-            // licenseType not yet configured on this partner - unchanged for now, still populates
-            // the lookup table since that path's validation hasn't moved onto the counter table.
-            cassandraOperation.insertRecord(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
-                    Map.of(Constants.PARTNER_ID_REQ, partnerId,
-                            Constants.USER_ID, userId,
-                            Constants.COURSE_ID, courseId)
-            );
         }
 
         cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
@@ -662,22 +654,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
         String licenseType = getLicenseType(providerResponse);
 
-        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType)) {
-            // An already-licensed user (has at least one prior enrolment with this partner) is
-            // exempt from the overall-limit check entirely - a full license should never block a
-            // learner who already holds a unit. Only a genuinely new user is checked here.
-            if (!isNewUserForPartner(partnerId, userId)) {
-                return false;
-            }
-            long totalEnrolments = getCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, Constants.COURSE_TYPE_PAID);
-            if (totalEnrolments >= overallLimit) {
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                response.getParams().setMsg(cbServerProperties.getPartnerOverallLimitMsg());
-                return true;
-            }
-            return false;
-        }
-
         if (Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)) {
             // No validation at all for free courses. Every enrolment (not just new users) counts
             // against the cap here, since a course licence is consumed per-enrolment.
@@ -693,22 +669,16 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return false;
         }
 
-        // licenseType not yet configured on this partner - fallback to the old lookup-table count
-        // so partners that haven't been migrated yet keep working exactly as before.
-        String partnerKey = Constants.PARTNER + partnerId + Constants.COUNT;
-
-        int partnerCount = getCountFromCacheOrDb(
-                partnerKey,
-                () -> cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                        Constants.KEYSPACE_SUNBIRD_COURSES,
-                        Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
-                        Map.of(Constants.PARTNER_ID_REQ, partnerId),
-                        null,
-                        null
-                ).size()
-        );
-
-        if (partnerCount >= overallLimit) {
+        // licenseType == user, or not yet configured on this partner - both are now treated as
+        // the user-licence model; the old lookup-table fallback is fully retired. An
+        // already-licensed user (has at least one prior enrolment with this partner) is exempt
+        // from the overall-limit check entirely - a full license should never block a learner
+        // who already holds a unit. Only a genuinely new user is checked here.
+        if (!isNewUserForPartner(partnerId, userId)) {
+            return false;
+        }
+        long totalEnrolments = getCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, Constants.COURSE_TYPE_PAID);
+        if (totalEnrolments >= overallLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             response.getParams().setMsg(cbServerProperties.getPartnerOverallLimitMsg());
             return true;
@@ -728,34 +698,11 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         int userWiseLimit = providerResponse.path(Constants.USER_WISE_LIMIT).asInt(0);
         if (userWiseLimit <= 0) return false;
 
-        // Identical for both license types - courses a user holds with this partner, regardless
-        // of licenseType or whether any of them are free.
-        if (isRecognizedLicenseType(providerResponse)) {
-            long userCourseCount = getCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, Constants.COURSE_TYPE_PAID);
-            if (userCourseCount >= userWiseLimit) {
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                response.getParams().setMsg(cbServerProperties.getPartnerUserwiseLimitMsg());
-                return true;
-            }
-            return false;
-        }
-
-        // licenseType not yet configured on this partner - unchanged, still backed by the lookup table.
-        String userWiseKey =
-                Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.COUNT;
-
-        int userCount = getCountFromCacheOrDb(
-                userWiseKey,
-                () -> cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                        Constants.KEYSPACE_SUNBIRD_COURSES,
-                        Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP,
-                        Map.of(Constants.USER_ID, userId, Constants.PARTNER_ID_REQ, partnerId),
-                        null,
-                        null
-                ).size()
-        );
-
-        if (userCount >= userWiseLimit) {
+        // Identical regardless of licenseType (course, user, or not yet configured) - courses
+        // a user holds with this partner. The old lookup-table fallback is fully retired; the
+        // counter table is now the only source for this check.
+        long userCourseCount = getCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, Constants.COURSE_TYPE_PAID);
+        if (userCourseCount >= userWiseLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             response.getParams().setMsg(cbServerProperties.getPartnerUserwiseLimitMsg());
             return true;
@@ -797,12 +744,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     private String getLicenseType(JsonNode providerResponse) {
         return providerResponse.path(Constants.LICENSE_TYPE).asText("");
-    }
-
-    private boolean isRecognizedLicenseType(JsonNode providerResponse) {
-        String licenseType = getLicenseType(providerResponse);
-        return Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType)
-                || Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType);
     }
 
     /**

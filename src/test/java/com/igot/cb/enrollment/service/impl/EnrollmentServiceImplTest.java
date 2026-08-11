@@ -1189,18 +1189,23 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("enrollUserInCourse: licenseType course/unset - still writes to the lookup table")
+    @DisplayName("enrollUserInCourse: licenseType unset - treated as the user-licence model, publishes counter event, lookup table is never touched")
     void enrollUserInCourse_Success() {
         String userId = "user123";
         String courseId = "course456";
         String partnerId = "partner789";
-        ObjectNode providerResponse = new ObjectMapper().createObjectNode(); // no licenseType -> course/unset branch
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode(); // no licenseType -> defaults to user-licence model
 
         Map<String, Object> insertResult = new HashMap<>();
         insertResult.put(Constants.APPLIED, true);
         when(cassandraOperation.insertRecordIfNotExists(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
                 .thenReturn(insertResult);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
 
         ObjectNode contentResponse = new ObjectMapper().createObjectNode();
 
@@ -1214,13 +1219,17 @@ class EnrollmentServiceImplTest {
                 argThat(map -> userId.equals(map.get(Constants.USER_ID)) &&
                         courseId.equals(map.get(Constants.COURSE_ID)) &&
                         partnerId.equals(map.get(Constants.PARTNER_ID_REQ))));
-        verify(cassandraOperation).insertRecord(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP),
-                argThat(map -> userId.equals(map.get(Constants.USER_ID)) &&
-                        courseId.equals(map.get(Constants.COURSE_ID)) &&
-                        partnerId.equals(map.get(Constants.PARTNER_ID_REQ))));
-        verify(producer, times(0)).push(any(), any());
+        // The old lookup table is fully retired - it must never be written to, regardless of
+        // licenseType.
+        verify(cassandraOperation, times(0)).insertRecord(any(), any(), any());
+        verify(producer).push(eq("enrolment-counter-topic"), argThat(event -> {
+            Map<?, ?> map = (Map<?, ?>) event;
+            return partnerId.equals(map.get(Constants.PARTNER_ID_REQ))
+                    && userId.equals(map.get(Constants.USER_ID))
+                    && courseId.equals(map.get(Constants.COURSE_ID))
+                    && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL))
+                    && Boolean.TRUE.equals(map.get(Constants.IS_NEW_USER));
+        }));
         // The readByUserIdAndPartnerId cache-aside hash for this user must be invalidated
         // so the next read rebuilds it from Cassandra with this new enrolment included.
         verify(cacheService).deleteCache(eq(Constants.USER_ENROLMENTS_PREFIX + userId), anyInt());
@@ -1347,6 +1356,7 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType unset (treated as user-licence), new user at overall limit - rejected")
     void validatePartnerEnrollmentLimits_OverallLimitReached() {
         String userId = "user123";
         String partnerId = "partner789";
@@ -1360,13 +1370,21 @@ class EnrollmentServiceImplTest {
         providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1);
         ObjectNode contentResponse = realMapper.createObjectNode();
 
-        List<Map<String, Object>> enrollments = new ArrayList<>();
-        enrollments.add(new HashMap<>());
         when(cbServerProperties.getPartnerOverallLimitMsg())
                 .thenReturn("Partner overall enrollment limit reached");
 
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
-                .thenReturn(enrollments);
+        // No licenseType set -> treated as the user-licence model. New user (no prior
+        // USER_ENROLMENTS row), and TOTAL_ENROLMENTS already at the limit of 1.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 1L)));
 
         Boolean result = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,

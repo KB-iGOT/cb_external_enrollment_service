@@ -95,6 +95,16 @@ public class KafkaConsumer {
                         counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
                         Map.of(Constants.COUNTER_VALUE, 1L)
                 );
+
+                // licenseConsumedCount on the partner record mirrors only the PAID
+                // TOTAL_ENROLMENTS row - the same row isOverallLimitExceeded validates
+                // against. Free-course enrolments increment their own (free) TOTAL_ENROLMENTS
+                // row above, but never consume licence capacity, so the partner sync is
+                // skipped entirely for those - nothing relevant changed for licenceConsumedCount.
+                if (Constants.COURSE_TYPE_PAID.equalsIgnoreCase(courseType)) {
+                    long licenseConsumedCount = readCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
+                    transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
+                }
             }
         } catch (Exception e) {
             log.error("Failed to process enrolment counter update event. Message received: " + data.value(), e);
@@ -108,6 +118,26 @@ public class KafkaConsumer {
         key.put(Constants.SCOPE_ID, scopeId);
         key.put(Constants.COURSE_TYPE_COL, courseType);
         return key;
+    }
+
+    /**
+     * Point-read of a counter row's "value" column right after incrementing it, so the
+     * partner-record sync always reflects the authoritative post-increment total rather than
+     * a locally-tracked running count that could drift under concurrent consumer instances.
+     */
+    private long readCounterValue(String partnerId, String scopeType, String scopeId, String courseType) {
+        List<Map<String, Object>> rows = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                counterKey(partnerId, scopeType, scopeId, courseType),
+                List.of(Constants.COUNTER_VALUE),
+                1
+        );
+        if (CollectionUtils.isEmpty(rows)) {
+            return 0L;
+        }
+        Object value = rows.get(0).get(Constants.COUNTER_VALUE);
+        return value == null ? 0L : ((Number) value).longValue();
     }
 
     @KafkaListener(topics = "${spring.kafka.cornell.topic.name}", groupId = "${spring.kafka.consumer.group.id}")
