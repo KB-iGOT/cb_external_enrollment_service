@@ -107,6 +107,26 @@ public class Constants {
     public static final String DATA = "data";
     public static final String USER_KARMA_POINTS = "user:karmaPoints:";
     public static final String USER_ENROLMENTS_PREFIX = "user:enrolments:";
+
+    // user_external_enrolments_counter (partner licensing / enrolment limits)
+    public static final String TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER = "user_external_enrolments_counter";
+    public static final String SCOPE_TYPE = "scope_type";
+    public static final String SCOPE_ID = "scope_id";
+    public static final String COURSE_TYPE_COL = "course_type";
+    public static final String COUNTER_VALUE = "value";
+    public static final String COMPLETED_COUNT = "completedcount";
+    public static final String SCOPE_TYPE_TOTAL_ENROLMENTS = "TOTAL_ENROLMENTS";
+    public static final String SCOPE_TYPE_USER_ENROLMENTS = "USER_ENROLMENTS";
+    public static final String SCOPE_TYPE_COURSE_ENROLMENTS = "COURSE_ENROLMENTS";
+    public static final String COURSE_TYPE_PAID = "paid";
+    public static final String COURSE_TYPE_FREE = "free";
+    public static final String LICENSE_TYPE = "licenseType";
+    public static final String LICENSE_TYPE_USER = "User";
+    public static final String LICENSE_TYPE_COURSE = "Course";
+    public static final String IS_NEW_USER = "isNewUser";
+    public static final String COURSE_TYPE = "courseType";
+    public static final String COURSE_ENROL_LIMIT = "courseEnrolLimit";
+    public static final String APPLIED = "applied";
     public static final String USER_WISE_LIMIT_ENABLED = "isUserWiseLimitEnabled";
     public static final String CONCURRENT_LIMIT_ENABLED = "isConcurrentLimitEnabled";
     public static final String KARMA_POINTS_ENABLED = "addKarmaPointEnabled";

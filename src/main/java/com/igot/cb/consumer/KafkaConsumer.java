@@ -56,6 +56,60 @@ public class KafkaConsumer {
     @Autowired
     private CacheService cacheService;
 
+    @KafkaListener(topics = "${spring.kafka.enrolment.counter.update.topic.name}", groupId = "${spring.kafka.enrolment.counter.update.consumer.group.id}")
+    public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data) {
+        log.info("KafkaConsumer::enrolmentCounterUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
+        try {
+            Map<String, Object> event = mapper.readValue(data.value(), new TypeReference<Map<String, Object>>() {});
+            String partnerId = (String) event.get(Constants.PARTNER_ID_REQ);
+            String userId = (String) event.get(Constants.USER_ID);
+            String courseId = (String) event.get(Constants.COURSE_ID);
+            String courseType = (String) event.get(Constants.COURSE_TYPE_COL);
+            boolean isNewUser = Boolean.TRUE.equals(event.get(Constants.IS_NEW_USER));
+
+            // USER_ENROLMENTS and COURSE_ENROLMENTS are incremented on every enrolment,
+            // free or paid - each keyed by the enrolment's actual courseType, so free and
+            // paid enrolments for the same user/course accumulate into separate rows.
+            // TOTAL_ENROLMENTS (provider licence consumption) is only incremented when this
+            // is a genuinely new user for the partner, per the flag computed at enrol time -
+            // never recomputed here, since the enrolment that triggered this event is itself
+            // what would make a fresh re-read see the user as "existing".
+            cassandraOperation.incrementCounter(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                    counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)
+            );
+
+            cassandraOperation.incrementCounter(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                    counterKey(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)
+            );
+
+            if (isNewUser) {
+                cassandraOperation.incrementCounter(
+                        Constants.KEYSPACE_SUNBIRD_COURSES,
+                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                        counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
+                        Map.of(Constants.COUNTER_VALUE, 1L)
+                );
+            }
+        } catch (Exception e) {
+            log.error("Failed to process enrolment counter update event. Message received: " + data.value(), e);
+        }
+    }
+
+    private Map<String, Object> counterKey(String partnerId, String scopeType, String scopeId, String courseType) {
+        Map<String, Object> key = new HashMap<>();
+        key.put(Constants.PARTNER_ID_REQ, partnerId);
+        key.put(Constants.SCOPE_TYPE, scopeType);
+        key.put(Constants.SCOPE_ID, scopeId);
+        key.put(Constants.COURSE_TYPE_COL, courseType);
+        return key;
+    }
+
     @KafkaListener(topics = "${spring.kafka.cornell.topic.name}", groupId = "${spring.kafka.consumer.group.id}")
     public void enrollUpdateConsumer(ConsumerRecord<String, String> data) {
         log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());

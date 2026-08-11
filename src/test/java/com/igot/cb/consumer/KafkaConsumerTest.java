@@ -781,4 +781,116 @@ class KafkaConsumerTest {
         assertEquals(123, node.get("arr").get(0).asInt());
         assertEquals("u1", node.get("arr").get(1).get("key").asText());
     }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_newUserPaidCourse_incrementsAllThreeCounters() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        event.put(Constants.IS_NEW_USER, true);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+
+        verify(cassandraOperation).incrementCounter(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> "p1".equals(m.get(Constants.PARTNER_ID_REQ))
+                        && Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
+                        && "u1".equals(m.get(Constants.SCOPE_ID))),
+                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
+        verify(cassandraOperation).incrementCounter(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
+                        && "c1".equals(m.get(Constants.SCOPE_ID))),
+                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
+        verify(cassandraOperation).incrementCounter(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
+                        && "p1".equals(m.get(Constants.SCOPE_ID))),
+                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_existingUser_skipsTotalEnrolments() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        event.put(Constants.IS_NEW_USER, false);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+
+        verify(cassandraOperation, org.mockito.Mockito.times(2)).incrementCounter(any(), any(), any(), any());
+        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(
+                any(), any(),
+                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                any());
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_freeCourse_stillIncrementsCourseEnrolments() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
+        event.put(Constants.IS_NEW_USER, true);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+
+        // COURSE_ENROLMENTS is recorded for free courses too now - just tagged
+        // course_type=free instead of being skipped - so all three counters fire.
+        verify(cassandraOperation, org.mockito.Mockito.times(3)).incrementCounter(any(), any(), any(), any());
+        verify(cassandraOperation).incrementCounter(
+                any(), any(),
+                argThatMap(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
+                        && "c1".equals(m.get(Constants.SCOPE_ID))
+                        && Constants.COURSE_TYPE_FREE.equals(m.get(Constants.COURSE_TYPE_COL))),
+                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_existingUserFreeCourse_skipsTotalButStillIncrementsCourseEnrolments() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
+        event.put(Constants.IS_NEW_USER, false);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+
+        verify(cassandraOperation, org.mockito.Mockito.times(2)).incrementCounter(any(), any(), any(), any());
+        verify(cassandraOperation).incrementCounter(
+                any(), any(),
+                argThatMap(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                any());
+        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(
+                any(), any(),
+                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                any());
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_malformedJson_doesNotThrow() {
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", "not-valid-json");
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record);
+
+        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(any(), any(), any(), any());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> argThatMap(java.util.function.Predicate<Map<String, Object>> predicate) {
+        return org.mockito.ArgumentMatchers.argThat(m -> predicate.test((Map<String, Object>) m));
+    }
 }
