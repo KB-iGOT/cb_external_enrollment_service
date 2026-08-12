@@ -60,58 +60,87 @@ public class KafkaConsumer {
     @KafkaListener(topics = "${spring.kafka.enrolment.counter.update.topic.name}", groupId = "${spring.kafka.enrolment.counter.update.consumer.group.id}")
     public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
         log.info("KafkaConsumer::enrolmentCounterUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
+        Map<String, Object> event;
         try {
-            Map<String, Object> event = mapper.readValue(data.value(), new TypeReference<Map<String, Object>>() {});
-            String partnerId = (String) event.get(Constants.PARTNER_ID_REQ);
-            String userId = (String) event.get(Constants.USER_ID);
-            String courseId = (String) event.get(Constants.COURSE_ID);
-            String courseType = (String) event.get(Constants.COURSE_TYPE_COL);
-            boolean isNewUser = Boolean.TRUE.equals(event.get(Constants.IS_NEW_USER));
-
-            // USER_ENROLMENTS and COURSE_ENROLMENTS are incremented on every enrolment,
-            // free or paid - each keyed by the enrolment's actual courseType, so free and
-            // paid enrolments for the same user/course accumulate into separate rows.
-            // TOTAL_ENROLMENTS (provider licence consumption) is only incremented when this
-            // is a genuinely new user for the partner, per the flag computed at enrol time -
-            // never recomputed here, since the enrolment that triggered this event is itself
-            // what would make a fresh re-read see the user as "existing".
-            cassandraOperation.incrementCounter(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
-                    counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
-                    Map.of(Constants.COUNTER_VALUE, 1L)
-            );
-
-            cassandraOperation.incrementCounter(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
-                    counterKey(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType),
-                    Map.of(Constants.COUNTER_VALUE, 1L)
-            );
-
-            if (isNewUser) {
-                cassandraOperation.incrementCounter(
-                        Constants.KEYSPACE_SUNBIRD_COURSES,
-                        Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
-                        counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
-                        Map.of(Constants.COUNTER_VALUE, 1L)
-                );
-
-                // licenseConsumedCount on the partner record mirrors only the PAID
-                // TOTAL_ENROLMENTS row - the same row isOverallLimitExceeded validates
-                // against. Free-course enrolments increment their own (free) TOTAL_ENROLMENTS
-                // row above, but never consume licence capacity, so the partner sync is
-                // skipped entirely for those - nothing relevant changed for licenceConsumedCount.
-                if (Constants.COURSE_TYPE_PAID.equalsIgnoreCase(courseType)) {
-                    long licenseConsumedCount = readCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
-                    transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
-                }
-            }
+            event = mapper.readValue(data.value(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            log.error("Failed to process enrolment counter update event. Message received: " + data.value(), e);
-        } finally {
+            // A malformed message can never succeed no matter how many times it's redelivered -
+            // log and acknowledge it here rather than letting the container's error
+            // handler/backoff below retry something that will never parse.
+            log.error("Failed to parse enrolment counter update event. Message received: " + data.value(), e);
             acknowledgment.acknowledge();
+            return;
         }
+
+        // Everything below is allowed to throw and propagate out of this method on purpose -
+        // the shared kafkaListenerContainerFactory now has a DefaultErrorHandler attached (see
+        // ConsumerConfiguration), which retries a genuinely failed attempt (e.g. a transient
+        // Cassandra hiccup) a few times before giving up and moving on, instead of the previous
+        // behavior of silently swallowing the failure and losing the event on the first try.
+        // acknowledgment.acknowledge() is only called once processing actually succeeds, so a
+        // retry (or a pod restart before that point) redelivers the same event rather than
+        // skipping it.
+        String partnerId = (String) event.get(Constants.PARTNER_ID_REQ);
+        String userId = (String) event.get(Constants.USER_ID);
+        String courseId = (String) event.get(Constants.COURSE_ID);
+        String courseType = (String) event.get(Constants.COURSE_TYPE_COL);
+        String licenseType = (String) event.get(Constants.LICENSE_TYPE);
+
+        // Whether this enrolment counts toward TOTAL_ENROLMENTS (provider licence
+        // consumption) is decided here, not trusted from a value computed earlier in the
+        // request thread that produced this event. licenseType == Course always counts -
+        // there's no new-user exemption for a course licence. Otherwise, it only counts for
+        // a user's first enrolment with this partner, which is read fresh right now, before
+        // this event's own USER_ENROLMENTS increment below - the enrolment that triggered
+        // this event is itself what would make a later re-read see the user as "existing".
+        // This fresh read is safe from the concurrent-double-count race it replaces because
+        // every event for a given (partnerId, userId) is published keyed on that pair (see
+        // EnrollmentServiceImpl.publishCounterUpdateEvent), and Kafka guarantees all
+        // messages sharing a key land on the same partition and are consumed strictly one
+        // at a time, in order - so two enrolments submitted concurrently for the same new
+        // user can never be read here in parallel; the second is only ever processed after
+        // the first one's increment has already landed, so it correctly sees itself as "not
+        // new".
+        boolean countTowardTotal = Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)
+                || readCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType) == 0;
+
+        // USER_ENROLMENTS and COURSE_ENROLMENTS are incremented on every enrolment,
+        // free or paid - each keyed by the enrolment's actual courseType, so free and
+        // paid enrolments for the same user/course accumulate into separate rows.
+        cassandraOperation.incrementCounter(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
+                Map.of(Constants.COUNTER_VALUE, 1L)
+        );
+
+        cassandraOperation.incrementCounter(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                counterKey(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType),
+                Map.of(Constants.COUNTER_VALUE, 1L)
+        );
+
+        if (countTowardTotal) {
+            cassandraOperation.incrementCounter(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                    counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)
+            );
+
+            // licenseConsumedCount on the partner record mirrors only the PAID
+            // TOTAL_ENROLMENTS row - the same row isOverallLimitExceeded validates
+            // against. Free-course enrolments increment their own (free) TOTAL_ENROLMENTS
+            // row above, but never consume licence capacity, so the partner sync is
+            // skipped entirely for those - nothing relevant changed for licenceConsumedCount.
+            if (Constants.COURSE_TYPE_PAID.equalsIgnoreCase(courseType)) {
+                long licenseConsumedCount = readCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
+                transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
+            }
+        }
+
+        acknowledgment.acknowledge();
     }
 
     private Map<String, Object> counterKey(String partnerId, String scopeType, String scopeId, String courseType) {

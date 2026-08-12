@@ -794,7 +794,9 @@ class KafkaConsumerTest {
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
-        event.put(Constants.IS_NEW_USER, true);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        // No stub for the USER_ENROLMENTS-scoped read below -> defaults to an empty list ->
+        // readCounterValue treats that as 0 -> the consumer sees this as a new user.
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
@@ -827,8 +829,16 @@ class KafkaConsumerTest {
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
-        event.put(Constants.IS_NEW_USER, false);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        // A non-zero USER_ENROLMENTS row means this user already has a prior enrolment with
+        // this partner - i.e. "existing", not new.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L)));
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
@@ -846,7 +856,7 @@ class KafkaConsumerTest {
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
-        event.put(Constants.IS_NEW_USER, true);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
@@ -869,8 +879,14 @@ class KafkaConsumerTest {
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
-        event.put(Constants.IS_NEW_USER, false);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L)));
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
@@ -892,8 +908,16 @@ class KafkaConsumerTest {
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
-        event.put(Constants.IS_NEW_USER, true);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        // Pre-increment "is this a new user" check - no prior USER_ENROLMENTS row, so this
+        // reads as a new user.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
 
         // Post-increment read-back of the paid TOTAL_ENROLMENTS row - this authoritative
         // value (not a locally-tracked count) is what gets synced to the partner record.
@@ -916,7 +940,7 @@ class KafkaConsumerTest {
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
-        event.put(Constants.IS_NEW_USER, true);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
@@ -934,8 +958,14 @@ class KafkaConsumerTest {
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
-        event.put(Constants.IS_NEW_USER, false);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L)));
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 

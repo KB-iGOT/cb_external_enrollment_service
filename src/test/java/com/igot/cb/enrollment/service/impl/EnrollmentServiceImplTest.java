@@ -1227,9 +1227,8 @@ class EnrollmentServiceImplTest {
             return partnerId.equals(map.get(Constants.PARTNER_ID_REQ))
                     && userId.equals(map.get(Constants.USER_ID))
                     && courseId.equals(map.get(Constants.COURSE_ID))
-                    && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL))
-                    && Boolean.TRUE.equals(map.get(Constants.IS_NEW_USER));
-        }));
+                    && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL));
+        }), eq(partnerId + "_" + userId));
         // The readByUserIdAndPartnerId cache-aside hash for this user must be invalidated
         // so the next read rebuilds it from Cassandra with this new enrolment included.
         verify(cacheService).deleteCache(eq(Constants.USER_ENROLMENTS_PREFIX + userId), anyInt());
@@ -1264,7 +1263,36 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("enrollUserInCourse: licenseType user, new user - publishes counter event with isNewUser=true, skips lookup table")
+    @DisplayName("enrollUserInCourse: insert not applied due to a genuine error (ERROR_MESSAGE present) - still returns false, no further writes")
+    void enrollUserInCourse_NotApplied_WithErrorMessage_NoFurtherWrites() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, false);
+        insertResult.put(Constants.ERROR_MESSAGE, "Cassandra connection timed out");
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        // Behavior is identical to a harmless duplicate as far as the caller is concerned - the
+        // distinction only affects which log level/message is emitted (error vs warn), which
+        // this test can't assert directly without a log capture harness, but the important
+        // invariant (no partial/duplicate side effects) still holds either way.
+        assertFalse(result);
+        verify(producer, times(0)).push(any(), any());
+        verify(cacheService, times(0)).deleteCache(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user - publishes counter event carrying licenseType=User, skips lookup table")
     void enrollUserInCourse_LicenseTypeUser_NewUser() {
         String userId = "user123";
         String courseId = "course456";
@@ -1277,10 +1305,6 @@ class EnrollmentServiceImplTest {
         when(cassandraOperation.insertRecordIfNotExists(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
                 .thenReturn(insertResult);
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                any(), any(), any()))
-                .thenReturn(Collections.emptyList()); // no prior USER_ENROLMENTS row -> new user
         when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
         ObjectNode contentResponse = new ObjectMapper().createObjectNode();
 
@@ -1289,18 +1313,25 @@ class EnrollmentServiceImplTest {
 
         assertTrue(result);
         verify(cassandraOperation, times(0)).insertRecord(eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP), any());
+        // The "is this user new" decision is no longer read here - it happens fresh inside the
+        // Kafka consumer instead (see KafkaConsumer.enrolmentCounterUpdateConsumer), which is
+        // what closes the race where two concurrent requests for the same new user could both
+        // see "new" before either had incremented anything.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                any(), any(), any());
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event -> {
             Map<?, ?> map = (Map<?, ?>) event;
             return partnerId.equals(map.get(Constants.PARTNER_ID_REQ))
                     && userId.equals(map.get(Constants.USER_ID))
                     && courseId.equals(map.get(Constants.COURSE_ID))
                     && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL))
-                    && Boolean.TRUE.equals(map.get(Constants.IS_NEW_USER));
-        }));
+                    && Constants.LICENSE_TYPE_USER.equals(map.get(Constants.LICENSE_TYPE));
+        }), eq(partnerId + "_" + userId));
     }
 
     @Test
-    @DisplayName("enrollUserInCourse: licenseType user, existing user - publishes counter event with isNewUser=false")
+    @DisplayName("enrollUserInCourse: licenseType user - published event is keyed by partnerId+userId, regardless of whether the user is new or existing")
     void enrollUserInCourse_LicenseTypeUser_ExistingUser() {
         String userId = "user123";
         String courseId = "course456";
@@ -1313,10 +1344,6 @@ class EnrollmentServiceImplTest {
         when(cassandraOperation.insertRecordIfNotExists(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
                 .thenReturn(insertResult);
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                any(), any(), any()))
-                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 2L))); // already holds 2 courses with this partner
         when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
         ObjectNode contentResponse = new ObjectMapper().createObjectNode();
 
@@ -1324,8 +1351,36 @@ class EnrollmentServiceImplTest {
                 enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
 
         assertTrue(result);
+        // Keying on (partnerId, userId) is what lets Kafka guarantee two concurrent enrolments
+        // for the same user are always processed strictly one at a time, in order, by the
+        // consumer - the mechanism that replaces the old racy request-thread "new user" check.
+        verify(producer).push(eq("enrolment-counter-topic"), any(), eq(partnerId + "_" + userId));
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user, free course - publishes counter event with courseType=free (never forced to paid)")
+    void enrollUserInCourse_LicenseTypeUser_FreeCourse_PublishesFreeCourseType() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, true);
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event ->
-                Boolean.FALSE.equals(((Map<?, ?>) event).get(Constants.IS_NEW_USER))));
+                Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))), eq(partnerId + "_" + userId));
     }
 
     @Test
@@ -1577,6 +1632,34 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType user, free course - overall limit skipped even if provider is at cap (free courses never consume a licence unit under the User-licence model either)")
+    void validatePartnerEnrollmentLimits_LicenseTypeUser_FreeCourseSkipsOverallLimit() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String courseId = "course1";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1); // would otherwise reject a new user
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertTrue(result);
+        // Free courses are exempt entirely - isNewUserForPartner and the TOTAL_ENROLMENTS read
+        // must never even be consulted.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                any(), any(), any());
+    }
+
+    @Test
     @DisplayName("validatePartnerEnrollmentLimits: licenseType course, paid course at overall limit - rejected even though this is the user's first enrolment (no new-user exemption)")
     void validatePartnerEnrollmentLimits_LicenseTypeCourse_OverallLimitReached() {
         String userId = "user123";
@@ -1772,8 +1855,8 @@ class EnrollmentServiceImplTest {
                     && userId.equals(map.get(Constants.USER_ID))
                     && courseId.equals(map.get(Constants.COURSE_ID))
                     && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL))
-                    && Boolean.TRUE.equals(map.get(Constants.IS_NEW_USER));
-        }));
+                    && Constants.LICENSE_TYPE_COURSE.equals(map.get(Constants.LICENSE_TYPE));
+        }), eq(partnerId + "_" + userId));
         // Cache invalidation happens regardless of licenseType.
         verify(cacheService).deleteCache(eq(Constants.USER_ENROLMENTS_PREFIX + userId), anyInt());
     }
@@ -1801,7 +1884,7 @@ class EnrollmentServiceImplTest {
 
         assertTrue(result);
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event ->
-                Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))));
+                Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))), eq(partnerId + "_" + userId));
     }
 
     @Test

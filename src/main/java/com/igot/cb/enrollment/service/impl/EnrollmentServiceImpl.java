@@ -570,28 +570,33 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         );
         boolean applied = Boolean.TRUE.equals(insertResult.get(Constants.APPLIED));
         if (!applied) {
-            log.warn("Enrolment insert for user {} course {} was not applied - a row already exists (duplicate/retry)", userId, courseId);
+            Object insertErrorMessage = insertResult.get(Constants.ERROR_MESSAGE);
+            if (insertErrorMessage != null) {
+                // insertRecordIfNotExists returns applied=false both on a genuine LWT conflict
+                // (harmless duplicate/retry) and on an underlying exception (e.g. connection
+                // failure) - only the latter stashes an ERROR_MESSAGE. Collapsing both into the
+                // same "already enrolled" log would hide a real infrastructure failure.
+                log.error("Enrolment insert for user {} course {} failed due to an error: {}", userId, courseId, insertErrorMessage);
+            } else {
+                log.warn("Enrolment insert for user {} course {} was not applied - a row already exists (duplicate/retry)", userId, courseId);
+            }
             return false;
         }
 
         String licenseType = getLicenseType(providerResponse);
-        if (Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)) {
-            // licenseType == course: every enrolment consumes a licence unit - there is no
-            // new-user exemption - so isNewUser is always true here, which simply means
-            // "always increment TOTAL_ENROLMENTS" on the consumer side; it re-uses the same
-            // flag/gate rather than needing a separate one.
-            String courseType = getCourseType(contentResponse);
-            publishCounterUpdateEvent(partnerId, userId, courseId, courseType, true);
-        } else {
-            // licenseType == user, or not yet configured on this partner - both are now
-            // treated as the user-licence model; the old lookup table is fully retired, the
-            // counter table is the only source for overall/userwise limits regardless of
-            // whether licenseType has been explicitly set. courseType is always paid here.
-            // "New user" must be re-read fresh right now, before any counter is touched, since
-            // this increment is the thing that would otherwise make the user look "existing".
-            boolean isNewUser = isNewUserForPartner(partnerId, userId);
-            publishCounterUpdateEvent(partnerId, userId, courseId, Constants.COURSE_TYPE_PAID, isNewUser);
-        }
+        String courseType = getCourseType(contentResponse);
+        // Whether this enrolment counts toward the partner's overall licence consumption
+        // (TOTAL_ENROLMENTS) depends on licenseType - course licences always count, user
+        // licences only count for a genuinely new user - but that decision is deliberately not
+        // made here anymore. A live "is this user new" read in this request thread can race
+        // with another concurrent enrolment request for the same user and double-count a
+        // licence unit, since two requests could both read "new" before either has incremented
+        // anything. That decision now happens exactly once, safely, in the Kafka consumer that
+        // processes this event (see KafkaConsumer.enrolmentCounterUpdateConsumer) - every event
+        // for a given (partnerId, userId) is published keyed on that pair (see
+        // publishCounterUpdateEvent), so Kafka guarantees the consumer processes them one at a
+        // time, in order, closing the race without any new table or cache.
+        publishCounterUpdateEvent(partnerId, userId, courseId, courseType, licenseType);
 
         cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
         cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
@@ -609,14 +614,19 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return true;
     }
 
-    private void publishCounterUpdateEvent(String partnerId, String userId, String courseId, String courseType, boolean isNewUser) {
+    private void publishCounterUpdateEvent(String partnerId, String userId, String courseId, String courseType, String licenseType) {
         Map<String, Object> counterEvent = new HashMap<>();
         counterEvent.put(Constants.PARTNER_ID_REQ, partnerId);
         counterEvent.put(Constants.USER_ID, userId);
         counterEvent.put(Constants.COURSE_ID, courseId);
         counterEvent.put(Constants.COURSE_TYPE_COL, courseType);
-        counterEvent.put(Constants.IS_NEW_USER, isNewUser);
-        producer.push(cbServerProperties.getEnrolmentCounterUpdateTopic(), counterEvent);
+        counterEvent.put(Constants.LICENSE_TYPE, licenseType);
+        // Keyed by partnerId+userId - Kafka's own partitioner then guarantees every counter
+        // update event for this pair always lands on the same partition and is consumed
+        // strictly in order, one at a time, regardless of how many concurrent HTTP requests
+        // produced them. That ordering is what lets the consumer safely decide "is this a new
+        // user" for itself instead of trusting a value read earlier in a racy request thread.
+        producer.push(cbServerProperties.getEnrolmentCounterUpdateTopic(), counterEvent, partnerId + "_" + userId);
     }
 
     private boolean validatePartnerEnrollmentLimits(
@@ -670,8 +680,15 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
 
         // licenseType == user, or not yet configured on this partner - both are now treated as
-        // the user-licence model; the old lookup-table fallback is fully retired. An
-        // already-licensed user (has at least one prior enrolment with this partner) is exempt
+        // the user-licence model; the old lookup-table fallback is fully retired.
+        // Free courses are exempt from the licence cap here too, same as the course-licence
+        // model above - a partner offering a free course under the User-licence model should
+        // never have that enrolment blocked (or counted) by the overall licence limit, since it
+        // never consumes a licence unit.
+        if (isCourseFree(contentResponse)) {
+            return false;
+        }
+        // An already-licensed user (has at least one prior enrolment with this partner) is exempt
         // from the overall-limit check entirely - a full license should never block a learner
         // who already holds a unit. Only a genuinely new user is checked here.
         if (!isNewUserForPartner(partnerId, userId)) {

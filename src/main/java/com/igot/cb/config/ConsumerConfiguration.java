@@ -11,6 +11,8 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -47,6 +49,12 @@ public class ConsumerConfiguration {
         // behavior - so any listener whose side effects aren't naturally safe to repeat still
         // needs its own idempotency guard rather than relying on the commit strategy alone.
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        // A listener that lets an exception propagate (rather than catching/logging it
+        // internally, as our other two listeners still do) gets retried up to twice, 1s apart,
+        // before the container gives up, logs, and moves past that record - this only changes
+        // behavior for a listener that actually throws; a caught-and-logged internal failure
+        // never reaches this handler at all, so the other two listeners are unaffected.
+        factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(1000L, 2)));
         return factory;
     }
 
