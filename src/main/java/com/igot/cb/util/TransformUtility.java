@@ -184,6 +184,67 @@ public class TransformUtility {
 
     }
 
+    /**
+     * Syncs the partner's licenseConsumedCount to the given value by re-fetching its current
+     * details (via callContentPartnerReadApi, which returns {id, data, isActive, ...}) and
+     * POSTing {id, data} back to /contentpartner/v1/update with licenseConsumedCount
+     * overwritten inside data. Every other field already on the partner's data is resent
+     * unchanged, since the update endpoint validates data against a schema that requires
+     * contentPartnerName/websiteUrl/link/description to be present on every call - only the
+     * data sub-object is resent, never the sibling fields (isActive, createdOn, etc.) that
+     * live alongside data in the read response, since those would violate the update
+     * schema's additionalProperties:false if nested inside data.
+     * Best-effort: any failure here is logged and swallowed rather than propagated, since
+     * this runs from the async Kafka consumer after the authoritative counter increment has
+     * already succeeded - a failed sync here must not be mistaken for a failed enrolment.
+     */
+    public void updateContentPartnerLicenseConsumedCount(String partnerId, long licenseConsumedCount) {
+        try {
+            JsonNode partnerResponse = callContentPartnerReadApi(partnerId);
+            if (partnerResponse == null || partnerResponse.isMissingNode() || !partnerResponse.has(Constants.DATA)) {
+                log.error("Cannot sync licenseConsumedCount - partner details not found for partnerId: {}", partnerId);
+                return;
+            }
+
+            ObjectNode dataNode = ((ObjectNode) partnerResponse.get(Constants.DATA)).deepCopy();
+
+            // Some older partner records still carry pre-fix, misspelled keys
+            // ("liscenceType", "licenceConsumedCount") instead of the schema's actual
+            // "licenseType"/"licenseConsumedCount" properties. The update schema has
+            // additionalProperties:false, so blindly resending those legacy keys verbatim
+            // gets the whole update rejected. Migrate the value across when the correct key
+            // isn't already set, then drop the legacy key before it goes back out.
+            if (!dataNode.has(Constants.LICENSE_TYPE) && dataNode.has(Constants.LEGACY_LICENSE_TYPE)) {
+                dataNode.set(Constants.LICENSE_TYPE, dataNode.get(Constants.LEGACY_LICENSE_TYPE));
+            }
+            dataNode.remove(Constants.LEGACY_LICENSE_TYPE);
+            dataNode.remove(Constants.LEGACY_LICENSE_CONSUMED_COUNT);
+
+            dataNode.put(Constants.LICENSE_CONSUMED_COUNT, licenseConsumedCount);
+
+            ObjectNode requestBody = mapper.createObjectNode();
+            requestBody.put(Constants.ID, partnerResponse.path(Constants.ID).asText(partnerId));
+            requestBody.set(Constants.DATA, dataNode);
+
+            String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerUpdateApiUrl();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<JsonNode> entity = new HttpEntity<>(requestBody, headers);
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.POST,
+                    entity,
+                    JsonNode.class
+            );
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                log.error("Failed to sync licenseConsumedCount for partnerId: {}. Status code: {}", partnerId, response.getStatusCode());
+            }
+        } catch (Exception e) {
+            log.error("Error while syncing licenseConsumedCount for partnerId: {}", partnerId, e);
+        }
+    }
+
     public JsonNode transformData(Object jsonNode, List<Object> contentJson) {
         log.debug("TransformUtility::transformData");
         try {

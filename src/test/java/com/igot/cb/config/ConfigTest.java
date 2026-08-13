@@ -23,7 +23,6 @@ class ConfigTest {
         ReflectionTestUtils.setField(consumerConfiguration, "kafkaOffsetResetValue", "earliest");
         ReflectionTestUtils.setField(consumerConfiguration, "kafkaMaxPollInterval", 300000);
         ReflectionTestUtils.setField(consumerConfiguration, "kafkaMaxPollRecords", 500);
-        ReflectionTestUtils.setField(consumerConfiguration, "kafkaAutoCommitInterval", 1000);
 
         Map<String, Object> props = consumerConfiguration.consumerConfigs();
 
@@ -32,7 +31,7 @@ class ConfigTest {
         assertEquals("earliest", props.get(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG));
         assertEquals(300000, props.get(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG));
         assertEquals(500, props.get(ConsumerConfig.MAX_POLL_RECORDS_CONFIG));
-        assertEquals(1000, props.get(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG));
+        assertEquals(false, props.get(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
     }
 
     @Test

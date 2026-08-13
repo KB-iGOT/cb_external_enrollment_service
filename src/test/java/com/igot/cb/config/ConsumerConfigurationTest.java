@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.listener.ContainerProperties;
 
 import java.util.Map;
 
@@ -25,7 +26,6 @@ class ConsumerConfigurationTest {
         setField(config, "kafkaOffsetResetValue", "earliest");
         setField(config, "kafkaMaxPollInterval", 300000);
         setField(config, "kafkaMaxPollRecords", 500);
-        setField(config, "kafkaAutoCommitInterval", 1000);
     }
 
     private void setField(Object target, String fieldName, Object value) {
@@ -42,9 +42,8 @@ class ConsumerConfigurationTest {
     void testConsumerConfigs() {
         Map<String, Object> configs = config.consumerConfigs();
         assertEquals("localhost:9092", configs.get(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG));
-        assertEquals(true, configs.get(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
+        assertEquals(false, configs.get(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
         assertEquals("1000", configs.get(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG));
-        assertEquals(1000, configs.get(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG));
         assertEquals("15000", configs.get(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG));
         assertEquals(StringDeserializer.class, configs.get(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG));
         assertEquals(StringDeserializer.class, configs.get(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG));
@@ -64,5 +63,6 @@ class ConsumerConfigurationTest {
         ConcurrentKafkaListenerContainerFactory<String, String> factory = (ConcurrentKafkaListenerContainerFactory<String, String>) config.kafkaListenerContainerFactory();
         assertNotNull(factory);
         assertEquals(3000, factory.getContainerProperties().getPollTimeout());
+        assertEquals(ContainerProperties.AckMode.MANUAL_IMMEDIATE, factory.getContainerProperties().getAckMode());
     }
 }
