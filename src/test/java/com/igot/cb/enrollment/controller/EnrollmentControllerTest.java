@@ -113,6 +113,38 @@ class EnrollmentControllerTest {
     }
 
     @Test
+    void testReadByUserIdAndPartnerId_Success() {
+        Map<String, Object> searchRequest = Map.of("partnerId", "partner1", "status", "In-Progress");
+        String token = "validToken";
+
+        SBApiResponse mockResponse = new SBApiResponse();
+        mockResponse.setResponseCode(HttpStatus.OK);
+
+        when(enrollmentService.readByUserIdAndPartnerId(searchRequest, token)).thenReturn(mockResponse);
+
+        ResponseEntity<SBApiResponse> response = enrollmentController.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(mockResponse, response.getBody());
+    }
+
+    @Test
+    void testReadByUserIdAndPartnerId_BadRequest() {
+        Map<String, Object> searchRequest = Map.of("status", "In-Progress");
+        String token = "validToken";
+
+        SBApiResponse mockResponse = new SBApiResponse();
+        mockResponse.setResponseCode(HttpStatus.BAD_REQUEST);
+
+        when(enrollmentService.readByUserIdAndPartnerId(searchRequest, token)).thenReturn(mockResponse);
+
+        ResponseEntity<SBApiResponse> response = enrollmentController.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(mockResponse, response.getBody());
+    }
+
+    @Test
     void testGetUserEnrolmentByExternalId_Success() {
         String userId = "user123";
         String courseId = "course123";

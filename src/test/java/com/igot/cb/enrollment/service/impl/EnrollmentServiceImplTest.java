@@ -145,6 +145,8 @@ class EnrollmentServiceImplTest {
                 .thenReturn(Collections.emptyList());
         when(cassandraOperation.insertRecord(any(), any(), any()))
                 .thenReturn(null);
+        when(cassandraOperation.insertRecordIfNotExists(any(), any(), any()))
+                .thenReturn(Map.of(Constants.APPLIED, true));
 
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
@@ -469,6 +471,307 @@ class EnrollmentServiceImplTest {
         doThrow(new RuntimeException("Test exception")).when(accessTokenValidator).verifyUserToken(token);
 
         SBApiResponse response = enrollmentService.readByUserId(searchRequest, token);
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("Error while performing operation"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return courses filtered by partnerId and status, read from Redis")
+    void readByUserIdAndPartnerId_returnsCourses() throws JsonProcessingException {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        String json1 = "{\"partnerid\":\"partner1\",\"status\":0}";
+        String json2 = "{\"partnerid\":\"partner2\",\"status\":0}";
+        Map<Object, Object> hash = new HashMap<>();
+        hash.put("c1", json1);
+        hash.put("c2", json2);
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(hash);
+
+        Map<String, Object> info1 = new HashMap<>();
+        info1.put(Constants.PARTNER_ID_REQ, "partner1");
+        info1.put(Constants.STATUS, 0);
+        Map<String, Object> info2 = new HashMap<>();
+        info2.put(Constants.PARTNER_ID_REQ, "partner2");
+        info2.put(Constants.STATUS, 0);
+        when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
+        when(objectMapper.readValue(eq(json2), any(TypeReference.class))).thenReturn(info2);
+
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId("c1");
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+        assertNotNull(courses);
+        assertEquals(1, courses.size());
+        assertEquals("c1", courses.get(0).get(Constants.COURSE_ID));
+        verify(enrollmentService, times(1)).fetchDataByContentId(anyString());
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return courses regardless of status when status is All")
+    void readByUserIdAndPartnerId_statusAll() throws JsonProcessingException {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "All");
+
+        String json1 = "{\"partnerid\":\"partner1\",\"status\":0}";
+        String json2 = "{\"partnerid\":\"partner1\",\"status\":2}";
+        Map<Object, Object> hash = new HashMap<>();
+        hash.put("c1", json1);
+        hash.put("c2", json2);
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(hash);
+
+        Map<String, Object> info1 = new HashMap<>();
+        info1.put(Constants.PARTNER_ID_REQ, "partner1");
+        info1.put(Constants.STATUS, 0);
+        Map<String, Object> info2 = new HashMap<>();
+        info2.put(Constants.PARTNER_ID_REQ, "partner1");
+        info2.put(Constants.STATUS, 2);
+        when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
+        when(objectMapper.readValue(eq(json2), any(TypeReference.class))).thenReturn(info2);
+
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId(anyString());
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+        assertNotNull(courses);
+        assertEquals(2, courses.size());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should fall back to Cassandra on Redis cache miss and populate Redis for next time")
+    void readByUserIdAndPartnerId_cacheMissPopulatesRedis() throws JsonProcessingException {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        // Redis cache miss - nothing cached yet for this user
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(Collections.emptyMap());
+
+        Map<String, Object> enrollment1 = new HashMap<>();
+        enrollment1.put(Constants.COURSE_ID, "c1");
+        enrollment1.put(Constants.PARTNER_ID_REQ, "partner1");
+        enrollment1.put(Constants.STATUS, 0);
+
+        Map<String, Object> enrollment2 = new HashMap<>();
+        enrollment2.put(Constants.COURSE_ID, "c2");
+        enrollment2.put(Constants.PARTNER_ID_REQ, "partner2");
+        enrollment2.put(Constants.STATUS, 0);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(Arrays.asList(enrollment1, enrollment2));
+
+        String json1 = "{\"partnerid\":\"partner1\",\"status\":0}";
+        String json2 = "{\"partnerid\":\"partner2\",\"status\":0}";
+        when(objectMapper.writeValueAsString(argThat(o -> o instanceof Map
+                && "partner1".equals(((Map<?, ?>) o).get(Constants.PARTNER_ID_REQ))))).thenReturn(json1);
+        when(objectMapper.writeValueAsString(argThat(o -> o instanceof Map
+                && "partner2".equals(((Map<?, ?>) o).get(Constants.PARTNER_ID_REQ))))).thenReturn(json2);
+
+        Map<String, Object> info1 = new HashMap<>();
+        info1.put(Constants.PARTNER_ID_REQ, "partner1");
+        info1.put(Constants.STATUS, 0);
+        when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
+
+        // c2 belongs to partner2, so it gets filtered out - but the loop still parses every
+        // cached entry before filtering, so this needs to be stubbed too or objectMapper.readValue
+        // returns null for it and NPEs when the code reads PARTNER_ID_REQ off that null.
+        Map<String, Object> info2 = new HashMap<>();
+        info2.put(Constants.PARTNER_ID_REQ, "partner2");
+        info2.put(Constants.STATUS, 0);
+        when(objectMapper.readValue(eq(json2), any(TypeReference.class))).thenReturn(info2);
+
+        Map<String, Object> contentData = new HashMap<>();
+        contentData.put(Constants.CONTENT, new HashMap<>());
+        doReturn(contentData).when(enrollmentService).fetchDataByContentId("c1");
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        List<Map<String, Object>> courses = (List<Map<String, Object>>) result.get(Constants.COURSES);
+        assertNotNull(courses);
+        assertEquals(1, courses.size());
+        assertEquals("c1", courses.get(0).get(Constants.COURSE_ID));
+
+        // Cassandra was queried exactly once (the cache-miss fallback), and Redis was
+        // populated in a single bulk write so subsequent calls won't hit Cassandra again.
+        // Note: the redis index is captured into a local variable before the verify call -
+        // calling cbServerProperties.getRedisIndex() (a mock method) inline inside eq(...)
+        // while other matchers are being built on the same argument list confuses Mockito's
+        // matcher stack and throws InvalidUseOfMatchers.
+        int redisIndex = cbServerProperties.getRedisIndex();
+        verify(cassandraOperation, times(1)).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
+        verify(cacheService).putAllHashFields(
+                eq(Constants.USER_ENROLMENTS_PREFIX + userId),
+                eq(redisIndex),
+                argThat(map -> map.size() == 2 && json1.equals(map.get("c1")) && json2.equals(map.get("c2"))));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for empty request")
+    void readByUserIdAndPartnerId_emptyRequest() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("Request is not proper"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for missing partnerId")
+    void readByUserIdAndPartnerId_missingPartnerId() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.STATUS, "In-Progress");
+        // No partnerId
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("please provide partnerId"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for missing status")
+    void readByUserIdAndPartnerId_missingStatus() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        // No status
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("please provide status in request body"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for invalid status")
+    void readByUserIdAndPartnerId_invalidStatus() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "InvalidStatus");
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("please provide proper value of status"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should return error for invalid token")
+    void readByUserIdAndPartnerId_invalidToken() {
+        String token = "invalid.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(Constants.UNAUTHORIZED);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains(Constants.USER_ID_DOESNT_EXIST));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should handle no courses matching the given partner")
+    void readByUserIdAndPartnerId_noMatchingPartner() throws JsonProcessingException {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partnerX");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        String json1 = "{\"partnerid\":\"partner1\",\"status\":0}";
+        Map<Object, Object> hash = new HashMap<>();
+        hash.put("c1", json1);
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(hash);
+
+        Map<String, Object> info1 = new HashMap<>();
+        info1.put(Constants.PARTNER_ID_REQ, "partner1");
+        info1.put(Constants.STATUS, 0);
+        when(objectMapper.readValue(eq(json1), any(TypeReference.class))).thenReturn(info1);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("no courses with this provider"));
+        // Redis already had data for this user, so Cassandra should not be touched.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should handle empty enrolment map in both Redis and Cassandra")
+    void readByUserIdAndPartnerId_emptyEnrollmentList() {
+        String token = "jwt.token";
+        String userId = "user1";
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        // Redis cache miss, and the Cassandra fallback also finds nothing for this user.
+        when(cacheService.getAllHashFields(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex()))
+                .thenReturn(Collections.emptyMap());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("no courses with this provider"));
+        // Nothing to cache, so Redis is not written to.
+        verify(cacheService, times(0)).putAllHashFields(any(), anyInt(), any());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndPartnerId: should handle exceptions")
+    void readByUserIdAndPartnerId_exception() {
+        String token = "jwt.token";
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put(Constants.PARTNER_ID, "partner1");
+        searchRequest.put(Constants.STATUS, "In-Progress");
+
+        doThrow(new RuntimeException("Test exception")).when(accessTokenValidator).verifyUserToken(token);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("Error while performing operation"));
@@ -886,26 +1189,198 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
+    @DisplayName("enrollUserInCourse: licenseType unset - treated as the user-licence model, publishes counter event, lookup table is never touched")
     void enrollUserInCourse_Success() {
         String userId = "user123";
         String courseId = "course456";
         String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode(); // no licenseType -> defaults to user-licence model
 
-        ReflectionTestUtils.invokeMethod(enrollmentService, "enrollUserInCourse", userId, courseId, partnerId);
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, true);
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
 
-        verify(cassandraOperation, times(2)).insertRecord(any(), any(), any());
-        verify(cassandraOperation).insertRecord(
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(cassandraOperation).insertRecordIfNotExists(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES),
                 eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
                 argThat(map -> userId.equals(map.get(Constants.USER_ID)) &&
                         courseId.equals(map.get(Constants.COURSE_ID)) &&
                         partnerId.equals(map.get(Constants.PARTNER_ID_REQ))));
-        verify(cassandraOperation).insertRecord(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP),
-                argThat(map -> userId.equals(map.get(Constants.USER_ID)) &&
-                        courseId.equals(map.get(Constants.COURSE_ID)) &&
-                        partnerId.equals(map.get(Constants.PARTNER_ID_REQ))));
+        // The old lookup table is fully retired - it must never be written to, regardless of
+        // licenseType.
+        verify(cassandraOperation, times(0)).insertRecord(any(), any(), any());
+        verify(producer).push(eq("enrolment-counter-topic"), argThat(event -> {
+            Map<?, ?> map = (Map<?, ?>) event;
+            return partnerId.equals(map.get(Constants.PARTNER_ID_REQ))
+                    && userId.equals(map.get(Constants.USER_ID))
+                    && courseId.equals(map.get(Constants.COURSE_ID))
+                    && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL));
+        }), eq(partnerId + "_" + userId));
+        // The readByUserIdAndPartnerId cache-aside hash for this user must be invalidated
+        // so the next read rebuilds it from Cassandra with this new enrolment included.
+        verify(cacheService).deleteCache(eq(Constants.USER_ENROLMENTS_PREFIX + userId), anyInt());
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: duplicate/retry insert (not applied) - nothing else is written")
+    void enrollUserInCourse_NotApplied_NoFurtherWrites() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, false);
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertFalse(result);
+        verify(cassandraOperation, times(0)).insertRecord(any(), any(), any());
+        verify(producer, times(0)).push(any(), any());
+        verify(cacheService, times(0)).incrementIfExists(any(), anyLong(), anyInt());
+        // A duplicate/retry insert must not touch the read-side cache either - nothing
+        // actually changed for this user.
+        verify(cacheService, times(0)).deleteCache(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: insert not applied due to a genuine error (ERROR_MESSAGE present) - still returns false, no further writes")
+    void enrollUserInCourse_NotApplied_WithErrorMessage_NoFurtherWrites() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, false);
+        insertResult.put(Constants.ERROR_MESSAGE, "Cassandra connection timed out");
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        // Behavior is identical to a harmless duplicate as far as the caller is concerned - the
+        // distinction only affects which log level/message is emitted (error vs warn), which
+        // this test can't assert directly without a log capture harness, but the important
+        // invariant (no partial/duplicate side effects) still holds either way.
+        assertFalse(result);
+        verify(producer, times(0)).push(any(), any());
+        verify(cacheService, times(0)).deleteCache(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user - publishes counter event carrying licenseType=User, skips lookup table")
+    void enrollUserInCourse_LicenseTypeUser_NewUser() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, true);
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(cassandraOperation, times(0)).insertRecord(eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP), any());
+        // The "is this user new" decision is no longer read here - it happens fresh inside the
+        // Kafka consumer instead (see KafkaConsumer.enrolmentCounterUpdateConsumer), which is
+        // what closes the race where two concurrent requests for the same new user could both
+        // see "new" before either had incremented anything.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                any(), any(), any());
+        verify(producer).push(eq("enrolment-counter-topic"), argThat(event -> {
+            Map<?, ?> map = (Map<?, ?>) event;
+            return partnerId.equals(map.get(Constants.PARTNER_ID_REQ))
+                    && userId.equals(map.get(Constants.USER_ID))
+                    && courseId.equals(map.get(Constants.COURSE_ID))
+                    && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL))
+                    && Constants.LICENSE_TYPE_USER.equals(map.get(Constants.LICENSE_TYPE));
+        }), eq(partnerId + "_" + userId));
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user - published event is keyed by partnerId+userId, regardless of whether the user is new or existing")
+    void enrollUserInCourse_LicenseTypeUser_ExistingUser() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, true);
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        // Keying on (partnerId, userId) is what lets Kafka guarantee two concurrent enrolments
+        // for the same user are always processed strictly one at a time, in order, by the
+        // consumer - the mechanism that replaces the old racy request-thread "new user" check.
+        verify(producer).push(eq("enrolment-counter-topic"), any(), eq(partnerId + "_" + userId));
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user, free course - publishes counter event with courseType=free (never forced to paid)")
+    void enrollUserInCourse_LicenseTypeUser_FreeCourse_PublishesFreeCourseType() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, true);
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(producer).push(eq("enrolment-counter-topic"), argThat(event ->
+                Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))), eq(partnerId + "_" + userId));
     }
 
     @Test
@@ -916,24 +1391,27 @@ class EnrollmentServiceImplTest {
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
+        String courseId = "course1";
         ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 0);
+        providerResponse.put(Constants.USER_WISE_LIMIT, 0);
+        providerResponse.put(Constants.CONCURRENT_LIMIT, 0);
+        providerResponse.put(Constants.KARMA_POINTS, 0);
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 0);
-        contentResponse.put(Constants.USER_WISE_LIMIT, 0);
-        contentResponse.put(Constants.CONCURRENT_LIMIT, 0);
-        contentResponse.put(Constants.KARMA_POINTS, 0);
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse,
-                token, userAttributes);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
 
         assertTrue(result);
     }
 
     @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType unset (treated as user-licence), new user at overall limit - rejected")
     void validatePartnerEnrollmentLimits_OverallLimitReached() {
         String userId = "user123";
         String partnerId = "partner789";
@@ -941,21 +1419,31 @@ class EnrollmentServiceImplTest {
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
+        String courseId = "course1";
         ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1);
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1);
 
-        List<Map<String, Object>> enrollments = new ArrayList<>();
-        enrollments.add(new HashMap<>());
         when(cbServerProperties.getPartnerOverallLimitMsg())
                 .thenReturn("Partner overall enrollment limit reached");
 
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
-                .thenReturn(enrollments);
+        // No licenseType set -> treated as the user-licence model. New user (no prior
+        // USER_ENROLMENTS row), and TOTAL_ENROLMENTS already at the limit of 1.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 1L)));
 
         Boolean result = ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse,
-                token, userAttributes);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
         Assertions.assertNotNull(result);
         Assertions.assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
@@ -971,10 +1459,12 @@ class EnrollmentServiceImplTest {
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.GROUP, "Group C"); // Not exempt group
 
+        String courseId = "course1";
         ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.put(Constants.KARMA_POINTS, 100);
+        providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.KARMA_POINTS, 100);
-        contentResponse.put(Constants.KARMA_POINTS_ENABLED, true);
         when(cbServerProperties.getKarmaInsufficientMsg())
                 .thenReturn(
                         "You don't have enough Karma Points to enroll. Minimum Karma Points required: %s. Please complete other relevant courses on iGOT to earn Karma Points and try again later.");
@@ -989,13 +1479,412 @@ class EnrollmentServiceImplTest {
                 .thenReturn(50L);
 
         Boolean result = ReflectionTestUtils.invokeMethod(
-                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, response, contentResponse,
-                token, userAttributes);
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
 
         Assertions.assertNotNull(result);
         Assertions.assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("100"));
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType user, new user under overall limit - passes")
+    void validatePartnerEnrollmentLimits_LicenseTypeUser_NewUser_UnderLimit() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 5);
+
+        // No USER_ENROLMENTS row -> new user; TOTAL_ENROLMENTS at 2, under the limit of 5.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 2L)));
+
+        String courseId = "course1";
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertTrue(result);
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType user, new user at overall limit - rejected")
+    void validatePartnerEnrollmentLimits_LicenseTypeUser_NewUser_OverallLimitReached() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 5);
+        when(cbServerProperties.getPartnerOverallLimitMsg()).thenReturn("Partner overall enrollment limit reached");
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList()); // new user
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 5L))); // already at the limit
+
+        String courseId = "course1";
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertFalse(result);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("Partner overall enrollment limit reached", response.getParams().getMsg());
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType user, existing user - overall limit skipped even if provider is at cap")
+    void validatePartnerEnrollmentLimits_LicenseTypeUser_ExistingUser_SkipsOverallLimit() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 5);
+
+        // User already holds a course with this partner -> exempt from overall limit,
+        // even though TOTAL_ENROLMENTS (never read in this branch) would otherwise be at cap.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 1L)));
+
+        String courseId = "course1";
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertTrue(result);
+        // TOTAL_ENROLMENTS must never even be read for an already-licensed user.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any());
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType user, userwise limit reached via counter table - rejected")
+    void validatePartnerEnrollmentLimits_LicenseTypeUser_UserWiseLimitReached() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 0); // disabled, isolate to userwise
+        providerResponse.put(Constants.USER_WISE_LIMIT_ENABLED, true);
+        providerResponse.put(Constants.USER_WISE_LIMIT, 5);
+        when(cbServerProperties.getPartnerUserwiseLimitMsg()).thenReturn("Partner userwise enrollment limit reached");
+
+        // User already holds 5 courses with this partner - at the userwise limit.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 5L)));
+
+        String courseId = "course1";
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertFalse(result);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("Partner userwise enrollment limit reached", response.getParams().getMsg());
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType user, free course - overall limit skipped even if provider is at cap (free courses never consume a licence unit under the User-licence model either)")
+    void validatePartnerEnrollmentLimits_LicenseTypeUser_FreeCourseSkipsOverallLimit() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String courseId = "course1";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1); // would otherwise reject a new user
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertTrue(result);
+        // Free courses are exempt entirely - isNewUserForPartner and the TOTAL_ENROLMENTS read
+        // must never even be consulted.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType course, paid course at overall limit - rejected even though this is the user's first enrolment (no new-user exemption)")
+    void validatePartnerEnrollmentLimits_LicenseTypeCourse_OverallLimitReached() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String courseId = "course1";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 3);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode(); // no courseType -> defaults to paid
+        when(cbServerProperties.getPartnerOverallLimitMsg()).thenReturn("Partner overall enrollment limit reached");
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L))); // already at the limit
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertFalse(result);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("Partner overall enrollment limit reached", response.getParams().getMsg());
+        // isNewUserForPartner (a USER_ENROLMENTS read) must never be consulted for licenseType course.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any());
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType course, free course - overall limit and course-level cap are both skipped")
+    void validatePartnerEnrollmentLimits_LicenseTypeCourse_FreeCourseSkipsValidation() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String courseId = "course1";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1); // would otherwise reject
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+        contentResponse.put(Constants.COURSE_ENROL_LIMIT, 1); // would otherwise reject too
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertTrue(result);
+        // Neither TOTAL_ENROLMENTS nor COURSE_ENROLMENTS should ever be read for a free course.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any());
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any());
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType course, courseEnrolLimit reached - rejected")
+    void validatePartnerEnrollmentLimits_LicenseTypeCourse_CourseLevelCapReached() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String courseId = "course1";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 0); // disabled, isolate to course-level cap
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_ENROL_LIMIT, 10);
+        when(cbServerProperties.getPartnerCourseLimitMsg()).thenReturn("The enrollment limit for this course has been reached.");
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 10L))); // already at the cap
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertFalse(result);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("The enrollment limit for this course has been reached.", response.getParams().getMsg());
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType course, under courseEnrolLimit - passes")
+    void validatePartnerEnrollmentLimits_LicenseTypeCourse_CourseLevelCapUnderLimit() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String courseId = "course1";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 0);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_ENROL_LIMIT, 10);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 5L)));
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertTrue(result);
+    }
+
+    @Test
+    @DisplayName("validatePartnerEnrollmentLimits: licenseType course, userwise limit reached via counter table - rejected (unified with licenseType user)")
+    void validatePartnerEnrollmentLimits_LicenseTypeCourse_UserWiseLimitReached() {
+        String userId = "user123";
+        String partnerId = "partner789";
+        String courseId = "course1";
+        String token = "auth-token";
+        SBApiResponse response = new SBApiResponse();
+        Map<String, String> userAttributes = new HashMap<>();
+
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerResponse.put(Constants.OVER_ALL_PROVIDER_LIMIT, 0); // disabled, isolate to userwise
+        providerResponse.put(Constants.USER_WISE_LIMIT_ENABLED, true);
+        providerResponse.put(Constants.USER_WISE_LIMIT, 5);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        when(cbServerProperties.getPartnerUserwiseLimitMsg()).thenReturn("Partner userwise enrollment limit reached");
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 5L)));
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
+                providerResponse, contentResponse, token, userAttributes);
+
+        assertFalse(result);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("Partner userwise enrollment limit reached", response.getParams().getMsg());
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType course, paid course - publishes counter event with courseType=paid, isNewUser always true, skips lookup table")
+    void enrollUserInCourse_LicenseTypeCourse_Paid() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, true);
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(cassandraOperation, times(0)).insertRecord(eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP), any());
+        // licenseType course never needs to check whether the user is "new" - it always counts.
+        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                any(), any(), any());
+        verify(producer).push(eq("enrolment-counter-topic"), argThat(event -> {
+            Map<?, ?> map = (Map<?, ?>) event;
+            return partnerId.equals(map.get(Constants.PARTNER_ID_REQ))
+                    && userId.equals(map.get(Constants.USER_ID))
+                    && courseId.equals(map.get(Constants.COURSE_ID))
+                    && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL))
+                    && Constants.LICENSE_TYPE_COURSE.equals(map.get(Constants.LICENSE_TYPE));
+        }), eq(partnerId + "_" + userId));
+        // Cache invalidation happens regardless of licenseType.
+        verify(cacheService).deleteCache(eq(Constants.USER_ENROLMENTS_PREFIX + userId), anyInt());
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType course, free course - publishes counter event with courseType=free")
+    void enrollUserInCourse_LicenseTypeCourse_Free() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+
+        Map<String, Object> insertResult = new HashMap<>();
+        insertResult.put(Constants.APPLIED, true);
+        when(cassandraOperation.insertRecordIfNotExists(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertResult);
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(producer).push(eq("enrolment-counter-topic"), argThat(event ->
+                Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))), eq(partnerId + "_" + userId));
     }
 
     @Test

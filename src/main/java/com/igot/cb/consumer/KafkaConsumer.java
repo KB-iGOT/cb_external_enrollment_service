@@ -22,6 +22,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
@@ -56,8 +57,123 @@ public class KafkaConsumer {
     @Autowired
     private CacheService cacheService;
 
+    @KafkaListener(topics = "${spring.kafka.enrolment.counter.update.topic.name}", groupId = "${spring.kafka.enrolment.counter.update.consumer.group.id}")
+    public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
+        log.info("KafkaConsumer::enrolmentCounterUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
+        Map<String, Object> event;
+        try {
+            event = mapper.readValue(data.value(), new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            // A malformed message can never succeed no matter how many times it's redelivered -
+            // log and acknowledge it here rather than letting the container's error
+            // handler/backoff below retry something that will never parse.
+            log.error("Failed to parse enrolment counter update event. Message received: " + data.value(), e);
+            acknowledgment.acknowledge();
+            return;
+        }
+
+        // Everything below is allowed to throw and propagate out of this method on purpose -
+        // the shared kafkaListenerContainerFactory now has a DefaultErrorHandler attached (see
+        // ConsumerConfiguration), which retries a genuinely failed attempt (e.g. a transient
+        // Cassandra hiccup) a few times before giving up and moving on, instead of the previous
+        // behavior of silently swallowing the failure and losing the event on the first try.
+        // acknowledgment.acknowledge() is only called once processing actually succeeds, so a
+        // retry (or a pod restart before that point) redelivers the same event rather than
+        // skipping it.
+        String partnerId = (String) event.get(Constants.PARTNER_ID_REQ);
+        String userId = (String) event.get(Constants.USER_ID);
+        String courseId = (String) event.get(Constants.COURSE_ID);
+        String courseType = (String) event.get(Constants.COURSE_TYPE_COL);
+        String licenseType = (String) event.get(Constants.LICENSE_TYPE);
+
+        // Whether this enrolment counts toward TOTAL_ENROLMENTS (provider licence
+        // consumption) is decided here, not trusted from a value computed earlier in the
+        // request thread that produced this event. licenseType == Course always counts -
+        // there's no new-user exemption for a course licence. Otherwise, it only counts for
+        // a user's first enrolment with this partner, which is read fresh right now, before
+        // this event's own USER_ENROLMENTS increment below - the enrolment that triggered
+        // this event is itself what would make a later re-read see the user as "existing".
+        // This fresh read is safe from the concurrent-double-count race it replaces because
+        // every event for a given (partnerId, userId) is published keyed on that pair (see
+        // EnrollmentServiceImpl.publishCounterUpdateEvent), and Kafka guarantees all
+        // messages sharing a key land on the same partition and are consumed strictly one
+        // at a time, in order - so two enrolments submitted concurrently for the same new
+        // user can never be read here in parallel; the second is only ever processed after
+        // the first one's increment has already landed, so it correctly sees itself as "not
+        // new".
+        boolean countTowardTotal = Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)
+                || readCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType) == 0;
+
+        // USER_ENROLMENTS and COURSE_ENROLMENTS are incremented on every enrolment,
+        // free or paid - each keyed by the enrolment's actual courseType, so free and
+        // paid enrolments for the same user/course accumulate into separate rows.
+        cassandraOperation.incrementCounter(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
+                Map.of(Constants.COUNTER_VALUE, 1L)
+        );
+
+        cassandraOperation.incrementCounter(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                counterKey(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType),
+                Map.of(Constants.COUNTER_VALUE, 1L)
+        );
+
+        if (countTowardTotal) {
+            cassandraOperation.incrementCounter(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                    counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)
+            );
+
+            // licenseConsumedCount on the partner record mirrors only the PAID
+            // TOTAL_ENROLMENTS row - the same row isOverallLimitExceeded validates
+            // against. Free-course enrolments increment their own (free) TOTAL_ENROLMENTS
+            // row above, but never consume licence capacity, so the partner sync is
+            // skipped entirely for those - nothing relevant changed for licenceConsumedCount.
+            if (Constants.COURSE_TYPE_PAID.equalsIgnoreCase(courseType)) {
+                long licenseConsumedCount = readCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
+                transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
+            }
+        }
+
+        acknowledgment.acknowledge();
+    }
+
+    private Map<String, Object> counterKey(String partnerId, String scopeType, String scopeId, String courseType) {
+        Map<String, Object> key = new HashMap<>();
+        key.put(Constants.PARTNER_ID_REQ, partnerId);
+        key.put(Constants.SCOPE_TYPE, scopeType);
+        key.put(Constants.SCOPE_ID, scopeId);
+        key.put(Constants.COURSE_TYPE_COL, courseType);
+        return key;
+    }
+
+    /**
+     * Point-read of a counter row's "value" column right after incrementing it, so the
+     * partner-record sync always reflects the authoritative post-increment total rather than
+     * a locally-tracked running count that could drift under concurrent consumer instances.
+     */
+    private long readCounterValue(String partnerId, String scopeType, String scopeId, String courseType) {
+        List<Map<String, Object>> rows = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                counterKey(partnerId, scopeType, scopeId, courseType),
+                List.of(Constants.COUNTER_VALUE),
+                1
+        );
+        if (CollectionUtils.isEmpty(rows)) {
+            return 0L;
+        }
+        Object value = rows.get(0).get(Constants.COUNTER_VALUE);
+        return value == null ? 0L : ((Number) value).longValue();
+    }
+
     @KafkaListener(topics = "${spring.kafka.cornell.topic.name}", groupId = "${spring.kafka.consumer.group.id}")
-    public void enrollUpdateConsumer(ConsumerRecord<String, String> data) {
+    public void enrollUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
         log.info("KafkaConsumer::enrollUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
             ZoneId zoneId = ZoneId.of("UTC");
@@ -108,11 +224,13 @@ public class KafkaConsumer {
 
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
+        } finally {
+            acknowledgment.acknowledge();
         }
     }
 
     @KafkaListener(topics = "${user.progress.send.from.partner.topic.name}", groupId = "${user.progress.send.from.partner.consumer.group.id}")
-    public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data) {
+    public void receiveProgressUpdateFromPartner(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
         log.info("KafkaConsumer::receiveProgressUpdateFromPartner:topic name: {} and recievedData: {}", data.topic(), data.value());
         try {
             JsonNode jsonNode = mapper.readTree(data.value());
@@ -133,6 +251,8 @@ public class KafkaConsumer {
             }
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
+        } finally {
+            acknowledgment.acknowledge();
         }
     }
 
