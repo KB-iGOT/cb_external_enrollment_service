@@ -108,4 +108,7 @@ public class CbServerProperties {
 
     @Value("${cios.search.content.api.endpoint}")
     private String ciosSearchContentApiEndPoint;
+
+    @Value("${karma.points.deduction.enabled}")
+    private boolean karmaPointsDeductionEnabled;
 }

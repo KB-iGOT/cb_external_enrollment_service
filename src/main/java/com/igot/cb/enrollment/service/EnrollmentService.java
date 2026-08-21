@@ -20,4 +20,6 @@ public interface EnrollmentService {
   SBApiResponse enrolValidation(JsonNode userCourseEnroll, String token);
 
   SBApiResponse getUserEnrolmentByExternalId(String userId, String externalId, String partnerCode) ;
+
+  SBApiResponse karmapointsDeductionRule(JsonNode userCourseEnroll, String token);
 }

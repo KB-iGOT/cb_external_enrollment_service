@@ -1,5 +1,7 @@
 package com.igot.cb.transactional.cassandrautils;
 
+import com.igot.cb.util.ApiResponse;
+
 import java.util.List;
 import java.util.Map;
 
@@ -18,7 +20,7 @@ public interface CassandraOperation {
      * @param request      A map representing the record to insert.
      * @return An object representing the result of the insertion operation.
      */
-     Object insertRecord(String keyspaceName, String tableName, Map<String, Object> request);
+     ApiResponse insertRecord(String keyspaceName, String tableName, Map<String, Object> request);
 
      List<Map<String, Object>> getRecordsByPropertiesWithoutFiltering(String keyspaceName, String tableName,
                                                                             Map<String, Object> propertyMap, List<String> fields, Integer limit);

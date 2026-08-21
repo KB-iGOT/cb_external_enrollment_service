@@ -66,4 +66,11 @@ public class EnrollmentController {
     SBApiResponse response = enrollmentService.readByUserIdAndPartnerId(searchRequest, token);
     return new ResponseEntity<>(response, response.getResponseCode() != null ? response.getResponseCode() : HttpStatus.OK);
   }
+
+  @PostMapping("/v1/karmapoints/deductionrule")
+  public ResponseEntity<SBApiResponse> karmapointsDeductionRule(@RequestBody JsonNode userCourseEnroll, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
+    SBApiResponse response = enrollmentService.karmapointsDeductionRule(userCourseEnroll, token);
+    return new ResponseEntity<>(response, response.getResponseCode());
+  }
+
 }
