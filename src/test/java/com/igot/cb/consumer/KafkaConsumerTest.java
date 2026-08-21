@@ -850,7 +850,7 @@ class KafkaConsumerTest {
     }
 
     @Test
-    void enrolmentCounterUpdateConsumer_freeCourse_stillIncrementsCourseEnrolments() throws Exception {
+    void enrolmentCounterUpdateConsumer_freeCourse_incrementsOnlyTotalEnrolments() throws Exception {
         Map<String, Object> event = new HashMap<>();
         event.put(Constants.PARTNER_ID_REQ, "p1");
         event.put(Constants.USER_ID, "u1");
@@ -861,44 +861,57 @@ class KafkaConsumerTest {
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
-        // COURSE_ENROLMENTS is recorded for free courses too now - just tagged
-        // course_type=free instead of being skipped - so all three counters fire.
-        verify(cassandraOperation, org.mockito.Mockito.times(3)).incrementCounter(any(), any(), any(), any());
+        // A free enrolment takes the early-return branch, so the only counter maintained is the
+        // partner-level TOTAL_ENROLMENTS row tagged course_type=free. USER_ENROLMENTS and
+        // COURSE_ENROLMENTS exist purely to serve the per-user and per-course cap checks, and
+        // those caps are never evaluated for a free course, so no row is written for either.
+        verify(cassandraOperation, org.mockito.Mockito.times(1)).incrementCounter(any(), any(), any(), any());
         verify(cassandraOperation).incrementCounter(
-                any(), any(),
-                argThatMap(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
-                        && "c1".equals(m.get(Constants.SCOPE_ID))
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
+                        && "p1".equals(m.get(Constants.SCOPE_ID))
                         && Constants.COURSE_TYPE_FREE.equals(m.get(Constants.COURSE_TYPE_COL))),
                 eq(Map.of(Constants.COUNTER_VALUE, 1L)));
-    }
-
-    @Test
-    void enrolmentCounterUpdateConsumer_existingUserFreeCourse_skipsTotalButStillIncrementsCourseEnrolments() throws Exception {
-        Map<String, Object> event = new HashMap<>();
-        event.put(Constants.PARTNER_ID_REQ, "p1");
-        event.put(Constants.USER_ID, "u1");
-        event.put(Constants.COURSE_ID, "c1");
-        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
-        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
-
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
-                any(), any()))
-                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L)));
-
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
-
-        verify(cassandraOperation, org.mockito.Mockito.times(2)).incrementCounter(any(), any(), any(), any());
-        verify(cassandraOperation).incrementCounter(
+        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(
                 any(), any(),
-                argThatMap(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
                 any());
         verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(
                 any(), any(),
-                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
+                argThatMap(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
                 any());
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_freeCourse_newOrExistingUserMakesNoDifference() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        // Deliberately no USER_ENROLMENTS stub here. The free-course branch returns before the
+        // "is this user new" read is ever reached, so stubbing it would be unused - and under
+        // MockitoExtension's strict stubs that alone would fail the test.
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+
+        // The new-vs-existing-user distinction only gates TOTAL_ENROLMENTS for *paid* licence
+        // consumption. For a free course the partner-level TOTAL_ENROLMENTS (free) row is
+        // incremented unconditionally, and the counter table is never read at all - which is
+        // what makes the user's history irrelevant here.
+        verify(cassandraOperation, org.mockito.Mockito.times(1)).incrementCounter(any(), any(), any(), any());
+        verify(cassandraOperation).incrementCounter(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
+                        && "p1".equals(m.get(Constants.SCOPE_ID))
+                        && Constants.COURSE_TYPE_FREE.equals(m.get(Constants.COURSE_TYPE_COL))),
+                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
+        verify(cassandraOperation, org.mockito.Mockito.never()).getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), any(), any());
     }
 
     @Test
