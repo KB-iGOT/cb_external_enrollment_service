@@ -161,6 +161,11 @@ public class Constants {
     public static final String PAGE_SIZE = "pageSize";
     public static final String FILTER_CRITERIA_MAP = "filterCriteriaMap";
     public static final String REQUESTED_FIELDS = "requestedFields";
+    public static final String REQUIRED_KARMA_POINTS = "requiredKarmaPoints";
+    public static final String KARMA_POINTS_EXEMPTION_ENABLED = "karmaPointsExemptionEnabled";
+    public static final String KARMA_POINTS_EXEMPTION = "karmaPointsExemption";
+    public static final String REDEEMED_KARMA_POINTS = "redeemedKarmaPoints";
+    public static final String KARMA_POINTS_DEDUCTION_RULE = "api.cios.karmapoints.deduction.rule";
 
     private Constants() {
     }

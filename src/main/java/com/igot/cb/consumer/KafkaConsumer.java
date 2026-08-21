@@ -86,6 +86,23 @@ public class KafkaConsumer {
         String courseType = (String) event.get(Constants.COURSE_TYPE_COL);
         String licenseType = (String) event.get(Constants.LICENSE_TYPE);
 
+        // Free courses skip course-level and partner-level validation entirely (see
+        // EnrollmentServiceImpl.validatePartnerEnrollmentLimits), so there is no licence or
+        // per-user/per-course cap to enforce for them - USER_ENROLMENTS and COURSE_ENROLMENTS
+        // rows exist only to serve those checks and are never read for a free course. Only the
+        // partner-level TOTAL_ENROLMENTS (free) counter is maintained, unconditionally, on
+        // every free enrolment.
+        if (Constants.COURSE_TYPE_FREE.equalsIgnoreCase(courseType)) {
+            cassandraOperation.incrementCounter(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                    counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)
+            );
+            acknowledgment.acknowledge();
+            return;
+        }
+
         // Whether this enrolment counts toward TOTAL_ENROLMENTS (provider licence
         // consumption) is decided here, not trusted from a value computed earlier in the
         // request thread that produced this event. licenseType == Course always counts -
