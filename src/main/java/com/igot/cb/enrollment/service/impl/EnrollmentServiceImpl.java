@@ -9,6 +9,7 @@ import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
 import com.igot.cb.enrollment.entity.CiosEnrolmentStatus;
 import com.igot.cb.enrollment.model.AccessControl;
+import com.igot.cb.enrollment.model.KarmaValidationResult;
 import com.igot.cb.enrollment.model.UserGroup;
 import com.igot.cb.enrollment.model.UserGroupCriteria;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
@@ -59,6 +60,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     private final PayloadValidation payloadValidation;
 
     private final Map<String, Integer> statusMap = CiosEnrolmentStatus.toMap();
+
+    private KarmaValidationResult karmaValidationResult;
 
     @Override
     public SBApiResponse enrollUser(JsonNode userCourseEnroll, String token) {
@@ -615,7 +618,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         producer.push(cbServerProperties.getEnrolmentCounterUpdateTopic(), counterEvent, partnerId + "_" + userId);
     }
 
-    private boolean validatePartnerEnrollmentLimits(
+    private KarmaValidationResult validatePartnerEnrollmentLimits(
             String userId,
             String partnerId,
             String courseId,
@@ -623,25 +626,36 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             JsonNode providerResponse,
             JsonNode contentResponse,
             String token,
-            Map<String, String> userAttributes,
-            Integer redeemedKarmaPoints) {
+            Map<String, String> userAttributes) {
 
         // Free courses skip course-level and partner-level validation entirely
         if (isCourseFree(contentResponse)) {
-            return true;
+            return new KarmaValidationResult(true, 0);
         }
 
-        if (isOverallLimitExceeded(userId, partnerId, providerResponse, contentResponse, response)) return false;
+        if (isOverallLimitExceeded(userId, partnerId, providerResponse, contentResponse, response)) {
+            return new KarmaValidationResult(false, 0);
+        }
 
-        if (isUserWiseLimitExceeded(userId, partnerId, providerResponse, response)) return false;
+        if (isUserWiseLimitExceeded(userId, partnerId, providerResponse, response)) {
+            return new KarmaValidationResult(false, 0);
+        }
 
-        if (isConcurrentLimitExceeded(userId, partnerId, providerResponse, response)) return false;
+        if (isConcurrentLimitExceeded(userId, partnerId, providerResponse, response)) {
+            return new KarmaValidationResult(false, 0);
+        }
 
-        if (isCourseLevelCapExceeded(courseId, partnerId, providerResponse, contentResponse, response)) return false;
+        if (isCourseLevelCapExceeded(courseId, partnerId, providerResponse, contentResponse, response)) {
+            return new KarmaValidationResult(false, 0);
+        }
 
-        if (isKarmaInsufficient(userId, contentResponse, providerResponse, token, userAttributes, response, redeemedKarmaPoints)) return false;
+        KarmaValidationResult karmaResult = validateAndResolveKarma(userId, contentResponse, providerResponse, token, userAttributes, response);
+        if (!karmaResult.isAllowed()) {
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            return karmaResult;
+        }
 
-        return true;
+        return karmaResult;
     }
 
     private boolean isOverallLimitExceeded(
@@ -845,34 +859,37 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return false;
     }
 
-    private boolean isKarmaInsufficient(
+    private KarmaValidationResult validateAndResolveKarma(
             String userId,
             JsonNode contentResponse,
             JsonNode providerResponse,
             String token,
             Map<String, String> userAttributes,
-            SBApiResponse response,
-            Integer redeemedKarmaPoints) {
+            SBApiResponse response) {
 
-        if (!providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false))
-            return false;
+        if (!providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false)) {
+            return new KarmaValidationResult(true, 0);
+        }
 
-        int karmaPoints = contentResponse.path(Constants.REQUIRED_KARMA_POINTS).asInt(0);
-        if (karmaPoints <= 0) return false;
+        if (isCourseFree(contentResponse)) {
+            return new KarmaValidationResult(true, 0);
+        }
+
+        int requiredKarmaPoints = contentResponse.path(Constants.REQUIRED_KARMA_POINTS).asInt(0);
+        if (requiredKarmaPoints <= 0) {
+            return new KarmaValidationResult(true, 0);
+        }
 
         Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
-
         boolean isExemptGroup = isKarmaPointsExempt(userAttributes, providerResponse.path(Constants.KARMA_POINTS_EXEMPTION));
 
-        if (!isExemptGroup && userKarmaPoints < karmaPoints) {
-            response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg(
-                    String.format(cbServerProperties.getKarmaInsufficientMsg(), karmaPoints)
-            );
-            return true;
+        if (!isExemptGroup && userKarmaPoints < requiredKarmaPoints) {
+            response.getParams().setMsg(String.format(cbServerProperties.getKarmaInsufficientMsg(), requiredKarmaPoints));
+            return new KarmaValidationResult(false,
+                    0);
+
         }
-        redeemedKarmaPoints = karmaPoints;
-        return false;
+        return new KarmaValidationResult(true, requiredKarmaPoints);
     }
 
     private int getCountFromCacheOrDb(String key, Supplier<Integer> dbSupplier) {
@@ -918,7 +935,17 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     : new HashMap<>();
             log.info("User attributes fetched for enrollment: {}", userAttributes);
 
-            if (!validatePartnerEnrollmentLimits(userId, partnerId, courseId, response, providerResponse.get(Constants.DATA), contentResponse, token, userAttributes,null)) {
+            KarmaValidationResult karmaValidationResult = validatePartnerEnrollmentLimits(
+                    userId,
+                    partnerId,
+                    courseId,
+                    response,
+                    providerResponse.get(Constants.DATA),
+                    contentResponse,
+                    token,
+                    userAttributes
+            );
+            if (!karmaValidationResult.isAllowed()) {
                 return response;
             }
             if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
@@ -1006,9 +1033,17 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     : new HashMap<>();
             log.info("User attributes fetched for enrollment: {}", userAttributes);
 
-            Integer redeemedKarmaPoints = 0;
-            // Validate provider settings limits
-            if (!validatePartnerEnrollmentLimits(userId, partnerId, courseId, response, providerResponse.get(Constants.DATA), contentResponse, token, userAttributes,redeemedKarmaPoints)) {
+            KarmaValidationResult karmaValidationResult = validatePartnerEnrollmentLimits(
+                    userId,
+                    partnerId,
+                    courseId,
+                    response,
+                    providerResponse.get(Constants.DATA),
+                    contentResponse,
+                    token,
+                    userAttributes
+            );
+            if (!karmaValidationResult.isAllowed()) {
                 return response;
             }
 
@@ -1033,15 +1068,16 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if (!enrolled) {
                 return transformUtility.buildFailedResponse(response, "Failed to enroll user in course", HttpStatus.BAD_REQUEST);
             }
-            if (redeemedKarmaPoints > 0) {
+            int redeemedPoints = karmaValidationResult.getRedeemedKarmaPoints();
+            if (redeemedPoints > 0) {
                 //trigger event to deduct karma points from user
                 log.info("Karma points deduction event triggered for userId: {}, courseId: {}, points: {}",
-                        userId, courseId, redeemedKarmaPoints);
+                        userId, courseId, redeemedPoints);
             }
             response.setResponseCode(HttpStatus.OK);
             Map<String, Object> result = new HashMap<>();
             result.put("message", "User enrolled successfully");
-            result.put(Constants.REDEEMED_KARMA_POINTS, redeemedKarmaPoints);
+            result.put(Constants.REDEEMED_KARMA_POINTS, redeemedPoints);
             response.setResult(result);
         } catch (Exception e) {
             String errMsg = Constants.ENROLLMENT_ERROR + e.getMessage();
@@ -1108,27 +1144,24 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String courseId = userCourseEnroll.get(Constants.COURSE_ID_RQST).asText();
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
 
-            boolean isFreeCourse = isCourseFree(contentResponse);
+            JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
+            Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
+            Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
+                    ? getUserAttributes(userProfile)
+                    : new HashMap<>();
+            log.warn("User attributes fetched for enrollment: {}", userAttributes);
 
-            Number requiredKarmaPoints = contentResponse
-                    .path(Constants.REQUIRED_KARMA_POINTS)
-                    .asInt(0);
-
-            if (isFreeCourse || !cbServerProperties.isKarmaPointsDeductionEnabled()) {
+            karmaValidationResult = validateAndResolveKarma(
+                    userId,
+                    contentResponse,
+                    providerResponse.path(Constants.DATA),
+                    token,
+                    userAttributes,
+                    response
+            );
+            int requiredKarmaPoints = karmaValidationResult.getRedeemedKarmaPoints();
+            if (!cbServerProperties.isKarmaPointsDeductionEnabled() || isCourseFree(contentResponse)) {
                 requiredKarmaPoints = 0;
-            } else {
-                JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
-
-                if (providerResponse.path(Constants.KARMA_POINTS_EXEMPTION_ENABLED).asBoolean(false)) {
-                    Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
-                    Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
-                            ? getUserAttributes(userProfile)
-                            : new HashMap<>();
-                    log.warn("User attributes fetched for enrollment: {}", userAttributes);
-                    if (isKarmaPointsExempt(userAttributes, providerResponse.path(Constants.KARMA_POINTS_EXEMPTION))) {
-                        requiredKarmaPoints = 0;
-                    }
-                }
             }
             Map<String, Object> result = new HashMap<>();
             result.put(Constants.REQUIRED_KARMA_POINTS, requiredKarmaPoints);
