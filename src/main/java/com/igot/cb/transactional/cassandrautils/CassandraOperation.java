@@ -1,5 +1,7 @@
 package com.igot.cb.transactional.cassandrautils;
 
+import com.igot.cb.util.ApiResponse;
+
 import java.util.List;
 import java.util.Map;
 
@@ -18,7 +20,7 @@ public interface CassandraOperation {
      * @param request      A map representing the record to insert.
      * @return An object representing the result of the insertion operation.
      */
-     Object insertRecord(String keyspaceName, String tableName, Map<String, Object> request);
+     ApiResponse insertRecord(String keyspaceName, String tableName, Map<String, Object> request);
 
      List<Map<String, Object>> getRecordsByPropertiesWithoutFiltering(String keyspaceName, String tableName,
                                                                             Map<String, Object> propertyMap, List<String> fields, Integer limit);
@@ -38,5 +40,23 @@ public interface CassandraOperation {
 
      List<Map<String, Object>> getRecordsByProperties(String keyspaceName, String tableName,
                                                      Map<String, Object> propertyMap, List<String> fields);
+
+    /**
+     * Inserts a record only if a row with the same primary key does not already exist
+     * (a Cassandra lightweight transaction / IF NOT EXISTS). Used as the dedup gate for the
+     * authoritative enrolment record, so a retried/duplicate request cannot be applied twice.
+     *
+     * @return a map containing a boolean "applied" key - true only if this call actually inserted
+     *         the row; false if a row with that key already existed (nothing was changed).
+     */
+    Map<String, Object> insertRecordIfNotExists(String keyspaceName, String tableName, Map<String, Object> request);
+
+    /**
+     * Increments one or more counter columns on a counter table by the given deltas
+     * (e.g. {"value": 1L}) for the row identified by compositeKey. Counter columns cannot be
+     * set to a literal value - only incremented/decremented - so this is separate from updateRecord.
+     */
+    void incrementCounter(String keyspaceName, String tableName, Map<String, Object> compositeKey,
+                           Map<String, Long> counterDeltas);
 
 }

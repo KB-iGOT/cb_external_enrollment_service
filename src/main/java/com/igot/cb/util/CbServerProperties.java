@@ -40,11 +40,17 @@ public class CbServerProperties {
     @Value("${content.partner.readby.partnercode.api.url}")
     private String contentPartnerReadbyPartnerCodeApiUrl;
 
+    @Value("${content.partner.update.api.url}")
+    private String contentPartnerUpdateApiUrl;
+
     @Value("${spring.kafka.cornell.topic.name}")
     private String userProgressUpdateTopic;
 
     @Value("${user.progress.send.from.partner.topic.name}")
     private String userProgressSendFromPartner;
+
+    @Value("${spring.kafka.enrolment.counter.update.topic.name}")
+    private String enrolmentCounterUpdateTopic;
 
     @Value("${maximum.allowed.limit}")
     private int maximumAllowedLimit;
@@ -69,6 +75,9 @@ public class CbServerProperties {
 
     @Value("${enrollment.error.partner.concurrent.limit}")
     private String partnerConcurrentLimitMsg;
+
+    @Value("${enrollment.error.partner.course.limit}")
+    private String partnerCourseLimitMsg;
 
     @Value("${enrollment.error.karma.insufficient}")
     private String karmaInsufficientMsg;
@@ -99,4 +108,13 @@ public class CbServerProperties {
 
     @Value("${cios.search.content.api.endpoint}")
     private String ciosSearchContentApiEndPoint;
+
+    @Value("${karma.points.deduction.enabled}")
+    private boolean karmaPointsDeductionEnabled;
+
+    @Value("${enrollment.message.with.karma}")
+    private String enrolledWithKarmaMsg;
+
+    @Value("${enrollment.message.without.karma}")
+    private String enrolledWithoutKarmaMsg;
 }

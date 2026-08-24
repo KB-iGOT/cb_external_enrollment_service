@@ -7,6 +7,7 @@ import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import com.datastax.oss.driver.api.core.cql.ResultSet;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.querybuilder.QueryBuilder;
+import com.datastax.oss.driver.api.querybuilder.insert.RegularInsert;
 import com.datastax.oss.driver.api.querybuilder.relation.Relation;
 import com.datastax.oss.driver.api.querybuilder.select.Select;
 import com.datastax.oss.driver.api.querybuilder.term.Term;
@@ -123,6 +124,59 @@ public class CassandraOperationImpl implements CassandraOperation {
             throw e;
         }
         return response;
+    }
+
+    @Override
+    public Map<String, Object> insertRecordIfNotExists(String keyspaceName, String tableName, Map<String, Object> request) {
+        Map<String, Object> response = new HashMap<>();
+        CqlSession session = null;
+        try {
+            session = connectionManager.getSession(keyspaceName);
+            Iterator<Map.Entry<String, Object>> iterator = request.entrySet().iterator();
+            Map.Entry<String, Object> first = iterator.next();
+            RegularInsert regularInsert = QueryBuilder.insertInto(keyspaceName, tableName)
+                    .value(first.getKey(), QueryBuilder.literal(first.getValue()));
+            while (iterator.hasNext()) {
+                Map.Entry<String, Object> entry = iterator.next();
+                regularInsert = regularInsert.value(entry.getKey(), QueryBuilder.literal(entry.getValue()));
+            }
+            SimpleStatement statement = regularInsert.ifNotExists().build();
+            ResultSet resultSet = session.execute(statement);
+            boolean applied = resultSet.wasApplied();
+            response.put(Constants.RESPONSE, applied ? Constants.SUCCESS : Constants.FAILED);
+            response.put("applied", applied);
+        } catch (Exception e) {
+            log.error("Error inserting record (if not exists) into {}: {}", tableName, e.getMessage());
+            response.put(Constants.RESPONSE, Constants.FAILED);
+            response.put("applied", false);
+            response.put(Constants.ERROR_MESSAGE, e.getMessage());
+        }
+        return response;
+    }
+
+    @Override
+    public void incrementCounter(String keyspaceName, String tableName, Map<String, Object> compositeKey,
+                                  Map<String, Long> counterDeltas) {
+        CqlSession session = null;
+        try {
+            session = connectionManager.getSession(keyspaceName);
+            UpdateStart updateStart = QueryBuilder.update(keyspaceName, tableName);
+            UpdateWithAssignments updateWithAssignments = updateStart.set(
+                    counterDeltas.entrySet().stream()
+                            .map(entry -> Assignment.increment(entry.getKey(), QueryBuilder.literal(entry.getValue())))
+                            .toArray(Assignment[]::new)
+            );
+            Update update = updateWithAssignments.where(
+                    compositeKey.entrySet().stream()
+                            .map(entry -> Relation.column(entry.getKey()).isEqualTo(QueryBuilder.literal(entry.getValue())))
+                            .toArray(Relation[]::new)
+            );
+            session.execute(update.build());
+        } catch (Exception e) {
+            String errMsg = String.format("Exception occurred while incrementing counter in %s %s", tableName, e.getMessage());
+            log.error(errMsg);
+            throw e;
+        }
     }
 
     private Select processQuery(String keyspaceName, String tableName, Map<String, Object> propertyMap,

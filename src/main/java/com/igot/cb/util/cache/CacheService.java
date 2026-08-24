@@ -8,6 +8,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -77,6 +79,31 @@ public class CacheService {
     } catch (Exception e) {
       log.error("Error while deleting key from Redis cache: {} ", e.getMessage());
       return false;
+    }
+  }
+
+  /**
+   * Bulk-writes every field of a Redis hash in a single round trip (HMSET) - used to
+   * populate a per-user "map" of minimal enrolment info (courseId -> {partnerId, status})
+   * in one shot the first time it's needed, rather than one write per field.
+   */
+  public void putAllHashFields(String key, int dbIndex, Map<String, String> fieldValueMap) {
+    try {
+      RedisTemplate<String, String> template = getTemplate(dbIndex);
+      template.opsForHash().putAll(key, fieldValueMap);
+      log.debug("Hash with {} fields saved to database {} under key: {}", fieldValueMap.size(), dbIndex, key);
+    } catch (Exception e) {
+      log.error("Error while putting hash fields in Redis cache: {} ", e.getMessage());
+    }
+  }
+
+  public Map<Object, Object> getAllHashFields(String key, int dbIndex) {
+    try {
+      RedisTemplate<String, String> template = getTemplate(dbIndex);
+      return template.opsForHash().entries(key);
+    } catch (Exception e) {
+      log.error("Error while getting hash fields from Redis cache: {} ", e.getMessage());
+      return Collections.emptyMap();
     }
   }
 
