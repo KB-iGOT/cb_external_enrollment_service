@@ -2416,7 +2416,7 @@ class EnrollmentServiceImplTest {
         assertEquals(HttpStatus.OK, response.getResponseCode());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
-        assertEquals(60L, ((Number) result.get(Constants.REDEEMED_KARMA_POINTS)).longValue());
+        assertTrue(((String) result.get("message")).contains("60 karma points redeemed"));
     }
 
     @Test
@@ -2456,9 +2456,9 @@ class EnrollmentServiceImplTest {
         assertEquals(HttpStatus.OK, response.getResponseCode());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
-        assertEquals(0L, ((Number) result.get(Constants.REDEEMED_KARMA_POINTS)).longValue());
         // Free courses skip validatePartnerEnrollmentLimits (and therefore the karma balance
         // gate) entirely, so the user's karma balance should never be looked up.
+        assertFalse(((String) result.get("message")).contains("karma points redeemed"));
         verify(transformUtility, Mockito.never()).readUserKarmaPoints(anyString(), anyString());
     }
 
