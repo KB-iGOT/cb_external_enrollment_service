@@ -164,8 +164,10 @@ public class Constants {
     public static final String REQUIRED_KARMA_POINTS = "requiredKarmaPoints";
     public static final String KARMA_POINTS_EXEMPTION_ENABLED = "karmaPointsExemptionEnabled";
     public static final String KARMA_POINTS_EXEMPTION = "karmaPointsExemption";
-    public static final String REDEEMED_KARMA_POINTS = "redeemedKarmaPoints";
     public static final String KARMA_POINTS_DEDUCTION_RULE = "api.cios.karmapoints.deduction.rule";
+    public static final String MESSAGE = "message";
+    public static final String USER_ENROLLED_SUCCESSFULLY = "User enrolled successfully";
+    public static final String KARMA_POINTS_REDEEMED = "%s and %d karma points redeemed";
 
     private Constants() {
     }
