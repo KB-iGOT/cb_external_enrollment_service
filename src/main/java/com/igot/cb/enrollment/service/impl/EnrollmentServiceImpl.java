@@ -1048,11 +1048,11 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
 
             // Check access control settings enabled and validate
-//            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-//                if (!handleAccessControlledEnrollment(courseId, userAttributes)) {
-//                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
-//                }
-//            }
+            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
+                if (!handleAccessControlledEnrollment(courseId, userAttributes)) {
+                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
+                }
+            }
             // Special handling for Coursera partner to invite user
             String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
             if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
