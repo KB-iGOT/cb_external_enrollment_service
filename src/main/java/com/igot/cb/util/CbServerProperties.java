@@ -111,4 +111,10 @@ public class CbServerProperties {
 
     @Value("${karma.points.deduction.enabled}")
     private boolean karmaPointsDeductionEnabled;
+
+    @Value("${enrollment.message.with.karma}")
+    private String enrolledWithKarmaMsg;
+
+    @Value("${enrollment.message.without.karma}")
+    private String enrolledWithoutKarmaMsg;
 }

@@ -1076,9 +1076,14 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
             response.setResponseCode(HttpStatus.OK);
             Map<String, Object> result = new HashMap<>();
-            result.put(Constants.MESSAGE, redeemedPoints > 0
-                    ? String.format(Constants.KARMA_POINTS_REDEEMED, Constants.USER_ENROLLED_SUCCESSFULLY, redeemedPoints)
-                    : Constants.USER_ENROLLED_SUCCESSFULLY);
+            String courseName = contentResponse.path(Constants.NAME).asText("");
+            String message;
+            if (redeemedPoints > 0) {
+                message = String.format(Constants.ENROLLED_WITH_KARMA_DEDUCTION, courseName, redeemedPoints);
+            } else {
+                message = String.format(Constants.ENROLLED_WITHOUT_KARMA_DEDUCTION, courseName);
+            }
+            result.put(Constants.MESSAGE, message);
             response.setResult(result);
         } catch (Exception e) {
             String errMsg = Constants.ENROLLMENT_ERROR + e.getMessage();

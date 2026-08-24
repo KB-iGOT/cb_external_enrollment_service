@@ -81,6 +81,8 @@ class EnrollmentServiceImplTest {
         resultMap.put("message", "User enrolled successfully");
         defaultResponse.setResult(resultMap);
         lenient().when(transformUtility.createDefaultResponse(Mockito.anyString())).thenReturn(defaultResponse);
+        lenient().when(cbServerProperties.getEnrolledWithKarmaMsg()).thenReturn(Constants.ENROLLED_WITH_KARMA_DEDUCTION);
+        lenient().when(cbServerProperties.getEnrolledWithoutKarmaMsg()).thenReturn(Constants.ENROLLED_WITHOUT_KARMA_DEDUCTION);
         lenient().when(transformUtility.buildFailedResponse(
                 any(SBApiResponse.class),
                 anyString(),
@@ -2416,7 +2418,9 @@ class EnrollmentServiceImplTest {
         assertEquals(HttpStatus.OK, response.getResponseCode());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
-        assertTrue(((String) result.get("message")).contains("60 karma points redeemed"));
+        String message = (String) result.get("message");
+        assertTrue(message.contains("Karma Coin has been deducted"));
+        assertTrue(message.contains("60"));
     }
 
     @Test
@@ -2458,7 +2462,7 @@ class EnrollmentServiceImplTest {
         Map<String, Object> result = (Map<String, Object>) response.getResult();
         // Free courses skip validatePartnerEnrollmentLimits (and therefore the karma balance
         // gate) entirely, so the user's karma balance should never be looked up.
-        assertFalse(((String) result.get("message")).contains("karma points redeemed"));
+        assertFalse(((String) result.get("message")).contains("Karma Coin has been deducted"));
         verify(transformUtility, Mockito.never()).readUserKarmaPoints(anyString(), anyString());
     }
 
