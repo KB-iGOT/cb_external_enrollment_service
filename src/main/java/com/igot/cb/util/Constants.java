@@ -166,8 +166,6 @@ public class Constants {
     public static final String KARMA_POINTS_EXEMPTION = "karmaPointsExemption";
     public static final String KARMA_POINTS_DEDUCTION_RULE = "api.cios.karmapoints.deduction.rule";
     public static final String MESSAGE = "message";
-    public static final String USER_ENROLLED_SUCCESSFULLY = "User enrolled successfully";
-    public static final String KARMA_POINTS_REDEEMED = "%s and %d karma points redeemed";
     public static final String ENROLLED_WITH_KARMA_DEDUCTION = "You have been successfully enrolled into \"%s\", and \"%d\" Karma Coin has been deducted from your Karma Wallet.";
     public static final String ENROLLED_WITHOUT_KARMA_DEDUCTION = "You have been successfully enrolled into \"%s\".";
 
