@@ -1079,9 +1079,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String courseName = contentResponse.path(Constants.NAME).asText("");
             String message;
             if (redeemedPoints > 0) {
-                message = String.format(Constants.ENROLLED_WITH_KARMA_DEDUCTION, courseName, redeemedPoints);
+                message = String.format(cbServerProperties.getEnrolledWithKarmaMsg(), courseName, redeemedPoints);
             } else {
-                message = String.format(Constants.ENROLLED_WITHOUT_KARMA_DEDUCTION, courseName);
+                message = String.format(cbServerProperties.getEnrolledWithoutKarmaMsg(), courseName);
             }
             result.put(Constants.MESSAGE, message);
             response.setResult(result);
