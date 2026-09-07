@@ -231,7 +231,9 @@ public class KafkaConsumer {
                 List<Map<String, Object>> listOfMasterData = cassandraOperation.getRecordsByPropertiesWithoutFiltering(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, propertyMap, null, 1);
                 if (!CollectionUtils.isEmpty(listOfMasterData)) {
                     Map<String, Object> enrolledData = listOfMasterData.get(0);
-                    if (2 == (Integer) enrolledData.get(Constants.STATUS)) {
+                    Object statusValue = enrolledData.get(Constants.STATUS);
+                    boolean alreadyCompleted = statusValue instanceof Number && ((Number) statusValue).intValue() == 2;
+                    if (alreadyCompleted) {
                         log.info("User {} has already completed the course {}. No update needed.", userId, courseId);
                         acknowledgment.acknowledge();
                     } else {

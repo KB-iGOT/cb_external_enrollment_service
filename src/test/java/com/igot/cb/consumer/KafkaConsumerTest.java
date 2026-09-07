@@ -1132,16 +1132,6 @@ class KafkaConsumerTest {
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
                 any(), isNull(), eq(1))).thenReturn(existingRecords);
-        when(cassandraOperation.updateRecord(any(), any(), any(), any())).thenReturn(Collections.emptyMap());
-
-        ObjectNode partnerApiResponse = mapper.createObjectNode();
-        partnerApiResponse.put("certificateTemplateUrl", "http://template.svg");
-        when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
-        when(resourceLoader.getResource(any())).thenReturn(mockResource);
-        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
-        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
-                .thenReturn(List.of(Map.of("firstname", "John")));
-        when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
 
         kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
 

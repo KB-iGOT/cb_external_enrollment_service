@@ -61,8 +61,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     private final Map<String, Integer> statusMap = CiosEnrolmentStatus.toMap();
 
-    private KarmaValidationResult karmaValidationResult;
-
     @Override
     public SBApiResponse enrollUser(JsonNode userCourseEnroll, String token) {
         log.info("EnrollmentService::enrollUser:inside the method");
@@ -865,7 +863,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             Map<String, String> userAttributes,
             SBApiResponse response) {
 
-        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(providerResponse.path(Constants.LICENSE_TYPE).asText())) {
+        if (!providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false)
+                || Constants.LICENSE_TYPE_USER.equalsIgnoreCase(providerResponse.path(Constants.LICENSE_TYPE).asText())) {
             return new KarmaValidationResult(true, 0);
         }
 
@@ -1144,7 +1143,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     : new HashMap<>();
             log.warn("User attributes fetched for enrollment: {}", userAttributes);
 
-            karmaValidationResult = validateAndResolveKarma(
+            KarmaValidationResult karmaValidationResult = validateAndResolveKarma(
                     userId,
                     contentResponse,
                     providerResponse.path(Constants.DATA),
