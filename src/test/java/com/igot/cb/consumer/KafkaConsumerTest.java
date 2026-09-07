@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -42,6 +44,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
+import com.igot.cb.transactional.cassandrautils.CounterIncrement;
 import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.TransformUtility;
@@ -801,25 +804,11 @@ class KafkaConsumerTest {
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
-        verify(cassandraOperation).incrementCounter(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> "p1".equals(m.get(Constants.PARTNER_ID_REQ))
-                        && Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
-                        && "u1".equals(m.get(Constants.SCOPE_ID))),
-                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
-        verify(cassandraOperation).incrementCounter(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
-                        && "c1".equals(m.get(Constants.SCOPE_ID))),
-                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
-        verify(cassandraOperation).incrementCounter(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
-                        && "p1".equals(m.get(Constants.SCOPE_ID))),
-                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
+        List<CounterIncrement> increments = captureIncrements();
+        assertEquals(3, increments.size());
+        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_USER_ENROLMENTS, "u1", Constants.COURSE_TYPE_PAID, 1L));
+        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, "c1", Constants.COURSE_TYPE_PAID, 1L));
+        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, "p1", Constants.COURSE_TYPE_PAID, 1L));
     }
 
     @Test
@@ -842,11 +831,10 @@ class KafkaConsumerTest {
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
-        verify(cassandraOperation, org.mockito.Mockito.times(2)).incrementCounter(any(), any(), any(), any());
-        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(
-                any(), any(),
-                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
-                any());
+        List<CounterIncrement> increments = captureIncrements();
+        assertEquals(2, increments.size());
+        assertTrue(increments.stream().noneMatch(
+                i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
     }
 
     @Test
@@ -865,22 +853,9 @@ class KafkaConsumerTest {
         // partner-level TOTAL_ENROLMENTS row tagged course_type=free. USER_ENROLMENTS and
         // COURSE_ENROLMENTS exist purely to serve the per-user and per-course cap checks, and
         // those caps are never evaluated for a free course, so no row is written for either.
-        verify(cassandraOperation, org.mockito.Mockito.times(1)).incrementCounter(any(), any(), any(), any());
-        verify(cassandraOperation).incrementCounter(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
-                        && "p1".equals(m.get(Constants.SCOPE_ID))
-                        && Constants.COURSE_TYPE_FREE.equals(m.get(Constants.COURSE_TYPE_COL))),
-                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
-        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(
-                any(), any(),
-                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
-                any());
-        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(
-                any(), any(),
-                argThatMap(m -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
-                any());
+        List<CounterIncrement> increments = captureIncrements();
+        assertEquals(1, increments.size());
+        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, "p1", Constants.COURSE_TYPE_FREE, 1L));
     }
 
     @Test
@@ -902,14 +877,9 @@ class KafkaConsumerTest {
         // consumption. For a free course the partner-level TOTAL_ENROLMENTS (free) row is
         // incremented unconditionally, and the counter table is never read at all - which is
         // what makes the user's history irrelevant here.
-        verify(cassandraOperation, org.mockito.Mockito.times(1)).incrementCounter(any(), any(), any(), any());
-        verify(cassandraOperation).incrementCounter(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
-                        && "p1".equals(m.get(Constants.SCOPE_ID))
-                        && Constants.COURSE_TYPE_FREE.equals(m.get(Constants.COURSE_TYPE_COL))),
-                eq(Map.of(Constants.COUNTER_VALUE, 1L)));
+        List<CounterIncrement> increments = captureIncrements();
+        assertEquals(1, increments.size());
+        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, "p1", Constants.COURSE_TYPE_FREE, 1L));
         verify(cassandraOperation, org.mockito.Mockito.never()).getRecordsByPropertiesWithoutFiltering(
                 any(), any(), any(), any(), any());
     }
@@ -991,11 +961,214 @@ class KafkaConsumerTest {
 
         kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
 
-        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounter(any(), any(), any(), any());
+        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounters(any(), any(), any());
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_malformedJson_stillAcknowledges() {
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", "not-valid-json");
+        when(cbServerProperties.getEnrolmentCounterUpdateFailureTopic()).thenReturn("failureTopic");
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+
+        // A payload that can never be parsed would retry forever, so it is acknowledged and dropped -
+        // but preserved on the failure topic first rather than silently discarded.
+        verify(producer).push(eq("failureTopic"), any());
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_cassandraFailure_doesNotAcknowledge() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        org.mockito.Mockito.doThrow(new RuntimeException("cassandra write failed"))
+                .when(cassandraOperation).incrementCounters(any(), any(), any());
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+
+        // The offset must stay uncommitted so Kafka redelivers the record for retry.
+        verify(acknowledgment, never()).acknowledge();
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_dedupeKeyPresent_skipsProcessing() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        event.put(Constants.REQ_ID, "req-1");
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        when(cacheService.getCache(eq(Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + "req-1"), anyInt()))
+                .thenReturn("true");
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+
+        verify(cassandraOperation, never()).incrementCounters(any(), any(), any());
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_success_setsDedupeKeyWithTtl() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        event.put(Constants.REQ_ID, "req-2");
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+
+        verify(cacheService).putCache(
+                eq(Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + "req-2"),
+                anyInt(),
+                eq(Boolean.TRUE),
+                eq(Constants.ENROLMENT_COUNTER_DEDUPE_TTL_SECONDS));
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    void enrolmentCounterUpdateConsumer_cassandraFailureWithReqId_doesNotSetDedupeKey() throws Exception {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.PARTNER_ID_REQ, "p1");
+        event.put(Constants.USER_ID, "u1");
+        event.put(Constants.COURSE_ID, "c1");
+        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        event.put(Constants.REQ_ID, "req-3");
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+
+        org.mockito.Mockito.doThrow(new RuntimeException("cassandra write failed"))
+                .when(cassandraOperation).incrementCounters(any(), any(), any());
+
+        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+
+        verify(cacheService, never()).putCache(any(), anyInt(), any(), anyLong());
+        verify(acknowledgment, never()).acknowledge();
+    }
+
+    @Test
+    void enrollUpdateConsumer_newCompletion_incrementsCompletedCount() throws Exception {
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put(Constants.USER_ID, "user1@domain.com");
+        payloadMap.put("courseid", "extCourse1");
+        payloadMap.put("partnerId", "p1");
+        payloadMap.put("completedon", "2023-01-01T00:00:00Z");
+        String payload = mapper.writeValueAsString(payloadMap);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+
+        ObjectNode contentNode = mapper.createObjectNode();
+        contentNode.put("contentId", "course1");
+        contentNode.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+        ObjectNode contentPartnerNode = mapper.createObjectNode();
+        contentPartnerNode.put("id", "p1");
+        contentNode.set("contentPartner", contentPartnerNode);
+        ObjectNode result = mapper.createObjectNode();
+        result.set("content", contentNode);
+        when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+
+        // Existing enrolment, not yet completed (no status key on the row).
+        List<Map<String, Object>> existingRecords = new ArrayList<>();
+        existingRecords.add(new HashMap<>());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
+                any(), isNull(), eq(1))).thenReturn(existingRecords);
+        when(cassandraOperation.updateRecord(any(), any(), any(), any())).thenReturn(Collections.emptyMap());
+
+        ObjectNode partnerApiResponse = mapper.createObjectNode();
+        partnerApiResponse.put("certificateTemplateUrl", "http://template.svg");
+        when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
+        when(resourceLoader.getResource(any())).thenReturn(mockResource);
+        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of("firstname", "John")));
+        when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
+
+        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
+
+        verify(cassandraOperation).incrementCounter(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThatMap(m -> "p1".equals(m.get(Constants.PARTNER_ID_REQ))
+                        && Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
+                        && "user1".equals(m.get(Constants.SCOPE_ID))
+                        && Constants.COURSE_TYPE_PAID.equals(m.get(Constants.COURSE_TYPE_COL))),
+                eq(Map.of(Constants.COMPLETED_COUNT, 1L)));
+    }
+
+    @Test
+    void enrollUpdateConsumer_alreadyCompleted_skipsCompletedCountIncrement() throws Exception {
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put(Constants.USER_ID, "user1@domain.com");
+        payloadMap.put("courseid", "extCourse1");
+        payloadMap.put("partnerId", "p1");
+        payloadMap.put("completedon", "2023-01-01T00:00:00Z");
+        String payload = mapper.writeValueAsString(payloadMap);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+
+        ObjectNode contentNode = mapper.createObjectNode();
+        contentNode.put("contentId", "course1");
+        contentNode.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+        ObjectNode result = mapper.createObjectNode();
+        result.set("content", contentNode);
+        when(transformUtility.callCiosReadAPi(anyString(), anyString())).thenReturn(result);
+
+        // Row is already marked completed (status = 2) - a redelivered completion event for it
+        // must not bump completedcount a second time.
+        List<Map<String, Object>> existingRecords = new ArrayList<>();
+        Map<String, Object> existingRecord = new HashMap<>();
+        existingRecord.put(Constants.STATUS, 2);
+        existingRecords.add(existingRecord);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
+                any(), isNull(), eq(1))).thenReturn(existingRecords);
+        when(cassandraOperation.updateRecord(any(), any(), any(), any())).thenReturn(Collections.emptyMap());
+
+        ObjectNode partnerApiResponse = mapper.createObjectNode();
+        partnerApiResponse.put("certificateTemplateUrl", "http://template.svg");
+        when(transformUtility.callContentPartnerReadApi(any())).thenReturn(partnerApiResponse);
+        when(resourceLoader.getResource(any())).thenReturn(mockResource);
+        when(mockResource.getInputStream()).thenReturn(new ByteArrayInputStream("{\"template\":\"data\"}".getBytes()));
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of("firstname", "John")));
+        when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
+
+        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
+
+        verify(cassandraOperation, never()).incrementCounter(any(), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), any(), any());
     }
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> argThatMap(java.util.function.Predicate<Map<String, Object>> predicate) {
         return org.mockito.ArgumentMatchers.argThat(m -> predicate.test((Map<String, Object>) m));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<CounterIncrement> captureIncrements() {
+        ArgumentCaptor<List<CounterIncrement>> captor = ArgumentCaptor.forClass(List.class);
+        verify(cassandraOperation).incrementCounters(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), captor.capture());
+        return captor.getValue();
+    }
+
+    private static boolean containsIncrement(List<CounterIncrement> increments, String scopeType, String scopeId,
+                                              String courseType, long delta) {
+        return increments.stream().anyMatch(i -> {
+            Map<String, Object> key = i.getCompositeKey();
+            return scopeType.equals(key.get(Constants.SCOPE_TYPE))
+                    && scopeId.equals(key.get(Constants.SCOPE_ID))
+                    && courseType.equals(key.get(Constants.COURSE_TYPE_COL))
+                    && Map.of(Constants.COUNTER_VALUE, delta).equals(i.getCounterDeltas());
+        });
     }
 }

@@ -9,6 +9,7 @@ import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.Constants;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
+import com.igot.cb.transactional.cassandrautils.CounterIncrement;
 
 import java.io.InputStream;
 
@@ -64,100 +65,114 @@ public class KafkaConsumer {
         try {
             event = mapper.readValue(data.value(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            // A malformed message can never succeed no matter how many times it's redelivered -
-            // log and acknowledge it here rather than letting the container's error
-            // handler/backoff below retry something that will never parse.
             log.error("Failed to parse enrolment counter update event. Message received: " + data.value(), e);
+            sendToFailureTopic(data, e);
             acknowledgment.acknowledge();
             return;
         }
 
-        // Everything below is allowed to throw and propagate out of this method on purpose -
-        // the shared kafkaListenerContainerFactory now has a DefaultErrorHandler attached (see
-        // ConsumerConfiguration), which retries a genuinely failed attempt (e.g. a transient
-        // Cassandra hiccup) a few times before giving up and moving on, instead of the previous
-        // behavior of silently swallowing the failure and losing the event on the first try.
-        // acknowledgment.acknowledge() is only called once processing actually succeeds, so a
-        // retry (or a pod restart before that point) redelivers the same event rather than
-        // skipping it.
+        // Dedup guard: reqId is minted once per event at publish time, so a Kafka redelivery of
+        // this exact event still carries the same reqId. Skip re-applying it if that reqId's key
+        // is still present from a prior successful run.
+        String reqId = (String) event.get(Constants.REQ_ID);
+        String dedupeKey = StringUtils.isNotBlank(reqId) ? Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + reqId : null;
+        if (dedupeKey != null && StringUtils.isNotBlank(cacheService.getCache(dedupeKey, cbServerProperties.getRedisIndex()))) {
+            log.info("Enrolment counter update event {} already processed, skipping", reqId);
+            acknowledgment.acknowledge();
+            return;
+        }
+
+        try {
+            updateEnrolmentCounters(event);
+        } catch (Exception e) {
+            log.error("Failed to update enrolment counters. Message received: " + data.value(), e);
+            // Do not acknowledge so the offset is not committed and Kafka redelivers this record for retry.
+            return;
+        }
+
+        // Only claim the reqId once the Cassandra batch has actually succeeded - claiming it
+        // earlier could mark a never-applied event as done if the write later failed.
+        if (dedupeKey != null) {
+            cacheService.putCache(dedupeKey, cbServerProperties.getRedisIndex(), Boolean.TRUE, Constants.ENROLMENT_COUNTER_DEDUPE_TTL_SECONDS);
+        }
+        acknowledgment.acknowledge();
+    }
+
+    // A payload that can never be parsed would just retry forever if left un-acked, so it's
+    // preserved here (best-effort - a failure to publish this must never block the ack below)
+    // instead of silently dropped, then acknowledged off the main topic.
+    private void sendToFailureTopic(ConsumerRecord<String, String> data, Exception e) {
+        try {
+            Map<String, Object> failureEvent = new HashMap<>();
+            failureEvent.put("originalTopic", data.topic());
+            failureEvent.put("originalPartition", data.partition());
+            failureEvent.put("originalOffset", data.offset());
+            failureEvent.put("payload", data.value());
+            failureEvent.put("error", e.getMessage());
+            producer.push(cbServerProperties.getEnrolmentCounterUpdateFailureTopic(), failureEvent);
+        } catch (Exception pushException) {
+            log.error("Failed to publish enrolment counter update event to failure topic. Message received: " + data.value(), pushException);
+        }
+    }
+
+    // All counter rows touched by one event are written as a single Cassandra counter batch
+    // (see CassandraOperation#incrementCounters), so they are applied together - never TOTAL
+    // committed while USER/COURSE fail, or vice versa. A batch failure throws, is never
+    // acknowledged, and Kafka redelivers the record so the whole event is retried as a unit.
+    public void updateEnrolmentCounters(Map<String, Object> event) {
         String partnerId = (String) event.get(Constants.PARTNER_ID_REQ);
         String userId = (String) event.get(Constants.USER_ID);
         String courseId = (String) event.get(Constants.COURSE_ID);
         String courseType = (String) event.get(Constants.COURSE_TYPE_COL);
         String licenseType = (String) event.get(Constants.LICENSE_TYPE);
 
-        // Free courses skip course-level and partner-level validation entirely (see
-        // EnrollmentServiceImpl.validatePartnerEnrollmentLimits), so there is no licence or
-        // per-user/per-course cap to enforce for them - USER_ENROLMENTS and COURSE_ENROLMENTS
-        // rows exist only to serve those checks and are never read for a free course. Only the
-        // partner-level TOTAL_ENROLMENTS (free) counter is maintained, unconditionally, on
-        // every free enrolment.
         if (Constants.COURSE_TYPE_FREE.equalsIgnoreCase(courseType)) {
-            cassandraOperation.incrementCounter(
+            cassandraOperation.incrementCounters(
                     Constants.KEYSPACE_SUNBIRD_COURSES,
                     Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
-                    counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
-                    Map.of(Constants.COUNTER_VALUE, 1L)
+                    List.of(new CounterIncrement(
+                            counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
+                            Map.of(Constants.COUNTER_VALUE, 1L)))
             );
-            acknowledgment.acknowledge();
             return;
         }
 
-        // Whether this enrolment counts toward TOTAL_ENROLMENTS (provider licence
-        // consumption) is decided here, not trusted from a value computed earlier in the
-        // request thread that produced this event. licenseType == Course always counts -
-        // there's no new-user exemption for a course licence. Otherwise, it only counts for
-        // a user's first enrolment with this partner, which is read fresh right now, before
-        // this event's own USER_ENROLMENTS increment below - the enrolment that triggered
-        // this event is itself what would make a later re-read see the user as "existing".
-        // This fresh read is safe from the concurrent-double-count race it replaces because
-        // every event for a given (partnerId, userId) is published keyed on that pair (see
-        // EnrollmentServiceImpl.publishCounterUpdateEvent), and Kafka guarantees all
-        // messages sharing a key land on the same partition and are consumed strictly one
-        // at a time, in order - so two enrolments submitted concurrently for the same new
-        // user can never be read here in parallel; the second is only ever processed after
-        // the first one's increment has already landed, so it correctly sees itself as "not
-        // new".
         boolean countTowardTotal = Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)
                 || readCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType) == 0;
 
-        // USER_ENROLMENTS and COURSE_ENROLMENTS are incremented on every enrolment,
-        // free or paid - each keyed by the enrolment's actual courseType, so free and
-        // paid enrolments for the same user/course accumulate into separate rows.
-        cassandraOperation.incrementCounter(
-                Constants.KEYSPACE_SUNBIRD_COURSES,
-                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+        List<CounterIncrement> increments = new ArrayList<>();
+        increments.add(new CounterIncrement(
                 counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
-                Map.of(Constants.COUNTER_VALUE, 1L)
-        );
-
-        cassandraOperation.incrementCounter(
-                Constants.KEYSPACE_SUNBIRD_COURSES,
-                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                Map.of(Constants.COUNTER_VALUE, 1L)));
+        increments.add(new CounterIncrement(
                 counterKey(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType),
-                Map.of(Constants.COUNTER_VALUE, 1L)
-        );
-
+                Map.of(Constants.COUNTER_VALUE, 1L)));
         if (countTowardTotal) {
-            cassandraOperation.incrementCounter(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+            increments.add(new CounterIncrement(
                     counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
-                    Map.of(Constants.COUNTER_VALUE, 1L)
-            );
+                    Map.of(Constants.COUNTER_VALUE, 1L)));
+        }
 
-            // licenseConsumedCount on the partner record mirrors only the PAID
-            // TOTAL_ENROLMENTS row - the same row isOverallLimitExceeded validates
-            // against. Free-course enrolments increment their own (free) TOTAL_ENROLMENTS
-            // row above, but never consume licence capacity, so the partner sync is
-            // skipped entirely for those - nothing relevant changed for licenceConsumedCount.
+        cassandraOperation.incrementCounters(
+                Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER, increments);
+
+        // The batch above is now durably applied - safe to refresh caches and sync downstream.
+        invalidateCounterCache(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType);
+        invalidateCounterCache(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType);
+        if (countTowardTotal) {
+            invalidateCounterCache(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
             if (Constants.COURSE_TYPE_PAID.equalsIgnoreCase(courseType)) {
                 long licenseConsumedCount = readCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
                 transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
             }
         }
+    }
 
-        acknowledgment.acknowledge();
+    // Keeps the read-through cache in EnrollmentServiceImpl#getCounterValue from serving a
+    // stale count after this consumer increments the underlying Cassandra row.
+    private void invalidateCounterCache(String partnerId, String scopeType, String scopeId, String courseType) {
+        String cacheKey = Constants.ENROLMENT_COUNTER_CACHE_PREFIX + partnerId + "_" + scopeType + "_" + scopeId + "_" + courseType;
+        cacheService.deleteCache(cacheKey, cbServerProperties.getRedisIndex());
     }
 
     private Map<String, Object> counterKey(String partnerId, String scopeType, String scopeId, String courseType) {
@@ -210,30 +225,43 @@ public class KafkaConsumer {
                 String[] parts = ((String) userCourseEnrollMap.get(Constants.USER_ID)).split("@");
                 userCourseEnrollMap.put(Constants.USER_ID, parts[0]);
                 Map<String, Object> propertyMap = new HashMap<>();
-                propertyMap.put(Constants.USER_ID, userCourseEnrollMap.get(Constants.USER_ID));
+                String userId = ((String) userCourseEnrollMap.get(Constants.USER_ID));
+                propertyMap.put(Constants.USER_ID, userId);
                 propertyMap.put(Constants.COURSE_ID, courseId);
                 List<Map<String, Object>> listOfMasterData = cassandraOperation.getRecordsByPropertiesWithoutFiltering(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, propertyMap, null, 1);
                 if (!CollectionUtils.isEmpty(listOfMasterData)) {
-                    Map<String, Object> updatedMap = new HashMap<>();
-                    updatedMap.put(Constants.PROGRESS, 100);
-                    updatedMap.put(Constants.STATUS, 2);
-                    updatedMap.put(Constants.COMPLETED_ON, convertToTimestamp((String) userCourseEnrollMap.get("completedon")));
-                    updatedMap.put(Constants.COMPLETION_PERCENTAGE, 100);
-                    updatedMap.put(Constants.UPDATED_ON, instant);
-                    if(userCourseEnrollMap.get(Constants.ADDITIONAL_PROPERTIES)!=null) {
-                        updatedMap.put(Constants.ADDITIONAL_PROPERTIES, mapper.writeValueAsString(userCourseEnrollMap.get("additional_properties")));
+                    Map<String, Object> enrolledData = listOfMasterData.get(0);
+                    if (2 == (Integer) enrolledData.get(Constants.STATUS)) {
+                        log.info("User {} has already completed the course {}. No update needed.", userId, courseId);
+                        acknowledgment.acknowledge();
                     } else {
-                        updatedMap.put(Constants.ADDITIONAL_PROPERTIES, mapper.writeValueAsString(new HashMap<>()));
+                        Map<String, Object> updatedMap = new HashMap<>();
+                        updatedMap.put(Constants.PROGRESS, 100);
+                        updatedMap.put(Constants.STATUS, 2);
+                        updatedMap.put(Constants.COMPLETED_ON, convertToTimestamp((String) userCourseEnrollMap.get("completedon")));
+                        updatedMap.put(Constants.COMPLETION_PERCENTAGE, 100);
+                        updatedMap.put(Constants.UPDATED_ON, instant);
+                        if (userCourseEnrollMap.get(Constants.ADDITIONAL_PROPERTIES) != null) {
+                            updatedMap.put(Constants.ADDITIONAL_PROPERTIES, mapper.writeValueAsString(userCourseEnrollMap.get("additional_properties")));
+                        } else {
+                            updatedMap.put(Constants.ADDITIONAL_PROPERTIES, mapper.writeValueAsString(new HashMap<>()));
+                        }
+                        cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, updatedMap, propertyMap);
+                        cassandraOperation.incrementCounter(
+                                Constants.KEYSPACE_SUNBIRD_COURSES,
+                                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                                counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, Constants.COURSE_TYPE_PAID),
+                                Map.of(Constants.COMPLETED_COUNT, 1L)
+                        );
+                        if (StringUtils.isNotBlank(userId)) {
+                            String cacheKey = Constants.ENROLMENT_COUNTER_CACHE_PREFIX + partnerId + "_" + Constants.SCOPE_TYPE_USER_ENROLMENTS + "_" + userId + "_" + Constants.COURSE_TYPE_PAID + "_" + Constants.ACTIVE_COUNT;
+                            cacheService.deleteCache(cacheKey, cbServerProperties.getRedisIndex());
+                        }
+                        sendUpdatedRecordDataToKafkaToGenerateCertificate(userCourseEnrollMap, result);
+                        acknowledgment.acknowledge();
                     }
-                    cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS, updatedMap, propertyMap);
-                    String userId = userCourseEnrollMap.get(Constants.USER_ID).toString();
-                    if (StringUtils.isNotBlank(userId)) {
-                        cacheService.deleteCache(Constants.PARTNER + partnerId + Constants.USER_KEY + userCourseEnrollMap.get(Constants.USER_ID) + Constants.ACTIVE_COUNT, cbServerProperties.getRedisIndex());
-                    }
-                    sendUpdatedRecordDataToKafkaToGenerateCertificate(userCourseEnrollMap, result);
                 } else {
-                    log.error("Data not present in DB for userid {} and courseid {}", userCourseEnrollMap.get(Constants.USER_ID), courseId);
-                    //add not enrolled data to file
+                    log.info("User {} is not enrolled in course {}.", userId, courseId);
                 }
             } else {
                 log.error("Unable to get userid and courseid from kafka consumer");
@@ -241,8 +269,6 @@ public class KafkaConsumer {
 
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
-        } finally {
-            acknowledgment.acknowledge();
         }
     }
 
@@ -263,13 +289,12 @@ public class KafkaConsumer {
                     ((ObjectNode) transformData).set("additional_properties", additionalProps);
                 }
                 producer.push(cbServerProperties.getUserProgressUpdateTopic(), transformData);
+                acknowledgment.acknowledge();
             } else {
                 log.error("Partner Transform progress json is missing in content partner db, please update");
             }
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : " + data.value(), e);
-        } finally {
-            acknowledgment.acknowledge();
         }
     }
 

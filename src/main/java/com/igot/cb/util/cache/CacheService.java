@@ -46,10 +46,14 @@ public class CacheService {
   }
 
   public void putCache(String key, int dbIndex, Object object) {
+    putCache(key, dbIndex, object, cacheTtl);
+  }
+
+  public void putCache(String key, int dbIndex, Object object, long ttlSeconds) {
     try {
       RedisTemplate<String, String> template = getTemplate(dbIndex);
       String data = objectMapper.writeValueAsString(object);
-      template.opsForValue().set(key, data, cacheTtl, TimeUnit.SECONDS);
+      template.opsForValue().set(key, data, ttlSeconds, TimeUnit.SECONDS);
       log.debug("Data saved to database {} with key: {}", dbIndex, key);
     } catch (Exception e) {
       log.error("Error while putting data in Redis cache: {} ", e.getMessage());

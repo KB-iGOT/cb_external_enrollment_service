@@ -1657,6 +1657,28 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
+    @DisplayName("validateAndResolveKarma: provider licenseType user bypasses karma validation entirely")
+    void validateAndResolveKarma_LicenseTypeUser_SkipsKarmaValidation() {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
+
+        when(transformUtility.readUserKarmaPoints("user1", "token")).thenReturn(10L);
+
+        SBApiResponse response = new SBApiResponse();
+        KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
+                "token", new HashMap<String, String>(), response);
+
+        assertTrue(karmaResult.isAllowed());
+        assertEquals(0, karmaResult.getRedeemedKarmaPoints());
+        verify(transformUtility, Mockito.never()).readUserKarmaPoints(anyString(), anyString());
+    }
+
+    @Test
     @DisplayName("validateAndResolveKarma: non-exempt user with enough points passes")
     void validateAndResolveKarma_SufficientBalance_ReturnsFalse() {
         ObjectMapper realMapper = new ObjectMapper();

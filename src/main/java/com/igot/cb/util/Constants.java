@@ -118,6 +118,13 @@ public class Constants {
     public static final String SCOPE_TYPE_TOTAL_ENROLMENTS = "TOTAL_ENROLMENTS";
     public static final String SCOPE_TYPE_USER_ENROLMENTS = "USER_ENROLMENTS";
     public static final String SCOPE_TYPE_COURSE_ENROLMENTS = "COURSE_ENROLMENTS";
+    public static final String ENROLMENT_COUNTER_CACHE_PREFIX = "enrolCounter_";
+    // Dedup guard for enrolmentCounterUpdateConsumer - one key per reqId, set only after the
+    // Cassandra batch succeeds, so a Kafka redelivery of the same event is skipped instead of
+    // re-applied. 4 hours comfortably outlasts any realistic redelivery/retry window.
+    public static final String ENROLMENT_COUNTER_DEDUPE_PREFIX = "enrolCounterDedupe_";
+    public static final long ENROLMENT_COUNTER_DEDUPE_TTL_SECONDS = 4 * 60 * 60L;
+    public static final String REQ_ID = "reqId";
     public static final String COURSE_TYPE_PAID = "paid";
     public static final String COURSE_TYPE_FREE = "free";
     public static final String LICENSE_TYPE = "licenseType";
@@ -147,7 +154,7 @@ public class Constants {
     public static final String USER_KEY = "_user_";
     public static final String COUNT = "_count";
     public static final String UAER_DETAILS = "userDetails_";
-    public static final String ACTIVE_COUNT = "_active";
+    public static final String ACTIVE_COUNT = "active";
     public static final String CONTENT_PARTNER = "contentPartner";
     public static final String IS_ACTIVE = "isActive";
     public static final String COURSES = "courses";

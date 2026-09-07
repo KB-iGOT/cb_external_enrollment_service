@@ -586,17 +586,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         // publishCounterUpdateEvent), so Kafka guarantees the consumer processes them one at a
         // time, in order, closing the race without any new table or cache.
         publishCounterUpdateEvent(partnerId, userId, courseId, courseType, licenseType);
-
-        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
-        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.COUNT, 1, cbServerProperties.getRedisIndex());
-        cacheService.incrementIfExists(Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.ACTIVE_COUNT, 1, cbServerProperties.getRedisIndex());
-
-        // Invalidate (rather than patch) the readByUserIdAndPartnerId cache-aside hash for
-        // this user. That cache's read path treats "hash exists" as "hash is fully built" -
-        // an HSET adding just this one course would risk looking complete while still
-        // missing whatever hadn't been cached before. Deleting it instead means the next
-        // read simply rebuilds it from Cassandra, this new enrolment included. If it was
-        // never cached at all, the delete is a harmless no-op.
         cacheService.deleteCache(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex());
 
         log.info("User {} successfully enrolled to course {}", userId, courseId);
@@ -610,6 +599,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         counterEvent.put(Constants.COURSE_ID, courseId);
         counterEvent.put(Constants.COURSE_TYPE_COL, courseType);
         counterEvent.put(Constants.LICENSE_TYPE, licenseType);
+        counterEvent.put(Constants.REQ_ID, UUID.randomUUID().toString());
         // Keyed by partnerId+userId - Kafka's own partitioner then guarantees every counter
         // update event for this pair always lands on the same partition and is consumed
         // strictly in order, one at a time, regardless of how many concurrent HTTP requests
@@ -671,11 +661,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         String licenseType = getLicenseType(providerResponse);
 
         if (Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)) {
-            // No validation at all for free courses. Every enrolment (not just new users) counts
-            // against the cap here, since a course licence is consumed per-enrolment.
-            if (isCourseFree(contentResponse)) {
-                return false;
-            }
             long totalEnrolments = getCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, Constants.COURSE_TYPE_PAID);
             if (totalEnrolments >= overallLimit) {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
@@ -685,15 +670,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return false;
         }
 
-        // licenseType == user, or not yet configured on this partner - both are now treated as
-        // the user-licence model; the old lookup-table fallback is fully retired.
-        // Free courses are exempt from the licence cap here too, same as the course-licence
-        // model above - a partner offering a free course under the User-licence model should
-        // never have that enrolment blocked (or counted) by the overall licence limit, since it
-        // never consumes a licence unit.
-        if (isCourseFree(contentResponse)) {
-            return false;
-        }
         // An already-licensed user (has at least one prior enrolment with this partner) is exempt
         // from the overall-limit check entirely - a full license should never block a learner
         // who already holds a unit. Only a genuinely new user is checked here.
@@ -797,6 +773,12 @@ public class EnrollmentServiceImpl implements EnrollmentService {
      * row with 0, so an absent result must be treated as 0 rather than skipped or errored.
      */
     private long getCounterValue(String partnerId, String scopeType, String scopeId, String courseType) {
+        String cacheKey = counterCacheKey(partnerId, scopeType, scopeId, courseType);
+        String cached = cacheService.getCache(cacheKey, cbServerProperties.getRedisIndex());
+        if (StringUtils.isNotBlank(cached)) {
+            return Long.parseLong(cached);
+        }
+
         Map<String, Object> keyMap = new HashMap<>();
         keyMap.put(Constants.PARTNER_ID_REQ, partnerId);
         keyMap.put(Constants.SCOPE_TYPE, scopeType);
@@ -809,11 +791,49 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 List.of(Constants.COUNTER_VALUE),
                 1
         );
-        if (CollectionUtils.isEmpty(rows)) {
-            return 0L;
+        long counterValue = 0L;
+        if (!CollectionUtils.isEmpty(rows)) {
+            Object value = rows.get(0).get(Constants.COUNTER_VALUE);
+            counterValue = value == null ? 0L : ((Number) value).longValue();
         }
-        Object value = rows.get(0).get(Constants.COUNTER_VALUE);
-        return value == null ? 0L : ((Number) value).longValue();
+        cacheService.putCache(cacheKey, cbServerProperties.getRedisIndex(), counterValue);
+        return counterValue;
+    }
+
+    private long getConcurentCount(String partnerId, String scopeType, String scopeId, String courseType) {
+        String cacheKey = Constants.ENROLMENT_COUNTER_CACHE_PREFIX + partnerId + "_" + scopeType + "_" + scopeId + "_" + courseType + "_" + Constants.ACTIVE_COUNT;
+        String cached = cacheService.getCache(cacheKey, cbServerProperties.getRedisIndex());
+        if (StringUtils.isNotBlank(cached)) {
+            return Long.parseLong(cached);
+        }
+
+        Map<String, Object> keyMap = new HashMap<>();
+        keyMap.put(Constants.PARTNER_ID_REQ, partnerId);
+        keyMap.put(Constants.SCOPE_TYPE, scopeType);
+        keyMap.put(Constants.SCOPE_ID, scopeId);
+        keyMap.put(Constants.COURSE_TYPE_COL, courseType);
+        List<Map<String, Object>> rows = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                keyMap,
+                List.of(Constants.COUNTER_VALUE, Constants.COMPLETED_COUNT),
+                1
+        );
+        long activeCount = 0L;
+        if (!CollectionUtils.isEmpty(rows)) {
+            Object value = rows.get(0).get(Constants.COUNTER_VALUE);
+            Object completedCount = rows.get(0).get(Constants.COMPLETED_COUNT);
+            long totalValue = value == null ? 0L : ((Number) value).longValue();
+            long completed = completedCount == null ? 0L : ((Number) completedCount).longValue();
+            activeCount = Math.max(0L, totalValue - completed);
+        }
+        cacheService.putCache(cacheKey, cbServerProperties.getRedisIndex(), activeCount);
+        return activeCount;
+    }
+
+    // Must match KafkaConsumer#counterCacheKey - that's what gets invalidated on increment.
+    private String counterCacheKey(String partnerId, String scopeType, String scopeId, String courseType) {
+        return Constants.ENROLMENT_COUNTER_CACHE_PREFIX + partnerId + "_" + scopeType + "_" + scopeId + "_" + courseType;
     }
 
     private boolean isConcurrentLimitExceeded(
@@ -828,32 +848,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         int concurrentLimit = providerResponse.path(Constants.CONCURRENT_LIMIT).asInt(0);
         if (concurrentLimit <= 0) return false;
 
-        String activeKey =
-                Constants.PARTNER + partnerId + Constants.USER_KEY + userId + Constants.ACTIVE_COUNT;
-
-        int activeCount = getCountFromCacheOrDb(
-                activeKey,
-                () -> {
-                    List<Map<String, Object>> allUserCourses =
-                            cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                                    Map.of(Constants.USER_ID, userId),
-                                    null,
-                                    null
-                            );
-
-                    return (int) allUserCourses.stream()
-                            .filter(rec -> partnerId.equals(rec.get(Constants.PARTNER_ID_REQ)))
-                            .filter(rec -> rec.get(Constants.STATUS) != null
-                                    && ((int) rec.get(Constants.STATUS)) == 0)
-                            .count();
-                }
-        );
-
-        if (activeCount >= concurrentLimit) {
+        long concurentCount = getConcurentCount(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, Constants.COURSE_TYPE_PAID);
+        if (concurentCount >= concurrentLimit) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
-            response.getParams().setMsg(cbServerProperties.getPartnerConcurrentLimitMsg());
+            response.getParams().setMsg(cbServerProperties.getPartnerUserwiseLimitMsg());
             return true;
         }
         return false;
@@ -867,7 +865,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             Map<String, String> userAttributes,
             SBApiResponse response) {
 
-        if (!providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false)) {
+        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(providerResponse.path(Constants.LICENSE_TYPE).asText())) {
             return new KarmaValidationResult(true, 0);
         }
 
@@ -890,17 +888,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
         }
         return new KarmaValidationResult(true, requiredKarmaPoints);
-    }
-
-    private int getCountFromCacheOrDb(String key, Supplier<Integer> dbSupplier) {
-        String cached = cacheService.getCache(key,cbServerProperties.getRedisIndex());
-        if (StringUtils.isNotBlank(cached)) {
-            return Integer.parseInt(cached);
-        }
-
-        int count = dbSupplier.get();
-        cacheService.putCache(key, cbServerProperties.getRedisIndex(), count);
-        return count;
     }
 
     @Override
