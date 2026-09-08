@@ -62,26 +62,31 @@ public class KafkaConsumer {
     public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
         log.info("KafkaConsumer::enrolmentCounterUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
         Map<String, Object> event;
+        String reqId;
         try {
             event = mapper.readValue(data.value(), new TypeReference<Map<String, Object>>() {});
+            if (event == null) {
+                throw new IllegalArgumentException("Null event after parsing enrolment counter update event: " + data.value());
+            }
+            String partnerId = (String) event.get(Constants.PARTNER_ID_REQ);
+            String userId = (String) event.get(Constants.USER_ID);
+            String courseType = (String) event.get(Constants.COURSE_TYPE_COL);
+            reqId = (String) event.get(Constants.REQ_ID);
+            if (StringUtils.isBlank(partnerId) || StringUtils.isBlank(userId) || StringUtils.isBlank(courseType) || StringUtils.isBlank(reqId)) {
+                throw new IllegalArgumentException("Missing required fields in enrolment counter update event: " + data.value());
+            }
         } catch (Exception e) {
             log.error("Failed to parse enrolment counter update event. Message received: " + data.value(), e);
             sendToFailureTopic(data, e);
             acknowledgment.acknowledge();
             return;
         }
-
-        // Dedup guard: reqId is minted once per event at publish time, so a Kafka redelivery of
-        // this exact event still carries the same reqId. Skip re-applying it if that reqId's key
-        // is still present from a prior successful run.
-        String reqId = (String) event.get(Constants.REQ_ID);
-        String dedupeKey = StringUtils.isNotBlank(reqId) ? Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + reqId : null;
-        if (dedupeKey != null && StringUtils.isNotBlank(cacheService.getCache(dedupeKey, cbServerProperties.getRedisIndex()))) {
+        String dedupeKey = Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + reqId;
+        if (StringUtils.isNotBlank(cacheService.getCache(dedupeKey, cbServerProperties.getRedisIndex()))) {
             log.info("Enrolment counter update event {} already processed, skipping", reqId);
             acknowledgment.acknowledge();
             return;
         }
-
         try {
             updateEnrolmentCounters(event);
         } catch (Exception e) {
@@ -122,50 +127,20 @@ public class KafkaConsumer {
     public void updateEnrolmentCounters(Map<String, Object> event) {
         String partnerId = (String) event.get(Constants.PARTNER_ID_REQ);
         String userId = (String) event.get(Constants.USER_ID);
-        String courseId = (String) event.get(Constants.COURSE_ID);
         String courseType = (String) event.get(Constants.COURSE_TYPE_COL);
-        String licenseType = (String) event.get(Constants.LICENSE_TYPE);
 
         if (Constants.COURSE_TYPE_FREE.equalsIgnoreCase(courseType)) {
-            cassandraOperation.incrementCounters(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
-                    List.of(new CounterIncrement(
-                            counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
-                            Map.of(Constants.COUNTER_VALUE, 1L)))
-            );
             return;
         }
-
-        boolean countTowardTotal = Constants.LICENSE_TYPE_COURSE.equalsIgnoreCase(licenseType)
-                || readCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType) == 0;
-
-        List<CounterIncrement> increments = new ArrayList<>();
-        increments.add(new CounterIncrement(
-                counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
-                Map.of(Constants.COUNTER_VALUE, 1L)));
-        increments.add(new CounterIncrement(
-                counterKey(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType),
-                Map.of(Constants.COUNTER_VALUE, 1L)));
-        if (countTowardTotal) {
-            increments.add(new CounterIncrement(
-                    counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
-                    Map.of(Constants.COUNTER_VALUE, 1L)));
-        }
-
         cassandraOperation.incrementCounters(
-                Constants.KEYSPACE_SUNBIRD_COURSES, Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER, increments);
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                List.of(new CounterIncrement(
+                        counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
+                        Map.of(Constants.COUNTER_VALUE, 1L)))
+        );
 
-        // The batch above is now durably applied - safe to refresh caches and sync downstream.
         invalidateCounterCache(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType);
-        invalidateCounterCache(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType);
-        if (countTowardTotal) {
-            invalidateCounterCache(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
-            if (Constants.COURSE_TYPE_PAID.equalsIgnoreCase(courseType)) {
-                long licenseConsumedCount = readCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
-                transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
-            }
-        }
     }
 
     // Keeps the read-through cache in EnrollmentServiceImpl#getCounterValue from serving a
@@ -182,26 +157,6 @@ public class KafkaConsumer {
         key.put(Constants.SCOPE_ID, scopeId);
         key.put(Constants.COURSE_TYPE_COL, courseType);
         return key;
-    }
-
-    /**
-     * Point-read of a counter row's "value" column right after incrementing it, so the
-     * partner-record sync always reflects the authoritative post-increment total rather than
-     * a locally-tracked running count that could drift under concurrent consumer instances.
-     */
-    private long readCounterValue(String partnerId, String scopeType, String scopeId, String courseType) {
-        List<Map<String, Object>> rows = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                Constants.KEYSPACE_SUNBIRD_COURSES,
-                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
-                counterKey(partnerId, scopeType, scopeId, courseType),
-                List.of(Constants.COUNTER_VALUE),
-                1
-        );
-        if (CollectionUtils.isEmpty(rows)) {
-            return 0L;
-        }
-        Object value = rows.get(0).get(Constants.COUNTER_VALUE);
-        return value == null ? 0L : ((Number) value).longValue();
     }
 
     @KafkaListener(topics = "${spring.kafka.cornell.topic.name}", groupId = "${spring.kafka.consumer.group.id}")

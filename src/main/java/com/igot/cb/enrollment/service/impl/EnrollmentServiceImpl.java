@@ -19,6 +19,7 @@ import com.igot.cb.util.*;
 import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.*;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
+import com.igot.cb.transactional.cassandrautils.CounterIncrement;
 
 
 import java.time.*;
@@ -572,17 +573,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
         String licenseType = getLicenseType(providerResponse);
         String courseType = getCourseType(contentResponse);
-        // Whether this enrolment counts toward the partner's overall licence consumption
-        // (TOTAL_ENROLMENTS) depends on licenseType - course licences always count, user
-        // licences only count for a genuinely new user - but that decision is deliberately not
-        // made here anymore. A live "is this user new" read in this request thread can race
-        // with another concurrent enrolment request for the same user and double-count a
-        // licence unit, since two requests could both read "new" before either has incremented
-        // anything. That decision now happens exactly once, safely, in the Kafka consumer that
-        // processes this event (see KafkaConsumer.enrolmentCounterUpdateConsumer) - every event
-        // for a given (partnerId, userId) is published keyed on that pair (see
-        // publishCounterUpdateEvent), so Kafka guarantees the consumer processes them one at a
-        // time, in order, closing the race without any new table or cache.
+        updateEnrolmentCountersImmediately(partnerId, userId, courseId, courseType, licenseType);
         publishCounterUpdateEvent(partnerId, userId, courseId, courseType, licenseType);
         cacheService.deleteCache(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex());
 
@@ -604,6 +595,54 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         // produced them. That ordering is what lets the consumer safely decide "is this a new
         // user" for itself instead of trusting a value read earlier in a racy request thread.
         producer.push(cbServerProperties.getEnrolmentCounterUpdateTopic(), counterEvent, partnerId + "_" + userId);
+    }
+
+    private void updateEnrolmentCountersImmediately(String partnerId, String userId, String courseId, String courseType, String licenseType) {
+        List<CounterIncrement> increments = new ArrayList<>();
+        boolean countTowardTotal;
+        boolean incrementCourseAndUser;
+
+        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType)) {
+            countTowardTotal = getCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType) == 0;
+            incrementCourseAndUser = true;
+        } else if (Constants.COURSE_TYPE_FREE.equalsIgnoreCase(courseType)) {
+            countTowardTotal = true;
+            incrementCourseAndUser = false;
+        } else {
+            countTowardTotal = true;
+            incrementCourseAndUser = true;
+        }
+
+        if (incrementCourseAndUser) {
+            increments.add(new CounterIncrement(
+                    counterKey(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)));
+        }
+
+        if (countTowardTotal) {
+            increments.add(new CounterIncrement(
+                    counterKey(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)));
+        }
+
+        cassandraOperation.incrementCounters(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                increments);
+
+        if (countTowardTotal) {
+            long licenseConsumedCount = getCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
+            transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
+        }
+    }
+
+    private Map<String, Object> counterKey(String partnerId, String scopeType, String scopeId, String courseType) {
+        Map<String, Object> key = new HashMap<>();
+        key.put(Constants.PARTNER_ID_REQ, partnerId);
+        key.put(Constants.SCOPE_TYPE, scopeType);
+        key.put(Constants.SCOPE_ID, scopeId);
+        key.put(Constants.COURSE_TYPE_COL, courseType);
+        return key;
     }
 
     private KarmaValidationResult validatePartnerEnrollmentLimits(
@@ -771,12 +810,27 @@ public class EnrollmentServiceImpl implements EnrollmentService {
      * row with 0, so an absent result must be treated as 0 rather than skipped or errored.
      */
     private long getCounterValue(String partnerId, String scopeType, String scopeId, String courseType) {
+        if (isDirectCounterScope(scopeType)) {
+            return readCounterFromCassandra(partnerId, scopeType, scopeId, courseType);
+        }
+
         String cacheKey = counterCacheKey(partnerId, scopeType, scopeId, courseType);
         String cached = cacheService.getCache(cacheKey, cbServerProperties.getRedisIndex());
         if (StringUtils.isNotBlank(cached)) {
             return Long.parseLong(cached);
         }
 
+        long counterValue = readCounterFromCassandra(partnerId, scopeType, scopeId, courseType);
+        cacheService.putCache(cacheKey, cbServerProperties.getRedisIndex(), counterValue);
+        return counterValue;
+    }
+
+    private boolean isDirectCounterScope(String scopeType) {
+        return Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(scopeType)
+                || Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(scopeType);
+    }
+
+    private long readCounterFromCassandra(String partnerId, String scopeType, String scopeId, String courseType) {
         Map<String, Object> keyMap = new HashMap<>();
         keyMap.put(Constants.PARTNER_ID_REQ, partnerId);
         keyMap.put(Constants.SCOPE_TYPE, scopeType);
@@ -789,13 +843,11 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 List.of(Constants.COUNTER_VALUE),
                 1
         );
-        long counterValue = 0L;
-        if (!CollectionUtils.isEmpty(rows)) {
-            Object value = rows.get(0).get(Constants.COUNTER_VALUE);
-            counterValue = value == null ? 0L : ((Number) value).longValue();
+        if (CollectionUtils.isEmpty(rows)) {
+            return 0L;
         }
-        cacheService.putCache(cacheKey, cbServerProperties.getRedisIndex(), counterValue);
-        return counterValue;
+        Object value = rows.get(0).get(Constants.COUNTER_VALUE);
+        return value == null ? 0L : ((Number) value).longValue();
     }
 
     private long getConcurentCount(String partnerId, String scopeType, String scopeId, String courseType) {

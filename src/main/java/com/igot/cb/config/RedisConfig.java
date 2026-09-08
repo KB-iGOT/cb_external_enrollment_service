@@ -1,19 +1,10 @@
 package com.igot.cb.config;
 
-import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.serializer.StringRedisSerializer;
-
-import java.time.Duration;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPoolConfig;
 
 @Configuration
 public class RedisConfig {
@@ -27,54 +18,40 @@ public class RedisConfig {
   @Value("${spring.redis.default.index}")
   private int defaultIndex;
 
-  private final long redisTimeout = 60000;
+  @Value("${spring.redis.pool.maxTotal:3000}")
+  private int redisMaxTotal;
 
+  @Value("${spring.redis.pool.maxIdle:128}")
+  private int redisMaxIdle;
+
+  @Value("${spring.redis.pool.minIdle:100}")
+  private int redisMinIdle;
+
+  @Value("${spring.redis.pool.maxWaitMillis:5000}")
+  private long redisMaxWaitMillis;
+
+  private final int redisTimeoutMillis = 60000;
+
+  /**
+   * Single shared JedisPool for the service - CacheService borrows a connection per call and
+   * selects the target logical database on it (see CacheService#withJedis), rather than one
+   * pool/connection-factory per database as the old RedisTemplate-based config did.
+   */
   @Bean
-  @Primary
-  public RedisConnectionFactory redisConnectionFactory() {
-    return createConnectionFactory(defaultIndex);
+  public JedisPool jedisPool() {
+    return new JedisPool(buildPoolConfig(), redisHost, redisPort, redisTimeoutMillis);
   }
 
-  @Bean
-  @Primary
-  public RedisTemplate<String, String> redisTemplate(RedisConnectionFactory redisConnectionFactory) {
-    return createRedisTemplate(redisConnectionFactory);
-  }
-
-  public RedisConnectionFactory createConnectionFactory(int database) {
-    RedisStandaloneConfiguration configuration = new RedisStandaloneConfiguration();
-    configuration.setHostName(redisHost);
-    configuration.setPort(redisPort);
-    configuration.setDatabase(database);
-
-    LettuceClientConfiguration clientConfig = LettucePoolingClientConfiguration.builder()
-            .commandTimeout(Duration.ofMillis(redisTimeout))
-            .poolConfig(buildPoolConfig())
-            .build();
-
-    LettuceConnectionFactory factory = new LettuceConnectionFactory(configuration, clientConfig);
-    factory.setShareNativeConnection(false); // CRITICAL: Disable shared connections
-    factory.afterPropertiesSet();
-    return factory;
-  }
-
-  public RedisTemplate<String, String> createRedisTemplate(RedisConnectionFactory factory) {
-    RedisTemplate<String, String> template = new RedisTemplate<>();
-    template.setConnectionFactory(factory);
-    template.setKeySerializer(new StringRedisSerializer());
-    template.setValueSerializer(new StringRedisSerializer());
-    template.setHashKeySerializer(new StringRedisSerializer());
-    template.setHashValueSerializer(new StringRedisSerializer());
-    template.afterPropertiesSet();
-    return template;
-  }
-
-  private GenericObjectPoolConfig<?> buildPoolConfig() {
-    GenericObjectPoolConfig<?> poolConfig = new GenericObjectPoolConfig<>();
-    poolConfig.setMaxTotal(3000);
-    poolConfig.setMaxIdle(128);
-    poolConfig.setMinIdle(100);
-    poolConfig.setMaxWait(Duration.ofMillis(5000));
+  private JedisPoolConfig buildPoolConfig() {
+    JedisPoolConfig poolConfig = new JedisPoolConfig();
+    poolConfig.setMaxTotal(redisMaxTotal);
+    poolConfig.setMaxIdle(redisMaxIdle);
+    poolConfig.setMinIdle(redisMinIdle);
+    poolConfig.setMaxWaitMillis(redisMaxWaitMillis);
     return poolConfig;
+  }
+
+  public int getDefaultIndex() {
+    return defaultIndex;
   }
 }
