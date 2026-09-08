@@ -1,0 +1,123 @@
+package com.igot.cb.util;
+
+
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+@Component
+@Getter
+@Setter
+public class CbServerProperties {
+    @Value("${redis.cache.enabled}")
+    private boolean redisCacheEnable;
+
+    @Value("${svgTemplate}")
+    private String svgTemplate;
+
+    @Value("${cios.read.api.base.url}")
+    private String baseUrl;
+
+    @Value("${cios.read.api.fixed.url}")
+    private String ciosReadApiUrl;
+
+    @Value("${kong.api.auth.token}")
+    private String token;
+
+    @Value("${spring.kafka.certificate.topic.name}")
+    private String certificateTopic;
+
+    @Value("${certificate.char.length}")
+    private int certificateCharLength;
+
+    @Value("${content.partner.read.api.url}")
+    private String contentPartnerReadApiUrl;
+
+
+    @Value("${content.partner.readby.partnercode.api.url}")
+    private String contentPartnerReadbyPartnerCodeApiUrl;
+
+    @Value("${content.partner.update.api.url}")
+    private String contentPartnerUpdateApiUrl;
+
+    @Value("${spring.kafka.cornell.topic.name}")
+    private String userProgressUpdateTopic;
+
+    @Value("${user.progress.send.from.partner.topic.name}")
+    private String userProgressSendFromPartner;
+
+    @Value("${spring.kafka.enrolment.counter.update.topic.name}")
+    private String enrolmentCounterUpdateTopic;
+
+    @Value("${spring.kafka.enrolment.counter.update.failure.topic.name}")
+    private String enrolmentCounterUpdateFailureTopic;
+
+    @Value("${maximum.allowed.limit}")
+    private int maximumAllowedLimit;
+
+    @Value("${cios.content.read.api.fixed.url}")
+    private String ciosContentReadApiUrl;
+
+    @Value("${lms.enrolment.summary.base.url}")
+    private String lmsEnrolmentSummaryBaseUrl;
+
+    @Value("${lms.enrolment.summary.fixed.url}")
+    private String lmsEnrolmentSummaryFixedUrl;
+
+    @Value("${enrollment.karma.points.exempt.groups}")
+    private List<String> karmaExemptGroups;
+
+    @Value("${enrollment.error.partner.overall.limit}")
+    private String partnerOverallLimitMsg;
+
+    @Value("${enrollment.error.partner.userwise.limit}")
+    private String partnerUserwiseLimitMsg;
+
+    @Value("${enrollment.error.partner.concurrent.limit}")
+    private String partnerConcurrentLimitMsg;
+
+    @Value("${enrollment.error.partner.course.limit}")
+    private String partnerCourseLimitMsg;
+
+    @Value("${enrollment.error.karma.insufficient}")
+    private String karmaInsufficientMsg;
+
+    @Value("${access.settings.error.message}")
+    private String accessSettingsErrorMessage;
+
+    @Value("${coursera.partner.code}")
+    private String courseraPartnerCode;
+
+    @Value("${service.registry.api.base.url}")
+    private String serviceRegistryApiBaseUrl;
+
+    @Value("${service.registry.api.fixed.url}")
+    private String  serviceRegistryApiFixedUrl;
+
+    @Value("${coursera.service.code}")
+    private String  courseraServiceCode;
+
+    @Value("${coursera.org.id}")
+    private String  courseraOrgId;
+
+    @Value("${spring.redis.index}")
+    private int redisIndex;
+
+    @Value("${spring.redis.default.index}")
+    private int defaultIndex;
+
+    @Value("${cios.search.content.api.endpoint}")
+    private String ciosSearchContentApiEndPoint;
+
+    @Value("${karma.points.deduction.enabled}")
+    private boolean karmaPointsDeductionEnabled;
+
+    @Value("${enrollment.message.with.karma}")
+    private String enrolledWithKarmaMsg;
+
+    @Value("${enrollment.message.without.karma}")
+    private String enrolledWithoutKarmaMsg;
+}
