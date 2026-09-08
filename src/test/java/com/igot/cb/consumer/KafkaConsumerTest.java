@@ -12,6 +12,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -100,7 +101,7 @@ class KafkaConsumerTest {
         payloadMap.put("partnerId", "partner123");
         payloadMap.put("completedon", "01/01/2023");
         String payload = mapper.writeValueAsString(payloadMap);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
 
         JsonNode contentNode = mapper.createObjectNode();
         ((ObjectNode) contentNode).put("contentId", "course123");
@@ -155,7 +156,7 @@ class KafkaConsumerTest {
                 any())).thenReturn(userList);
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment);
 
         // Assert
         verify(producer).push(eq("certTopic"), any(JsonNode.class));
@@ -168,13 +169,13 @@ class KafkaConsumerTest {
     }
 
     @Test
-    void enrollUpdateConsumer_NoUserIdOrCourseId() throws Exception {
+    void enrollUpdateConsumer_NoUserIdOrCourseId() {
         // Arrange
         String payload = "{\"someField\":\"value\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment);
 
         // Assert - should not throw exception and log error
         verify(cassandraOperation, never()).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
@@ -183,10 +184,10 @@ class KafkaConsumerTest {
     }
 
     @Test
-    void enrollUpdateConsumer_NoExistingRecord() throws Exception {
+    void enrollUpdateConsumer_NoExistingRecord() {
         // Arrange
         String payload = "{\"userId\":\"user123@domain.com\",\"courseid\":\"course123\",\"partnerId\":\"partner123\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
         JsonNode contentNode = mapper.createObjectNode();
         ((ObjectNode) contentNode).put("contentId", "course123");
@@ -204,7 +205,7 @@ class KafkaConsumerTest {
                 eq(1))).thenReturn(Collections.emptyList());
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment);
 
         // Assert
         verify(cassandraOperation, never()).updateRecord(any(), any(), any(), any());
@@ -213,16 +214,16 @@ class KafkaConsumerTest {
     }
 
     @Test
-    void enrollUpdateConsumer_Exception() throws Exception {
+    void enrollUpdateConsumer_Exception() {
         // Arrange
         String payload = "{\"userId\":\"user123@domain.com\",\"courseid\":\"course123\",\"partnerId\":\"partner123\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
         lenient().when(transformUtility.callCiosReadAPi(anyString(), anyString()))
                 .thenThrow(new RuntimeException("Test exception"));
 
         // Act
-        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment);
 
         // Assert - should not throw exception and log error
         verify(cassandraOperation, never()).updateRecord(any(), any(), any(), any());
@@ -231,10 +232,10 @@ class KafkaConsumerTest {
     }
 
     @Test
-    void receiveProgressUpdateFromPartner_Success() throws Exception {
+    void receiveProgressUpdateFromPartner_Success() {
         // Arrange
         String payload = "{\"partnerCode\":\"partner123\",\"completion_date\":\"01/01/2023\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
         JsonNode partnerResponse = mapper.createObjectNode();
         ((ObjectNode) partnerResponse).put("id", "partner123");
@@ -253,17 +254,17 @@ class KafkaConsumerTest {
         doNothing().when(producer).push(eq(updateTopic), any(JsonNode.class));
 
         // Act
-        kafkaConsumer.receiveProgressUpdateFromPartner(record, acknowledgment);
+        kafkaConsumer.receiveProgressUpdateFromPartner(consumerRecord, acknowledgment);
 
         // Assert
         verify(producer).push(eq(updateTopic), any(JsonNode.class));
     }
 
     @Test
-    void receiveProgressUpdateFromPartner_MissingTransformJson() throws Exception {
+    void receiveProgressUpdateFromPartner_MissingTransformJson() {
         // Arrange
         String payload = "{\"partnerCode\":\"partner123\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
         JsonNode partnerResponse = mapper.createObjectNode();
         ((ObjectNode) partnerResponse).put("id", "partner123");
@@ -272,23 +273,23 @@ class KafkaConsumerTest {
         when(transformUtility.callContentPartnerReadByPartnerCodeApi(anyString())).thenReturn(partnerResponse);
 
         // Act
-        kafkaConsumer.receiveProgressUpdateFromPartner(record, acknowledgment);
+        kafkaConsumer.receiveProgressUpdateFromPartner(consumerRecord, acknowledgment);
 
         // Assert
         verify(producer, never()).push(any(), any(JsonNode.class));
     }
 
     @Test
-    void receiveProgressUpdateFromPartner_Exception() throws Exception {
+    void receiveProgressUpdateFromPartner_Exception() {
         // Arrange
         String payload = "{\"partnerCode\":\"partner123\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
         when(transformUtility.callContentPartnerReadByPartnerCodeApi(anyString()))
                 .thenThrow(new RuntimeException("Test exception"));
 
         // Act
-        kafkaConsumer.receiveProgressUpdateFromPartner(record, acknowledgment);
+        kafkaConsumer.receiveProgressUpdateFromPartner(consumerRecord, acknowledgment);
 
         // Assert
         verify(producer, never()).push(any(), any(JsonNode.class));
@@ -337,7 +338,7 @@ class KafkaConsumerTest {
                 any())).thenReturn(userList);
 
         when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
-        // when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
+
 
         // Explicitly mock the producer.push method with the exact topic name
         doNothing().when(producer).push(eq("certTopic"), any(JsonNode.class));
@@ -351,7 +352,7 @@ class KafkaConsumerTest {
     }
 
     @Test
-    void testSendUpdatedRecordDataToKafkaToGenerateCertificate_NoCertificateTemplate() throws Exception {
+    void testSendUpdatedRecordDataToKafkaToGenerateCertificate_NoCertificateTemplate() {
         // Arrange
         Map<String, Object> userCourseEnrollMap = new HashMap<>();
         userCourseEnrollMap.put(Constants.USER_ID, "user123");
@@ -544,11 +545,11 @@ class KafkaConsumerTest {
         // Given: an invalid JSON message that will cause ObjectMapper to throw
         // JsonProcessingException
         String invalidJson = "{invalid json}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", invalidJson);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("test-topic", 0, 0L, "key", invalidJson);
 
         // When & Then: exception should be caught and logged; no exception should be
         // thrown from the method
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> kafkaConsumer.enrollUpdateConsumer(record, acknowledgment));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment));
     }
 
     @Test
@@ -791,185 +792,77 @@ class KafkaConsumerTest {
     }
 
     @Test
-    void enrolmentCounterUpdateConsumer_newUserPaidCourse_incrementsAllThreeCounters() throws Exception {
+    void enrolmentCounterUpdateConsumer_paidCourse_incrementsUserEnrolmentsOnly() throws Exception {
+        // totalEnrolments and courseEnrolments are updated immediately/synchronously by
+        // EnrollmentServiceImpl#updateEnrolmentCountersImmediately now - this consumer's only
+        // remaining job is userEnrolments, which still needs Kafka's ordering guarantee.
         Map<String, Object> event = new HashMap<>();
         event.put(Constants.PARTNER_ID_REQ, "p1");
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
         event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        // No stub for the USER_ENROLMENTS-scoped read below -> defaults to an empty list ->
-        // readCounterValue treats that as 0 -> the consumer sees this as a new user.
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+        event.put(Constants.REQ_ID, "req-1");
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
         List<CounterIncrement> increments = captureIncrements();
-        assertEquals(3, increments.size());
+        assertEquals(1, increments.size());
         assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_USER_ENROLMENTS, "u1", Constants.COURSE_TYPE_PAID, 1L));
-        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, "c1", Constants.COURSE_TYPE_PAID, 1L));
-        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, "p1", Constants.COURSE_TYPE_PAID, 1L));
     }
 
     @Test
-    void enrolmentCounterUpdateConsumer_existingUser_skipsTotalEnrolments() throws Exception {
-        Map<String, Object> event = new HashMap<>();
-        event.put(Constants.PARTNER_ID_REQ, "p1");
-        event.put(Constants.USER_ID, "u1");
-        event.put(Constants.COURSE_ID, "c1");
-        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
-        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
-
-        // A non-zero USER_ENROLMENTS row means this user already has a prior enrolment with
-        // this partner - i.e. "existing", not new.
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
-                any(), any()))
-                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L)));
-
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
-
-        List<CounterIncrement> increments = captureIncrements();
-        assertEquals(2, increments.size());
-        assertTrue(increments.stream().noneMatch(
-                i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
-    }
-
-    @Test
-    void enrolmentCounterUpdateConsumer_freeCourse_incrementsOnlyTotalEnrolments() throws Exception {
+    void enrolmentCounterUpdateConsumer_freeCourse_incrementsNothing() throws Exception {
+        // A free enrolment never touched userEnrolments even before this change, and
+        // totalEnrolments/courseEnrolments now move synchronously outside Kafka entirely - so
+        // this consumer has nothing left to do for a free course.
         Map<String, Object> event = new HashMap<>();
         event.put(Constants.PARTNER_ID_REQ, "p1");
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
         event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
-        // A free enrolment takes the early-return branch, so the only counter maintained is the
-        // partner-level TOTAL_ENROLMENTS row tagged course_type=free. USER_ENROLMENTS and
-        // COURSE_ENROLMENTS exist purely to serve the per-user and per-course cap checks, and
-        // those caps are never evaluated for a free course, so no row is written for either.
-        List<CounterIncrement> increments = captureIncrements();
-        assertEquals(1, increments.size());
-        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, "p1", Constants.COURSE_TYPE_FREE, 1L));
+        verify(cassandraOperation, never()).incrementCounters(any(), any(), any());
     }
 
     @Test
-    void enrolmentCounterUpdateConsumer_freeCourse_newOrExistingUserMakesNoDifference() throws Exception {
-        Map<String, Object> event = new HashMap<>();
-        event.put(Constants.PARTNER_ID_REQ, "p1");
-        event.put(Constants.USER_ID, "u1");
-        event.put(Constants.COURSE_ID, "c1");
-        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
-        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
-
-        // Deliberately no USER_ENROLMENTS stub here. The free-course branch returns before the
-        // "is this user new" read is ever reached, so stubbing it would be unused - and under
-        // MockitoExtension's strict stubs that alone would fail the test.
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
-
-        // The new-vs-existing-user distinction only gates TOTAL_ENROLMENTS for *paid* licence
-        // consumption. For a free course the partner-level TOTAL_ENROLMENTS (free) row is
-        // incremented unconditionally, and the counter table is never read at all - which is
-        // what makes the user's history irrelevant here.
-        List<CounterIncrement> increments = captureIncrements();
-        assertEquals(1, increments.size());
-        assertTrue(containsIncrement(increments, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, "p1", Constants.COURSE_TYPE_FREE, 1L));
-        verify(cassandraOperation, org.mockito.Mockito.never()).getRecordsByPropertiesWithoutFiltering(
-                any(), any(), any(), any(), any());
-    }
-
-    @Test
-    void enrolmentCounterUpdateConsumer_newUserPaidCourse_syncsLicenseConsumedCountToPartner() throws Exception {
+    void enrolmentCounterUpdateConsumer_paidCourse_invalidatesUserEnrolmentsCache() throws Exception {
         Map<String, Object> event = new HashMap<>();
         event.put(Constants.PARTNER_ID_REQ, "p1");
         event.put(Constants.USER_ID, "u1");
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
         event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+        event.put(Constants.REQ_ID, "req-1");
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        // Pre-increment "is this a new user" check - no prior USER_ENROLMENTS row, so this
-        // reads as a new user.
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
-                any(), any()))
-                .thenReturn(Collections.emptyList());
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
-        // Post-increment read-back of the paid TOTAL_ENROLMENTS row - this authoritative
-        // value (not a locally-tracked count) is what gets synced to the partner record.
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))
-                        && Constants.COURSE_TYPE_PAID.equals(m.get(Constants.COURSE_TYPE_COL))),
-                any(), any()))
-                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 7L)));
-
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
-
-        verify(transformUtility).updateContentPartnerLicenseConsumedCount("p1", 7L);
-    }
-
-    @Test
-    void enrolmentCounterUpdateConsumer_newUserFreeCourse_doesNotSyncLicenseConsumedCount() throws Exception {
-        Map<String, Object> event = new HashMap<>();
-        event.put(Constants.PARTNER_ID_REQ, "p1");
-        event.put(Constants.USER_ID, "u1");
-        event.put(Constants.COURSE_ID, "c1");
-        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_FREE);
-        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
-
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
-
-        // Free enrolments never consume licence capacity, so the partner sync must be
-        // skipped entirely even though this is a new user (TOTAL_ENROLMENTS still increments
-        // on the free row above, just without triggering the partner-record sync).
-        verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(anyString(), anyLong());
-    }
-
-    @Test
-    void enrolmentCounterUpdateConsumer_existingUserPaidCourse_doesNotSyncLicenseConsumedCount() throws Exception {
-        Map<String, Object> event = new HashMap<>();
-        event.put(Constants.PARTNER_ID_REQ, "p1");
-        event.put(Constants.USER_ID, "u1");
-        event.put(Constants.COURSE_ID, "c1");
-        event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
-        event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
-
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                argThatMap(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(m.get(Constants.SCOPE_TYPE))),
-                any(), any()))
-                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L)));
-
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
-
-        verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(anyString(), anyLong());
+        verify(cacheService).deleteCache(
+                eq(Constants.ENROLMENT_COUNTER_CACHE_PREFIX + "p1_" + Constants.SCOPE_TYPE_USER_ENROLMENTS + "_u1_" + Constants.COURSE_TYPE_PAID),
+                anyInt());
     }
 
     @Test
     void enrolmentCounterUpdateConsumer_malformedJson_doesNotThrow() {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", "not-valid-json");
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", "not-valid-json");
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
-        verify(cassandraOperation, org.mockito.Mockito.never()).incrementCounters(any(), any(), any());
+        verify(cassandraOperation, never()).incrementCounters(any(), any(), any());
     }
 
     @Test
     void enrolmentCounterUpdateConsumer_malformedJson_stillAcknowledges() {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", "not-valid-json");
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", "not-valid-json");
         when(cbServerProperties.getEnrolmentCounterUpdateFailureTopic()).thenReturn("failureTopic");
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
         // A payload that can never be parsed would retry forever, so it is acknowledged and dropped -
         // but preserved on the failure topic first rather than silently discarded.
@@ -985,12 +878,13 @@ class KafkaConsumerTest {
         event.put(Constants.COURSE_ID, "c1");
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
         event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+        event.put(Constants.REQ_ID, "req-1");
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        org.mockito.Mockito.doThrow(new RuntimeException("cassandra write failed"))
+        doThrow(new RuntimeException("cassandra write failed"))
                 .when(cassandraOperation).incrementCounters(any(), any(), any());
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
         // The offset must stay uncommitted so Kafka redelivers the record for retry.
         verify(acknowledgment, never()).acknowledge();
@@ -1005,12 +899,12 @@ class KafkaConsumerTest {
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
         event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         event.put(Constants.REQ_ID, "req-1");
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
         when(cacheService.getCache(eq(Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + "req-1"), anyInt()))
                 .thenReturn("true");
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
         verify(cassandraOperation, never()).incrementCounters(any(), any(), any());
         verify(acknowledgment).acknowledge();
@@ -1025,9 +919,9 @@ class KafkaConsumerTest {
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
         event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         event.put(Constants.REQ_ID, "req-2");
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
         verify(cacheService).putCache(
                 eq(Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + "req-2"),
@@ -1046,12 +940,12 @@ class KafkaConsumerTest {
         event.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
         event.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
         event.put(Constants.REQ_ID, "req-3");
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", mapper.writeValueAsString(event));
 
-        org.mockito.Mockito.doThrow(new RuntimeException("cassandra write failed"))
+        doThrow(new RuntimeException("cassandra write failed"))
                 .when(cassandraOperation).incrementCounters(any(), any(), any());
 
-        kafkaConsumer.enrolmentCounterUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrolmentCounterUpdateConsumer(consumerRecord, acknowledgment);
 
         verify(cacheService, never()).putCache(any(), anyInt(), any(), anyLong());
         verify(acknowledgment, never()).acknowledge();
@@ -1065,7 +959,7 @@ class KafkaConsumerTest {
         payloadMap.put("partnerId", "p1");
         payloadMap.put("completedon", "2023-01-01T00:00:00Z");
         String payload = mapper.writeValueAsString(payloadMap);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
 
         ObjectNode contentNode = mapper.createObjectNode();
         contentNode.put("contentId", "course1");
@@ -1094,7 +988,7 @@ class KafkaConsumerTest {
                 .thenReturn(List.of(Map.of("firstname", "John")));
         when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
 
-        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment);
 
         verify(cassandraOperation).incrementCounter(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES),
@@ -1114,7 +1008,7 @@ class KafkaConsumerTest {
         payloadMap.put("partnerId", "p1");
         payloadMap.put("completedon", "2023-01-01T00:00:00Z");
         String payload = mapper.writeValueAsString(payloadMap);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", payload);
 
         ObjectNode contentNode = mapper.createObjectNode();
         contentNode.put("contentId", "course1");
@@ -1133,7 +1027,7 @@ class KafkaConsumerTest {
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS),
                 any(), isNull(), eq(1))).thenReturn(existingRecords);
 
-        kafkaConsumer.enrollUpdateConsumer(record, acknowledgment);
+        kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment);
 
         verify(cassandraOperation, never()).incrementCounter(any(), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), any(), any());
     }

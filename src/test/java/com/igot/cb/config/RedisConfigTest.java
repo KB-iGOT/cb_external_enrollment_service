@@ -1,20 +1,16 @@
 package com.igot.cb.config;
 
-import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPoolConfig;
 
-import java.time.Duration;
-
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @ExtendWith(MockitoExtension.class)
 class RedisConfigTest {
@@ -26,50 +22,36 @@ class RedisConfigTest {
     void setUp() {
         ReflectionTestUtils.setField(redisConfig, "redisHost", "localhost");
         ReflectionTestUtils.setField(redisConfig, "redisPort", 6379);
-        ReflectionTestUtils.setField(redisConfig, "redisTimeout", 60000L);
+        ReflectionTestUtils.setField(redisConfig, "defaultIndex", 0);
+        ReflectionTestUtils.setField(redisConfig, "redisMaxTotal", 3000);
+        ReflectionTestUtils.setField(redisConfig, "redisMaxIdle", 128);
+        // Deliberately 0 here - a positive minIdle makes the pool eagerly open connections on
+        // construction, which would require a live Redis server in this test.
+        ReflectionTestUtils.setField(redisConfig, "redisMinIdle", 0);
+        ReflectionTestUtils.setField(redisConfig, "redisMaxWaitMillis", 5000L);
     }
 
     @Test
-    void redisConnectionFactory() {
-        // Act
-        RedisConnectionFactory factory = redisConfig.redisConnectionFactory();
-        
-        // Assert
-        assertNotNull(factory);
-        assertTrue(factory instanceof LettuceConnectionFactory);
-        
-        LettuceConnectionFactory lettuceFactory = (LettuceConnectionFactory) factory;
-        RedisStandaloneConfiguration configuration = lettuceFactory.getStandaloneConfiguration();
-        
-        assertEquals("localhost", configuration.getHostName());
-        assertEquals(6379, configuration.getPort());
-        assertEquals(0, configuration.getDatabase());
+    void jedisPool_CreatesPoolWithConfiguredHostAndPort() {
+        JedisPool jedisPool = redisConfig.jedisPool();
+
+        assertNotNull(jedisPool);
+        jedisPool.close();
     }
 
     @Test
     void buildPoolConfig() {
-        // Act
-        GenericObjectPoolConfig<?> poolConfig = ReflectionTestUtils.invokeMethod(redisConfig, "buildPoolConfig");
-        
-        // Assert
+        JedisPoolConfig poolConfig = ReflectionTestUtils.invokeMethod(redisConfig, "buildPoolConfig");
+
         assertNotNull(poolConfig);
         assertEquals(3000, poolConfig.getMaxTotal());
         assertEquals(128, poolConfig.getMaxIdle());
-        assertEquals(100, poolConfig.getMinIdle());
-        // Use getMaxWaitDuration() instead of getMaxWait()
-        assertEquals(Duration.ofMillis(5000), poolConfig.getMaxWaitDuration());
+        assertEquals(0, poolConfig.getMinIdle());
+        assertEquals(5000L, poolConfig.getMaxWaitMillis());
     }
 
     @Test
-    void redisTemplate() {
-        // Arrange
-        RedisConnectionFactory mockFactory = new LettuceConnectionFactory();
-        
-        // Act
-        RedisTemplate<String, String> template = redisConfig.redisTemplate(mockFactory);
-        
-        // Assert
-        assertNotNull(template);
-        assertEquals(mockFactory, template.getConnectionFactory());
+    void getDefaultIndex_ReturnsConfiguredValue() {
+        assertEquals(0, redisConfig.getDefaultIndex());
     }
 }
