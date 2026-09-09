@@ -52,6 +52,9 @@ public class CbServerProperties {
     @Value("${spring.kafka.enrolment.counter.update.topic.name}")
     private String enrolmentCounterUpdateTopic;
 
+    @Value("${spring.kafka.enrolment.counter.update.failure.topic.name}")
+    private String enrolmentCounterUpdateFailureTopic;
+
     @Value("${maximum.allowed.limit}")
     private int maximumAllowedLimit;
 

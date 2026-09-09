@@ -1,6 +1,5 @@
 package com.igot.cb.enrollment.service.impl;
 
-import static org.junit.Assert.assertFalse;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.doNothing;
@@ -8,6 +7,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -19,10 +19,10 @@ import com.igot.cb.enrollment.model.AccessControl;
 import com.igot.cb.enrollment.model.KarmaValidationResult;
 import com.igot.cb.enrollment.model.UserGroup;
 import com.igot.cb.enrollment.model.UserGroupCriteria;
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -41,6 +41,7 @@ import com.igot.cb.enrollment.entity.CiosContentEntity;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
+import com.igot.cb.transactional.cassandrautils.CounterIncrement;
 import com.igot.cb.util.ApiResponse;
 import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.Constants;
@@ -1325,7 +1326,7 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("enrollUserInCourse: licenseType user - publishes counter event carrying licenseType=User, skips lookup table")
+    @DisplayName("enrollUserInCourse: licenseType user, new (distinct) user - counts toward total, publishes counter event carrying licenseType=User, skips lookup table")
     void enrollUserInCourse_LicenseTypeUser_NewUser() {
         String userId = "user123";
         String courseId = "course456";
@@ -1337,6 +1338,12 @@ class EnrollmentServiceImplTest {
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
                 .thenReturn(insertRecordResponse(Constants.SUCCESS));
         when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        // No prior USER_ENROLMENTS row -> this reads as a genuinely new (distinct) user.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
         ObjectNode contentResponse = new ObjectMapper().createObjectNode();
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
@@ -1344,13 +1351,17 @@ class EnrollmentServiceImplTest {
 
         assertTrue(result);
         verify(cassandraOperation, times(0)).insertRecord(eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP), any());
-        // The "is this user new" decision is no longer read here - it happens fresh inside the
-        // Kafka consumer instead (see KafkaConsumer.enrolmentCounterUpdateConsumer), which is
-        // what closes the race where two concurrent requests for the same new user could both
-        // see "new" before either had incremented anything.
-        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
-                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                any(), any(), any());
+        // totalEnrolments/courseEnrolments now update immediately, synchronously, in this same
+        // request thread (see updateEnrolmentCountersImmediately) - for a user-type licence that
+        // means a distinct-user read against USER_ENROLMENTS right here. userEnrolments itself
+        // still goes through the ordered Kafka consumer (see KafkaConsumer.updateEnrolmentCounters).
+        ArgumentCaptor<List> captor = ArgumentCaptor.forClass(List.class);
+        verify(cassandraOperation).incrementCounters(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), captor.capture());
+        List<CounterIncrement> increments = captor.getValue();
+        assertEquals(2, increments.size());
+        assertTrue(increments.stream().anyMatch(i -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
+        assertTrue(increments.stream().anyMatch(i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event -> {
             Map<?, ?> map = (Map<?, ?>) event;
             return partnerId.equals(map.get(Constants.PARTNER_ID_REQ))
@@ -1359,6 +1370,45 @@ class EnrollmentServiceImplTest {
                     && Constants.COURSE_TYPE_PAID.equals(map.get(Constants.COURSE_TYPE_COL))
                     && Constants.LICENSE_TYPE_USER.equals(map.get(Constants.LICENSE_TYPE));
         }), eq(partnerId + "_" + userId));
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user, existing (non-distinct) user - does not count toward total, still counts courseEnrolments/userEnrolments")
+    void enrollUserInCourse_LicenseTypeUser_ExistingUser_SkipsTotal() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+
+        when(cassandraOperation.insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertRecordResponse(Constants.SUCCESS));
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        // A prior USER_ENROLMENTS row means this user already has an enrolment with this
+        // partner - i.e. "existing", not distinct/new.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 2L)));
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        ArgumentCaptor<List> captor = ArgumentCaptor.forClass(List.class);
+        verify(cassandraOperation).incrementCounters(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), captor.capture());
+        List<CounterIncrement> increments = captor.getValue();
+        assertEquals(1, increments.size());
+        assertTrue(increments.stream().anyMatch(i -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
+        assertTrue(increments.stream().noneMatch(i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
+        // Keying on (partnerId, userId) is what lets Kafka guarantee two concurrent enrolments
+        // for the same user are always processed strictly one at a time, in order, by the
+        // consumer for userEnrolments.
+        verify(producer).push(eq("enrolment-counter-topic"), any(), eq(partnerId + "_" + userId));
     }
 
     @Test
@@ -1401,11 +1451,26 @@ class EnrollmentServiceImplTest {
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
                 .thenReturn(insertRecordResponse(Constants.SUCCESS));
         when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
 
         boolean result = (boolean) ReflectionTestUtils.invokeMethod(
                 enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
 
         assertTrue(result);
+        // A user-type licence always moves courseEnrolments/userEnrolments/concurrentEnrolments
+        // regardless of the content's own free/paid tag - only the distinct-user check gates
+        // totalEnrolments.
+        ArgumentCaptor<List> captor = ArgumentCaptor.forClass(List.class);
+        verify(cassandraOperation).incrementCounters(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), captor.capture());
+        List<CounterIncrement> increments = captor.getValue();
+        assertEquals(2, increments.size());
+        assertTrue(increments.stream().anyMatch(i -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
+        assertTrue(increments.stream().anyMatch(i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event ->
                 Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))), eq(partnerId + "_" + userId));
     }
@@ -1473,8 +1538,7 @@ class EnrollmentServiceImplTest {
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
                 providerResponse, contentResponse, token, userAttributes);
         boolean result = karmaResult.isAllowed();
-        Assertions.assertNotNull(result);
-        Assertions.assertFalse(result);
+        assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
         assertEquals("Partner overall enrollment limit reached", response.getParams().getMsg());
         assertEquals(0, karmaResult.getRedeemedKarmaPoints());
@@ -1654,6 +1718,28 @@ class EnrollmentServiceImplTest {
 
         assertFalse(blocked);
         assertEquals(100, karmaResult.getRedeemedKarmaPoints());
+    }
+
+    @Test
+    @DisplayName("validateAndResolveKarma: provider licenseType user bypasses karma validation entirely")
+    void validateAndResolveKarma_LicenseTypeUser_SkipsKarmaValidation() {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
+
+        when(transformUtility.readUserKarmaPoints("user1", "token")).thenReturn(10L);
+
+        SBApiResponse response = new SBApiResponse();
+        KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
+                "token", new HashMap<String, String>(), response);
+
+        assertTrue(karmaResult.isAllowed());
+        assertEquals(0, karmaResult.getRedeemedKarmaPoints());
+        verify(transformUtility, never()).readUserKarmaPoints(anyString(), anyString());
     }
 
     @Test
@@ -2067,9 +2153,25 @@ class EnrollmentServiceImplTest {
         assertTrue(result);
         verify(cassandraOperation, times(0)).insertRecord(eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENT_LOOKUP), any());
         // licenseType course never needs to check whether the user is "new" - it always counts.
-        verify(cassandraOperation, times(0)).getRecordsByPropertiesWithoutFiltering(
+        verify(cassandraOperation, never()).getRecordsByPropertiesWithoutFiltering(
                 eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
-                any(), any(), any());
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any());
+        // totalEnrolments now moves synchronously - it's re-read right after incrementing to
+        // sync the partner's license-consumed count.
+        verify(cassandraOperation, times(1)).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any());
+        // A paid, course-type-licence enrolment always moves courseEnrolments and
+        // totalEnrolments together, immediately/synchronously.
+        ArgumentCaptor<List> captor = ArgumentCaptor.forClass(List.class);
+        verify(cassandraOperation).incrementCounters(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), captor.capture());
+        List<CounterIncrement> increments = captor.getValue();
+        assertEquals(2, increments.size());
+        assertTrue(increments.stream().anyMatch(i -> Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
+        assertTrue(increments.stream().anyMatch(i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event -> {
             Map<?, ?> map = (Map<?, ?>) event;
             return partnerId.equals(map.get(Constants.PARTNER_ID_REQ))
@@ -2102,6 +2204,15 @@ class EnrollmentServiceImplTest {
                 enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
 
         assertTrue(result);
+        // A free, course-type-licence enrolment only ever moves totalEnrolments - never
+        // courseEnrolments/userEnrolments/concurrentEnrolments (those caps are never evaluated
+        // for a free course).
+        ArgumentCaptor<List> captor = ArgumentCaptor.forClass(List.class);
+        verify(cassandraOperation).incrementCounters(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), captor.capture());
+        List<CounterIncrement> increments = captor.getValue();
+        assertEquals(1, increments.size());
+        assertTrue(increments.stream().allMatch(i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event ->
                 Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))), eq(partnerId + "_" + userId));
     }
@@ -2463,7 +2574,7 @@ class EnrollmentServiceImplTest {
         // Free courses skip validatePartnerEnrollmentLimits (and therefore the karma balance
         // gate) entirely, so the user's karma balance should never be looked up.
         assertFalse(((String) result.get("message")).contains("Karma Coin has been deducted"));
-        verify(transformUtility, Mockito.never()).readUserKarmaPoints(anyString(), anyString());
+        verify(transformUtility, never()).readUserKarmaPoints(anyString(), anyString());
     }
 
     @Test

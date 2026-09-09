@@ -59,4 +59,13 @@ public interface CassandraOperation {
     void incrementCounter(String keyspaceName, String tableName, Map<String, Object> compositeKey,
                            Map<String, Long> counterDeltas);
 
+    /**
+     * Applies several counter increments as a single Cassandra COUNTER BATCH, so they succeed
+     * or fail together instead of each row committing independently. Use this whenever more than
+     * one counter row must move together for the same logical event (e.g. per-user, per-course
+     * and total enrolment counters for one enrolment) - a partial batch failure leaves none of
+     * the rows updated, so callers can safely retry the whole event.
+     */
+    void incrementCounters(String keyspaceName, String tableName, List<CounterIncrement> increments);
+
 }

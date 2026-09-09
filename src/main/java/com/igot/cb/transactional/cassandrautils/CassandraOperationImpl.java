@@ -1,7 +1,11 @@
 package com.igot.cb.transactional.cassandrautils;
 
 
+import com.datastax.oss.driver.api.core.ConsistencyLevel;
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.cql.DefaultBatchType;
+import com.datastax.oss.driver.api.core.cql.BatchStatement;
+import com.datastax.oss.driver.api.core.cql.BatchStatementBuilder;
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import com.datastax.oss.driver.api.core.cql.ResultSet;
@@ -70,12 +74,24 @@ public class CassandraOperationImpl implements CassandraOperation {
             if (limit != null) selectQuery = selectQuery.limit(limit);
             String queryString = selectQuery.toString();
             SimpleStatement statement = SimpleStatement.newInstance(queryString);
+            if (requiresQuorum(propertyMap)) {
+                statement = statement.setConsistencyLevel(ConsistencyLevel.QUORUM);
+            }
             ResultSet results = session.execute(statement);
             response = CassandraUtil.createResponse(results);
         } catch (Exception e) {
             log.error("Error fetching records from {}: {}", tableName, e.getMessage());
         }
         return response;
+    }
+
+    private boolean requiresQuorum(Map<String, Object> propertyMap) {
+        if (propertyMap == null) {
+            return false;
+        }
+        Object scopeType = propertyMap.get(Constants.SCOPE_TYPE);
+        return Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(scopeType)
+                || Constants.SCOPE_TYPE_COURSE_ENROLMENTS.equals(scopeType);
     }
 
     @Override
@@ -174,6 +190,48 @@ public class CassandraOperationImpl implements CassandraOperation {
             session.execute(update.build());
         } catch (Exception e) {
             String errMsg = String.format("Exception occurred while incrementing counter in %s %s", tableName, e.getMessage());
+            log.error(errMsg);
+            throw e;
+        }
+    }
+
+    @Override
+    public void incrementCounters(String keyspaceName, String tableName, List<CounterIncrement> increments) {
+        if (CollectionUtils.isEmpty(increments)) {
+            return;
+        }
+        CqlSession session = null;
+        try {
+            session = connectionManager.getSession(keyspaceName);
+            BatchStatementBuilder batchBuilder = BatchStatement.builder(DefaultBatchType.COUNTER);
+            boolean quorum = false;
+            for (CounterIncrement increment : increments) {
+                if (requiresQuorum(increment.getCompositeKey())) {
+                    quorum = true;
+                }
+                UpdateStart updateStart = QueryBuilder.update(keyspaceName, tableName);
+                UpdateWithAssignments updateWithAssignments = updateStart.set(
+                        increment.getCounterDeltas().entrySet().stream()
+                                .map(entry -> Assignment.increment(entry.getKey(), QueryBuilder.literal(entry.getValue())))
+                                .toArray(Assignment[]::new)
+                );
+                Update update = updateWithAssignments.where(
+                        increment.getCompositeKey().entrySet().stream()
+                                .map(entry -> Relation.column(entry.getKey()).isEqualTo(QueryBuilder.literal(entry.getValue())))
+                                .toArray(Relation[]::new)
+                );
+                batchBuilder.addStatement(update.build());
+            }
+            // A batch's consistency level is uniform across every statement in it - if any
+            // increment in this batch is totalEnrolments/courseEnrolments, the whole batch runs
+            // at QUORUM (see EnrollmentServiceImpl#updateEnrolmentCountersImmediately, which
+            // never mixes those with userEnrolments in the same batch any more).
+            if (quorum) {
+                batchBuilder.setConsistencyLevel(ConsistencyLevel.QUORUM);
+            }
+            session.execute(batchBuilder.build());
+        } catch (Exception e) {
+            String errMsg = String.format("Exception occurred while batch incrementing counters in %s %s", tableName, e.getMessage());
             log.error(errMsg);
             throw e;
         }

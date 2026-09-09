@@ -1,18 +1,15 @@
 package com.igot.cb.config;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.producer.ProducerConfig;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
+import redis.clients.jedis.JedisPool;
 
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfigTest {
 
@@ -57,14 +54,14 @@ class ConfigTest {
         ReflectionTestUtils.setField(redisConfig, "redisHost", "localhost");
         ReflectionTestUtils.setField(redisConfig, "redisPort", 6379);
         ReflectionTestUtils.setField(redisConfig, "defaultIndex", 0);
+        ReflectionTestUtils.setField(redisConfig, "redisMaxTotal", 3000);
+        ReflectionTestUtils.setField(redisConfig, "redisMaxIdle", 128);
+        ReflectionTestUtils.setField(redisConfig, "redisMinIdle", 100);
+        ReflectionTestUtils.setField(redisConfig, "redisMaxWaitMillis", 5000L);
 
-        LettuceConnectionFactory factory = (LettuceConnectionFactory) redisConfig.redisConnectionFactory();
-        assertNotNull(factory);
-
-        RedisStandaloneConfiguration config = factory.getStandaloneConfiguration();
-        assertNotNull(config);
-        assertEquals("localhost", config.getHostName());
-        assertEquals(6379, config.getPort());
-        assertEquals(0, config.getDatabase());
+        try (JedisPool jedisPool = redisConfig.jedisPool()) {
+            assertNotNull(jedisPool);
+            assertEquals(0, redisConfig.getDefaultIndex());
+        }
     }
 }
