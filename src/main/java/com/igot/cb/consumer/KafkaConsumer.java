@@ -23,7 +23,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.WordUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -43,13 +42,13 @@ import org.springframework.core.io.*;
 @RequiredArgsConstructor
 public class KafkaConsumer {
     private ObjectMapper mapper = new ObjectMapper();
-    private CassandraOperation cassandraOperation;
-    private Producer producer;
-    private CbServerProperties cbServerProperties;
-    TransformUtility transformUtility;
-    private ResourceLoader resourceLoader;
-    private CacheService cacheService;
-    private EnrollmentServiceImpl enrollmentService;
+    private final CassandraOperation cassandraOperation;
+    private final Producer producer;
+    private final CbServerProperties cbServerProperties;
+    private final TransformUtility transformUtility;
+    private final ResourceLoader resourceLoader;
+    private final CacheService cacheService;
+    private final EnrollmentServiceImpl enrollmentService;
 
 
 
