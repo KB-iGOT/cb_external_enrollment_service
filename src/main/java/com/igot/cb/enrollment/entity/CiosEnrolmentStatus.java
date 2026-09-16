@@ -7,6 +7,7 @@ public enum CiosEnrolmentStatus {
 
     IN_PROGRESS("In-Progress", 0),
     COMPLETED("Completed", 2),
+    PENDING("Pending", 3),
     ALL("All", -1);
 
     private final String label;

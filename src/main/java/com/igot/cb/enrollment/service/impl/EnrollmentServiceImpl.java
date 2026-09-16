@@ -25,7 +25,6 @@ import com.igot.cb.transactional.cassandrautils.CounterIncrement;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.function.Supplier;
 
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +32,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.aspectj.apache.bcel.classfile.ConstantNameAndType;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -80,7 +80,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if(isUserEnrolled(response, userId, courseId)){
                 return response;
             }
-            processEnrolment(response, userId, courseId, partnerId, token);
+            processEnrolment(response, userId, courseId, partnerId);
 
         } catch (Exception e) {
             String errMsg = Constants.ENROLLMENT_ERROR + e.getMessage();
@@ -334,8 +334,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
             //List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
             Map<String, Object> propertyMap = new HashMap<>();
-            propertyMap.put("userid", userId);
-            propertyMap.put("courseid", courseid);
+            propertyMap.put(Constants.USER_ID, userId);
+            propertyMap.put(Constants.COURSE_ID, courseid);
             List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                     Constants.KEYSPACE_SUNBIRD_COURSES,
                     Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
@@ -356,7 +356,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     }
                 }
             } else {
-                response.getParams().setMsg("User not enrolled into the course");
+                response.getParams().setMsg(Constants.USER_NOT_ENROLLED);
                 response.getParams().setStatus(Constants.SUCCESS);
                 response.setResponseCode(HttpStatus.OK);
                 return response;
@@ -540,7 +540,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return false;
     }
 
-    private boolean enrollUserInCourse(String userId, String courseId, String partnerId, JsonNode providerResponse, JsonNode contentResponse) throws JsonProcessingException {
+    public boolean enrollUserInCourse(String userId, String courseId, String partnerId, JsonNode providerResponse, JsonNode contentResponse) throws JsonProcessingException {
         ZoneId zoneId = ZoneId.of(Constants.UTC);
         Instant instant = LocalDateTime.now().atZone(zoneId).toInstant();
 
@@ -652,7 +652,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             SBApiResponse response,
             JsonNode providerResponse,
             JsonNode contentResponse,
-            String token,
             Map<String, String> userAttributes) {
 
         // Free courses skip course-level and partner-level validation entirely
@@ -660,7 +659,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return new KarmaValidationResult(true, 0);
         }
 
-        if (isOverallLimitExceeded(userId, partnerId, providerResponse, contentResponse, response)) {
+        if (isOverallLimitExceeded(userId, partnerId, providerResponse, response)) {
             return new KarmaValidationResult(false, 0);
         }
 
@@ -676,7 +675,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return new KarmaValidationResult(false, 0);
         }
 
-        KarmaValidationResult karmaResult = validateAndResolveKarma(userId, contentResponse, providerResponse, token, userAttributes, response);
+        KarmaValidationResult karmaResult = validateAndResolveKarma(userId, contentResponse, providerResponse, userAttributes, response);
         if (!karmaResult.isAllowed()) {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             return karmaResult;
@@ -689,7 +688,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String userId,
             String partnerId,
             JsonNode providerResponse,
-            JsonNode contentResponse,
             SBApiResponse response) {
 
         int overallLimit = providerResponse.path(Constants.OVER_ALL_PROVIDER_LIMIT).asInt(0);
@@ -911,12 +909,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String userId,
             JsonNode contentResponse,
             JsonNode providerResponse,
-            String token,
             Map<String, String> userAttributes,
             SBApiResponse response) {
 
-        if (!providerResponse.path(Constants.KARMA_POINTS_ENABLED).asBoolean(false)
-                || Constants.LICENSE_TYPE_USER.equalsIgnoreCase(providerResponse.path(Constants.LICENSE_TYPE).asText())) {
+        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(providerResponse.path(Constants.LICENSE_TYPE).asText())) {
             return new KarmaValidationResult(true, 0);
         }
 
@@ -924,21 +920,21 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return new KarmaValidationResult(true, 0);
         }
 
-        int requiredKarmaPoints = contentResponse.path(Constants.REQUIRED_KARMA_POINTS).asInt(0);
-        if (requiredKarmaPoints <= 0) {
+        int requiredKarmaCoins = contentResponse.path(Constants.REQUIRED_KARMA_COINS).asInt(0);
+        if (requiredKarmaCoins <= 0) {
             return new KarmaValidationResult(true, 0);
         }
 
-        Long userKarmaPoints = transformUtility.readUserKarmaPoints(userId, token);
+        Long userKarmaCoins = transformUtility.readUserKarmaCoins(userId);
         boolean isExemptGroup = isKarmaPointsExempt(userAttributes, providerResponse.path(Constants.KARMA_POINTS_EXEMPTION));
 
-        if (!isExemptGroup && userKarmaPoints < requiredKarmaPoints) {
-            response.getParams().setMsg(String.format(cbServerProperties.getKarmaInsufficientMsg(), requiredKarmaPoints));
+        if (!isExemptGroup && userKarmaCoins < requiredKarmaCoins) {
+            response.getParams().setMsg(String.format(cbServerProperties.getKarmaInsufficientMsg(), requiredKarmaCoins));
             return new KarmaValidationResult(false,
                     0);
 
         }
-        return new KarmaValidationResult(true, requiredKarmaPoints);
+        return new KarmaValidationResult(true, requiredKarmaCoins);
     }
 
     @Override
@@ -980,7 +976,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     response,
                     providerResponse.get(Constants.DATA),
                     contentResponse,
-                    token,
                     userAttributes
             );
             if (!karmaValidationResult.isAllowed()) {
@@ -1059,7 +1054,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return false;
     }
 
-    private SBApiResponse processEnrolment(SBApiResponse response, String userId, String courseId, String partnerId, String token) {
+    private SBApiResponse processEnrolment(SBApiResponse response, String userId, String courseId, String partnerId) {
         try {
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
 
@@ -1078,49 +1073,48 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     response,
                     providerResponse.get(Constants.DATA),
                     contentResponse,
-                    token,
                     userAttributes
             );
             if (!karmaValidationResult.isAllowed()) {
                 return response;
             }
 
-            // Check access control settings enabled and validate
-            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(courseId, userAttributes)) {
-                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
-                }
-            }
-            // Special handling for Coursera partner to invite user
-            String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
-            if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
-                boolean inviteSuccess = transformUtility.callCourseraInviteApi(
-                        contentResponse,
-                        userProfile);
-                if (!inviteSuccess) {
-                    return transformUtility.buildFailedResponse(response, "User invitation failed on Coursera", HttpStatus.BAD_REQUEST);
-                }
+            if (!isAccessControlAllowed(contentResponse, courseId, userAttributes)) {
+                return transformUtility.buildFailedResponse(
+                        response,
+                        cbServerProperties.getAccessSettingsErrorMessage(),
+                        HttpStatus.BAD_REQUEST
+                );
             }
             // Enroll user in course
-            boolean enrolled = enrollUserInCourse(userId, courseId, partnerId, providerResponse.get(Constants.DATA), contentResponse);
-            if (!enrolled) {
-                return transformUtility.buildFailedResponse(response, "Failed to enroll user in course", HttpStatus.BAD_REQUEST);
-            }
             int redeemedPoints = karmaValidationResult.getRedeemedKarmaPoints();
+            String courseName = contentResponse.path(Constants.NAME).asText("");
+            String providerName = providerResponse.path(Constants.DATA).path(Constants.CONTENT_PARTNER_NAME).asText("");
+            String message = "";
             if (redeemedPoints > 0) {
-                //trigger event to deduct karma points from user
+                triggerCoinsRedemption(userId, courseId, redeemedPoints, courseName, providerName);
+                markEnrolmentPending(userId, courseId, Constants.PENDING_ENROLMENT_STATUS);
                 log.info("Karma points deduction event triggered for userId: {}, courseId: {}, points: {}",
                         userId, courseId, redeemedPoints);
-            }
-            response.setResponseCode(HttpStatus.OK);
-            Map<String, Object> result = new HashMap<>();
-            String courseName = contentResponse.path(Constants.NAME).asText("");
-            String message;
-            if (redeemedPoints > 0) {
-                message = String.format(cbServerProperties.getEnrolledWithKarmaMsg(), courseName, redeemedPoints);
+                message = String.format(Constants.ENROLLMENT_PROGRESS);
             } else {
+                // Special handling for Coursera partner to invite user
+                String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
+                if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
+                    boolean inviteSuccess = transformUtility.callCourseraInviteApi(
+                            contentResponse,
+                            userProfile);
+                    if (!inviteSuccess) {
+                        return transformUtility.buildFailedResponse(response, "User invitation failed on Coursera", HttpStatus.BAD_REQUEST);
+                    }
+                }
+                boolean enrolled = enrollUserInCourse(userId, courseId, partnerId, providerResponse.get(Constants.DATA), contentResponse);
+                if (!enrolled) {
+                    return transformUtility.buildFailedResponse(response, "Failed to enroll user in course", HttpStatus.BAD_REQUEST);
+                }
                 message = String.format(cbServerProperties.getEnrolledWithoutKarmaMsg(), courseName);
             }
+            Map<String, Object> result = new HashMap<>();
             result.put(Constants.MESSAGE, message);
             response.setResult(result);
         } catch (Exception e) {
@@ -1199,7 +1193,6 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     userId,
                     contentResponse,
                     providerResponse.path(Constants.DATA),
-                    token,
                     userAttributes,
                     response
             );
@@ -1255,4 +1248,201 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         log.info("User {} karmaPointsExcemption evaluation result: {}", userAttributes.get(Constants.USER), isExempt);
         return isExempt;
     }
+
+
+    public boolean validatePaidCourseEnrollment(String userId, String partnerId, String courseId, JsonNode contentResponse, JsonNode providerResponse, SBApiResponse response) {
+        log.info("EnrollmentService::validatePaidCourseEnrollment:inside the method");
+        try {
+            Map<String, Object> userProfile = transformUtility.readUserDetails(userId);
+            Map<String, String> userAttributes = MapUtils.isNotEmpty(userProfile)
+                    ? getUserAttributes(userProfile)
+                    : new HashMap<>();
+
+            KarmaValidationResult karmaValidationResult = validatePartnerEnrollmentLimits(
+                    userId,
+                    partnerId,
+                    courseId,
+                    response,
+                    providerResponse.get(Constants.DATA),
+                    contentResponse,
+                    userAttributes
+            );
+            if (!karmaValidationResult.isAllowed()) {
+                return false;
+            }
+            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean() && !handleAccessControlledEnrollment(courseId, userAttributes)) {
+                return false;
+            }
+
+            int redeemedPoints = karmaValidationResult.getRedeemedKarmaPoints();
+            if (redeemedPoints > 0) {
+                String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
+                if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
+                    boolean inviteSuccess = transformUtility.callCourseraInviteApi(
+                            contentResponse,
+                            userProfile);
+                    if (!inviteSuccess) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+        return false;
+    }
+
+    /**
+     * Publishes the karma coin debit request for a paid, course-licensed enrolment to the
+     * unified karma points ledger. Points deduction and enrolment confirmation happen
+     * asynchronously once this event is processed downstream.
+     */
+    private void triggerCoinsRedemption(String userId, String courseId, int pointsToConvert, String courseName, String providerName) {
+        Map<String, Object> eventData = new HashMap<>();
+        eventData.put(Constants.EID, Constants.KARMA_COIN_DEBIT);
+        eventData.put(Constants.ETS, System.currentTimeMillis());
+        eventData.put(Constants.EVENT_USER_ID, userId);
+        eventData.put(Constants.OPERATION, Constants.DEBIT_OPERATION);
+        eventData.put(Constants.ACTION_TYPE, Constants.POINTS_REDEMPTION_ACTION);
+        eventData.put(Constants.COINS_TO_REDEEM, pointsToConvert);
+        eventData.put(Constants.CONTEXT_TYPE, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);
+        eventData.put(Constants.CONTEXT_ID, courseId);
+        eventData.put(Constants.COURSE_NAME, courseName);
+        eventData.put(Constants.PROVIDER_NAME, providerName);
+        eventData.put(Constants.REQ_ID, UUID.randomUUID().toString());
+
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.EVENT_TYPE, Constants.COINS_REDEMPTION_EVENT_TYPE);
+        event.put(Constants.DATA, eventData);
+        event.put(Constants.VERSION, Constants.EVENT_VERSION);
+
+        producer.push(cbServerProperties.getKarmaPointsUnifiedEventTopic(), event, userId);
+        log.info("Coins redemption event triggered for userId: {}, courseId: {}, points: {}", userId, courseId, pointsToConvert);
+    }
+
+    /**
+     * Reverses a previously debited karma-coin amount for a paid course enrolment that
+     * could not be completed, so the user's balance is restored.
+     */
+    public void triggerCoinsReaward(String userId, String courseId, int pointsToConvert, String courseName, String providerName, String transactionId, String message) {
+        Map<String, Object> eventData = new HashMap<>();
+        eventData.put(Constants.EID, Constants.KARMA_COIN_REAWARD);
+        eventData.put(Constants.ETS, System.currentTimeMillis());
+        eventData.put(Constants.EVENT_USER_ID, userId);
+        eventData.put(Constants.OPERATION, Constants.REAWARD_OPERATION);
+        eventData.put(Constants.ACTION_TYPE, Constants.COINS_REAWARD_ACTION);
+        eventData.put(Constants.COINS_TO_REAWARD, pointsToConvert);
+        eventData.put(Constants.CONTEXT_TYPE, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);
+        eventData.put(Constants.CONTEXT_ID, courseId);
+        eventData.put(Constants.INFO, message);
+        eventData.put(Constants.COURSE_NAME, courseName);
+        eventData.put(Constants.PROVIDER_NAME, providerName);
+        eventData.put(Constants.TRANSACTION_ID, transactionId);
+        eventData.put(Constants.CREATED_AT, System.currentTimeMillis());
+        eventData.put(Constants.REQ_ID, UUID.randomUUID().toString());
+
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.EVENT_TYPE, Constants.COINS_REAWARD_EVENT_TYPE);
+        event.put(Constants.DATA, eventData);
+        event.put(Constants.VERSION, Constants.EVENT_VERSION);
+
+        producer.push(cbServerProperties.getKarmaPointsUnifiedEventTopic(), event, userId);
+        log.info("Coins reaward event triggered for userId: {}, courseId: {}, points: {}", userId, courseId, pointsToConvert);
+    }
+
+    /**
+     * Marks a userId+courseId pair as awaiting coins-redemption confirmation. No value is
+     * needed - presence of the key is the signal a downstream consumer checks and clears.
+     */
+    public void markEnrolmentPending(String userId, String courseId, String status) {
+        String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
+        if (Constants.FAILED.equalsIgnoreCase(status)) {
+            cacheService.putCache(pendingKey, cbServerProperties.getRedisIndex(), status, cbServerProperties.getFailedEnrolmentTtlSeconds());
+        } else {
+            cacheService.putCacheWithoutTtl(pendingKey, cbServerProperties.getRedisIndex(), status);
+        }
+    }
+
+    @Override
+    public SBApiResponse readByUserIdAndCourseIdV2(String courseid, String token) {
+        log.info("EnrollmentService::readByUserIdAndCourseIdV2:inside the method");
+        SBApiResponse response = transformUtility.createDefaultResponse(Constants.CIOS_ENROLLMENT_READ_COURSEID);
+        try {
+            String userId = accessTokenValidator.verifyUserToken(token);
+            if (StringUtils.isBlank(userId) || userId.equalsIgnoreCase(Constants.UNAUTHORIZED)) {
+                response.getParams().setMsg(Constants.USER_ID_DOESNT_EXIST);
+                response.getParams().setStatus(Constants.FAILED);
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return response;
+            }
+
+            String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseid;
+            String pendingStatus = cacheService.getCache(pendingKey, cbServerProperties.getRedisIndex());
+            if (StringUtils.isNotBlank(pendingStatus)) {
+                Map<String, Object> result = new HashMap<>();
+                result.put(Constants.COMPLETION_PERCENTAGE, 0);
+                result.put(Constants.COMPLETED_ON, null);
+                result.put(Constants.PROGRESS, 0);
+                result.put(Constants.ISSUED_BADGES, new ArrayList<>());
+                result.put(Constants.ADDITIONAL_PROPERTIES, "{}");
+                result.put(Constants.PARTNER_ID_REQ, null);
+                result.put(Constants.UPDATED_ON, Instant.now().toString());
+                result.put("userid", userId);
+                result.put("courseid", courseid);
+                result.put(Constants.ENROLLED_DATE, null);
+                result.put(Constants.ISSUED_CERTIFICATES, new ArrayList<>());
+                result.put(Constants.STATUS, CiosEnrolmentStatus.PENDING.getCode());
+                response.setResult(result);
+                response.setResponseCode(HttpStatus.OK);
+                return response;
+            }
+
+            Map<String, Object> propertyMap = new HashMap<>();
+            propertyMap.put("userid", userId);
+            propertyMap.put("courseid", courseid);
+            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                    Constants.KEYSPACE_SUNBIRD_COURSES,
+                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                    propertyMap,
+                    null,
+                    1
+            );
+            if (!userEnrollmentList.isEmpty()) {
+                for (Map<String, Object> enrollment : userEnrollmentList) {
+                    if (!enrollment.isEmpty()) {
+                        response.setResponseCode(HttpStatus.OK);
+                        response.setResult(enrollment);
+                    } else {
+                        response.getParams().setMsg("courseId is not matching");
+                        response.getParams().setStatus(Constants.FAILED);
+                        response.setResponseCode(HttpStatus.BAD_REQUEST);
+                        return response;
+                    }
+                }
+            } else {
+                response.getParams().setMsg("User not enrolled into the course");
+                response.getParams().setStatus(Constants.SUCCESS);
+                response.setResponseCode(HttpStatus.OK);
+                return response;
+            }
+            return response;
+        } catch (Exception e) {
+            log.error("error while processing", e);
+            throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private boolean isAccessControlAllowed(
+            JsonNode contentResponse,
+            String courseId,
+            Map<String, String> userAttributes) throws JsonProcessingException {
+
+        if (!contentResponse.path(Constants.ACCESS_SETTINGS_ENABLED).asBoolean(false)) {
+            return true;
+        }
+
+        return handleAccessControlledEnrollment(courseId, userAttributes);
+    }
 }
+

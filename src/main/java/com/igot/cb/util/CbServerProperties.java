@@ -120,4 +120,10 @@ public class CbServerProperties {
 
     @Value("${enrollment.message.without.karma}")
     private String enrolledWithoutKarmaMsg;
+
+    @Value("${spring.kafka.karma.points.unified.topic.name}")
+    private String karmaPointsUnifiedEventTopic;
+
+    @Value("${failed.enrollment.ttl.seconds}")
+    private Long failedEnrolmentTtlSeconds;
 }

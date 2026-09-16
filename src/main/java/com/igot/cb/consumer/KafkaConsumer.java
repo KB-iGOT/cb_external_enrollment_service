@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.TransformUtility;
@@ -15,7 +16,9 @@ import java.io.InputStream;
 
 
 import com.igot.cb.util.cache.CacheService;
+import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.exceptions.CustomException;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.WordUtils;
@@ -37,26 +40,18 @@ import org.springframework.core.io.*;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class KafkaConsumer {
     private ObjectMapper mapper = new ObjectMapper();
-
-    @Autowired
     private CassandraOperation cassandraOperation;
-
-    @Autowired
     private Producer producer;
-
-    @Autowired
     private CbServerProperties cbServerProperties;
-
-    @Autowired
     TransformUtility transformUtility;
-
-    @Autowired
     private ResourceLoader resourceLoader;
-
-    @Autowired
     private CacheService cacheService;
+    private EnrollmentServiceImpl enrollmentService;
+
+
 
     @KafkaListener(topics = "${spring.kafka.enrolment.counter.update.topic.name}", groupId = "${spring.kafka.enrolment.counter.update.consumer.group.id}")
     public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
@@ -187,7 +182,8 @@ public class KafkaConsumer {
                 if (!CollectionUtils.isEmpty(listOfMasterData)) {
                     Map<String, Object> enrolledData = listOfMasterData.get(0);
                     Object statusValue = enrolledData.get(Constants.STATUS);
-                    boolean alreadyCompleted = statusValue instanceof Number && ((Number) statusValue).intValue() == 2;
+                    boolean alreadyCompleted = statusValue instanceof Number number
+                            && number.intValue() == 2;
                     if (alreadyCompleted) {
                         log.info("User {} has already completed the course {}. No update needed.", userId, courseId);
                         acknowledgment.acknowledge();
@@ -275,8 +271,8 @@ public class KafkaConsumer {
                 }
             }
             JsonNode partnerApiResponse = transformUtility.callContentPartnerReadApi(partnerId);
-            if (!partnerApiResponse.path("certificateTemplateUrl").isMissingNode() && !partnerApiResponse.path("certificateTemplateUrl").isNull()) {
-                String svgTemplate = partnerApiResponse.get("certificateTemplateUrl").asText();
+            if (!partnerApiResponse.path(Constants.CERTIFICATE_TEMPLATE_URL).isMissingNode() && !partnerApiResponse.path(Constants.CERTIFICATE_TEMPLATE_URL).isNull()) {
+                String svgTemplate = partnerApiResponse.get(Constants.CERTIFICATE_TEMPLATE_URL).asText();
                 Resource resource = resourceLoader.getResource("classpath:certificateTemplate.json");
                 InputStream inputStream = resource.getInputStream();
                 JsonNode jsonNode = mapper.readTree(inputStream);
@@ -423,6 +419,39 @@ public class KafkaConsumer {
         ZonedDateTime zonedDateTime = instant.atZone(ZoneId.of("UTC"));
         DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         return outputFormatter.format(zonedDateTime);
+    }
+
+    @KafkaListener(topics = "${spring.kafka.user.paid.course.enrolment.topic.name}", groupId = "${spring.kafka.user.paid.course.enrolment.consumer.group.id}")
+    public void validateAndEnrolPaidCourses(ConsumerRecord<String, String> data) {
+        log.info("KafkaConsumer::validateAndEnrolPaidCourses:topic name: {} and recievedData: {}", data.topic(), data.value());
+        try {
+            SBApiResponse response = transformUtility.createDefaultResponse("");
+            Map<String, Object> paidCourseEvent = mapper.readValue(data.value(), new TypeReference<>() {
+            });
+            String userId = (String) paidCourseEvent.get(Constants.USER_ID);
+            String courseId = (String) paidCourseEvent.get(Constants.COURSE_ID);
+            String partnerId = (String) paidCourseEvent.get(Constants.PARTNER_ID);
+            String courseName = (String) paidCourseEvent.get(Constants.COURSE_NAME);
+            String providerName = (String) paidCourseEvent.get(Constants.PROVIDER_NAME);
+            String transactionId = (String) paidCourseEvent.get(Constants.TRANSACTION_ID);
+            JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
+            JsonNode contentResponse = transformUtility.callCiosReadAPi(courseId, partnerId);
+            if(enrollmentService.validatePaidCourseEnrollment(userId, courseId, partnerId, providerResponse, contentResponse, response)) {
+                if(!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse, contentResponse)) {
+                    enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
+                    Object pointsToConvert = paidCourseEvent.get(Constants.POINTS_TO_CONVERT);
+
+                    enrollmentService.triggerCoinsReaward(userId, courseId, pointsToConvert instanceof Number number ? number.intValue() : 0, courseName, providerName, transactionId , "Enrollment failed");
+                }
+                //delete cache
+            } else {
+                enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
+                Object pointsToConvert = paidCourseEvent.get(Constants.POINTS_TO_CONVERT);
+                enrollmentService.triggerCoinsReaward(userId, courseId, pointsToConvert instanceof Number number ? number.intValue() : 0, courseName, providerName, transactionId, response.getParams().getMsg());
+            }
+        } catch (Exception e) {
+            log.error("Failed to read enroll Request. Message received : {}", data.value(), e);
+        }
     }
 
 }

@@ -11,6 +11,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.model.AccessControl;
+import com.igot.cb.enrollment.model.KarmaValidationResult;
+import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.util.cache.CacheService;
 import com.igot.cb.util.dto.SBApiResponse;
@@ -18,6 +20,7 @@ import com.igot.cb.util.dto.SunbirdApiRespParam;
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.tomcat.util.bcel.Const;
 import org.joda.time.DateTime;
@@ -520,4 +523,30 @@ public class TransformUtility {
             throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
+
+    public Long readUserKarmaCoins(String userId) {
+        log.info("TransformUtility :: readUserKarmaCoins");
+        Map<String, Object> propertyMap = new HashMap<>();
+        propertyMap.put(Constants.USER_ID, userId);
+        List<Map<String, Object>> rows = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD,
+                Constants.TABLE_USER_KARMA_COIN_WALLET,
+                propertyMap,
+                List.of(Constants.TOTAL_EARNED, Constants.TOTAL_REDEEMED),
+                1
+        );
+        if (CollectionUtils.isEmpty(rows)) {
+            return 0L;
+        }
+        long totalEarned = asLong(rows.get(0).get(Constants.TOTAL_EARNED));
+        long totalRedeemed = asLong(rows.get(0).get(Constants.TOTAL_REDEEMED));
+        return Math.max(0L, totalEarned - totalRedeemed);
+    }
+
+    private long asLong(Object value) {
+        return value == null ? 0L : ((Number) value).longValue();
+    }
+
+
+
 }
