@@ -1497,7 +1497,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1536,7 +1536,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
         assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
@@ -1559,18 +1559,18 @@ class EnrollmentServiceImplTest {
         providerResponse.put(Constants.KARMA_POINTS, 100);
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
         when(cbServerProperties.getKarmaInsufficientMsg())
                 .thenReturn(
                         "You don't have enough Karma Points to enroll. Minimum Karma Points required: %s. Please complete other relevant courses on iGOT to earn Karma Points and try again later.");
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
-        when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(50L);
+        when(transformUtility.readUserKarmaCoins(userId)).thenReturn(50L);
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -1597,15 +1597,15 @@ class EnrollmentServiceImplTest {
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
         providerResponse.set(Constants.KARMA_POINTS_EXEMPTION, exemption);
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
-        when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(0L);
+        when(transformUtility.readUserKarmaCoins(userId)).thenReturn(0L);
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1666,7 +1666,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
@@ -1685,7 +1685,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
@@ -1697,7 +1697,7 @@ class EnrollmentServiceImplTest {
     void validateAndResolveKarma_ExemptUser_ReturnsFalseDespiteInsufficientBalance() {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
 
         ObjectNode exemption = realMapper.createObjectNode();
         exemption.putArray(Constants.GROUP).add("Group A");
@@ -1708,12 +1708,12 @@ class EnrollmentServiceImplTest {
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.GROUP, "Group A");
 
-        when(transformUtility.readUserKarmaPoints("user1", "token")).thenReturn(10L);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", userAttributes, response);
+                userAttributes, response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
@@ -1735,7 +1735,7 @@ class EnrollmentServiceImplTest {
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
 
         assertTrue(karmaResult.isAllowed());
         assertEquals(0, karmaResult.getRedeemedKarmaPoints());
@@ -1747,16 +1747,16 @@ class EnrollmentServiceImplTest {
     void validateAndResolveKarma_SufficientBalance_ReturnsFalse() {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
         ObjectNode providerResponse = realMapper.createObjectNode();
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
 
-        when(transformUtility.readUserKarmaPoints("user1", "token")).thenReturn(150L);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(150L);
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
@@ -1768,17 +1768,17 @@ class EnrollmentServiceImplTest {
     void validateAndResolveKarma_InsufficientBalance_ReturnsTrue() {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
         ObjectNode providerResponse = new ObjectMapper().createObjectNode();
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
 
-        when(transformUtility.readUserKarmaPoints("user1", "token")).thenReturn(10L);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
         when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s points");
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertTrue(blocked);
@@ -1815,7 +1815,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1852,7 +1852,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -1885,7 +1885,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1923,7 +1923,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -1950,7 +1950,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1984,7 +1984,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -2016,7 +2016,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -2056,7 +2056,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -2089,7 +2089,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -2122,7 +2122,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -2503,7 +2503,7 @@ class EnrollmentServiceImplTest {
 
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 60);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 60);
         when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
 
         ObjectNode providerData = realMapper.createObjectNode();
@@ -2516,7 +2516,7 @@ class EnrollmentServiceImplTest {
         when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
 
         when(transformUtility.readUserDetails("user123")).thenReturn(Map.of(Constants.ID, "user123"));
-        when(transformUtility.readUserKarmaPoints("user123", token)).thenReturn(200L);
+        when(transformUtility.readUserKarmaCoins("user123")).thenReturn(200L);
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
@@ -2530,8 +2530,16 @@ class EnrollmentServiceImplTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
         String message = (String) result.get("message");
-        assertTrue(message.contains("Karma Coin has been deducted"));
-        assertTrue(message.contains("60"));
+        // Karma-funded enrolments are now completed asynchronously: processEnrolment reports
+        // "Enrollment in progress" immediately and separately triggers a karma-coin debit event
+        // (coinsToRedeem = the course's required karma coins) rather than embedding the redeemed
+        // amount into the response message.
+        assertEquals(Constants.ENROLLMENT_PROGRESS, message);
+        verify(producer).push(any(), argThat(evt -> {
+            Map<?, ?> eventData = (Map<?, ?>) ((Map<?, ?>) evt).get(Constants.DATA);
+            return Integer.valueOf(60).equals(eventData.get(Constants.COINS_TO_REDEEM))
+                    && "user123".equals(eventData.get(Constants.EVENT_USER_ID));
+        }), eq("user123"));
     }
 
     @Test
@@ -2587,7 +2595,7 @@ class EnrollmentServiceImplTest {
         String token = "jwt.token";
 
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 80);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 80);
         when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.validateAndGetUserId(eq(token), any(SBApiResponse.class))).thenReturn("user1");
 
@@ -2604,7 +2612,7 @@ class EnrollmentServiceImplTest {
         when(cbServerProperties.isKarmaPointsDeductionEnabled()).thenReturn(true);
         // Balance has to cover the requirement, otherwise validateAndResolveKarma reports the
         // enrolment blocked and resolves 0 points instead of 80.
-        when(transformUtility.readUserKarmaPoints("user1", token)).thenReturn(200L);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(200L);
 
         SBApiResponse response = enrollmentService.karmapointsDeductionRule(userCourseEnroll, token);
 
