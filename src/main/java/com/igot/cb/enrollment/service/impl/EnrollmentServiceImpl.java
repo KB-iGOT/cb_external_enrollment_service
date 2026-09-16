@@ -677,7 +677,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
         KarmaValidationResult karmaResult = validateAndResolveKarma(userId, contentResponse, providerResponse, userAttributes, response);
         if (!karmaResult.isAllowed()) {
-            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            response.setResponseCode(HttpStatus.PAYMENT_REQUIRED);
             return karmaResult;
         }
 

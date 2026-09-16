@@ -43,6 +43,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.transactional.cassandrautils.CounterIncrement;
@@ -50,6 +51,7 @@ import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.cache.CacheService;
+import com.igot.cb.util.dto.SBApiResponse;
 
 @ExtendWith(MockitoExtension.class)
 class KafkaConsumerTest {
@@ -83,6 +85,9 @@ class KafkaConsumerTest {
 
     @Mock
     private Acknowledgment acknowledgment;
+
+    @Mock
+    private EnrollmentServiceImpl enrollmentService;
 
     @BeforeEach
     void setUp() {
@@ -1030,6 +1035,150 @@ class KafkaConsumerTest {
         kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment);
 
         verify(cassandraOperation, never()).incrementCounter(any(), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), any(), any());
+    }
+
+    // ------------------------------------------------------------------
+    // validateAndEnrolPaidCourses
+    //
+    // NOTE ON A CONFIRMED CALL-SITE BUG (documented, not fixed here):
+    // KafkaConsumer#validateAndEnrolPaidCourses invokes
+    //   enrollmentService.validatePaidCourseEnrollment(userId, courseId, partnerId, providerResponse, contentResponse, response)
+    // but EnrollmentServiceImpl#validatePaidCourseEnrollment is declared as
+    //   validatePaidCourseEnrollment(String userId, String partnerId, String courseId, JsonNode contentResponse, JsonNode providerResponse, SBApiResponse response)
+    // so courseId/partnerId land in swapped positions, and providerResponse/contentResponse
+    // land in swapped positions too, relative to the callee's parameter names. Mockito only
+    // cares about the literal positional call the production code makes, so the verifications
+    // below assert against the ACTUAL (buggy) call-site order - i.e. the 2nd positional arg is
+    // courseId's value and the 4th positional arg is providerResponse's value - to reflect real
+    // current behavior rather than the presumably-intended behavior.
+    // ------------------------------------------------------------------
+
+    private ConsumerRecord<String, String> buildPaidCourseRecord(Map<String, Object> event) throws Exception {
+        String payload = mapper.writeValueAsString(event);
+        return new ConsumerRecord<>("paid-course-topic", 0, 0L, "key", payload);
+    }
+
+    private Map<String, Object> basePaidCourseEvent() {
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.USER_ID, "user1");
+        event.put(Constants.COURSE_ID, "course1");
+        event.put(Constants.PARTNER_ID, "partner1");
+        event.put(Constants.COURSE_NAME, "Course One");
+        event.put(Constants.PROVIDER_NAME, "Provider One");
+        event.put(Constants.TRANSACTION_ID, "txn1");
+        event.put(Constants.POINTS_TO_CONVERT, 50);
+        return event;
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_happyPath_noPendingOrReawardCalls() throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        JsonNode providerResponse = mapper.createObjectNode().put("id", "partner1");
+        JsonNode contentResponse = mapper.createObjectNode().put("id", "course1");
+        SBApiResponse response = new SBApiResponse();
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(transformUtility.callCiosReadAPi("course1", "partner1")).thenReturn(contentResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "course1", "partner1", providerResponse,
+                contentResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse, contentResponse))
+                .thenReturn(true);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), anyInt(), any(), any(), any(), any());
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_validationPassesEnrollmentFails_marksPendingAndReawardsWithEnrollmentFailedMessage()
+            throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        JsonNode providerResponse = mapper.createObjectNode().put("id", "partner1");
+        JsonNode contentResponse = mapper.createObjectNode().put("id", "course1");
+        SBApiResponse response = new SBApiResponse();
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(transformUtility.callCiosReadAPi("course1", "partner1")).thenReturn(contentResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "course1", "partner1", providerResponse,
+                contentResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse, contentResponse))
+                .thenReturn(false);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED);
+        verify(enrollmentService).triggerCoinsReaward("user1", "course1", 50, "Course One", "Provider One", "txn1",
+                "Enrollment failed");
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_validationFails_marksPendingAndReawardsWithResponseMsg_neverEnrolls()
+            throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        JsonNode providerResponse = mapper.createObjectNode().put("id", "partner1");
+        JsonNode contentResponse = mapper.createObjectNode().put("id", "course1");
+        SBApiResponse response = new SBApiResponse();
+        response.getParams().setMsg("Validation failed for course");
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(transformUtility.callCiosReadAPi("course1", "partner1")).thenReturn(contentResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "course1", "partner1", providerResponse,
+                contentResponse, response)).thenReturn(false);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED);
+        verify(enrollmentService).triggerCoinsReaward("user1", "course1", 50, "Course One", "Provider One", "txn1",
+                "Validation failed for course");
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_malformedJson_doesNotThrowAndNoDownstreamCalls() throws Exception {
+        String invalidJson = "{invalid json}";
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("paid-course-topic", 0, 0L, "key",
+                invalidJson);
+
+        org.junit.jupiter.api.Assertions
+                .assertDoesNotThrow(() -> kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord));
+
+        verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), anyInt(), any(), any(), any(), any());
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_pointsToConvertMissing_reawardsWithZeroPoints() throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        event.remove(Constants.POINTS_TO_CONVERT);
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        JsonNode providerResponse = mapper.createObjectNode().put("id", "partner1");
+        JsonNode contentResponse = mapper.createObjectNode().put("id", "course1");
+        SBApiResponse response = new SBApiResponse();
+        response.getParams().setMsg("Validation failed for course");
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(transformUtility.callCiosReadAPi("course1", "partner1")).thenReturn(contentResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "course1", "partner1", providerResponse,
+                contentResponse, response)).thenReturn(false);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(enrollmentService).triggerCoinsReaward("user1", "course1", 0, "Course One", "Provider One", "txn1",
+                "Validation failed for course");
     }
 
     @SuppressWarnings("unchecked")
