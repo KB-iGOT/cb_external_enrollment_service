@@ -1097,6 +1097,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 log.info("Karma points deduction event triggered for userId: {}, courseId: {}, points: {}",
                         userId, courseId, redeemedPoints);
                 message = String.format(Constants.ENROLLMENT_PROGRESS);
+                response.setResponseCode(HttpStatus.ACCEPTED);
             } else {
                 // Special handling for Coursera partner to invite user
                 String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();

@@ -2554,7 +2554,7 @@ class EnrollmentServiceImplTest {
 
         SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
 
-        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertEquals(HttpStatus.ACCEPTED, response.getResponseCode());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
         String message = (String) result.get("message");
