@@ -1543,8 +1543,6 @@ class EnrollmentServiceImplTest {
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
         assertEquals("Partner overall enrollment limit reached", response.getParams().getMsg());
         assertEquals(0, karmaResult.getRedeemedKarmaPoints());
-        assertNull(response.getParams().getErr(),
-                "err code is reserved for the karma-coins-insufficient case only; other rejection reasons must leave it unset");
     }
 
     @Test

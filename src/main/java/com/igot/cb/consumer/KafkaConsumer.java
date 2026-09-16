@@ -427,25 +427,26 @@ public class KafkaConsumer {
             SBApiResponse response = transformUtility.createDefaultResponse("");
             Map<String, Object> paidCourseEvent = mapper.readValue(data.value(), new TypeReference<>() {
             });
-            String userId = (String) paidCourseEvent.get(Constants.USER_ID);
-            String courseId = (String) paidCourseEvent.get(Constants.COURSE_ID);
-            String partnerId = (String) paidCourseEvent.get(Constants.PARTNER_ID);
-            String courseName = (String) paidCourseEvent.get(Constants.COURSE_NAME);
-            String providerName = (String) paidCourseEvent.get(Constants.PROVIDER_NAME);
-            String transactionId = (String) paidCourseEvent.get(Constants.TRANSACTION_ID);
+            Map<String, Object> eventData = (Map<String, Object>) paidCourseEvent.get(Constants.DATA);
+            String userId = (String) eventData.get(Constants.EVENT_USER_ID);
+            String courseId = (String) eventData.get(Constants.CONTEXT_ID);
+            String courseName = (String) eventData.get(Constants.COURSE_NAME);
+            String providerName = (String) eventData.get(Constants.PROVIDER_NAME);
+            String transactionId = (String) eventData.get(Constants.TRANSACTION_ID);
+            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
+            String partnerId = contentResponse.path(Constants.CONTENT_PARTNER).path(Constants.ID).asText("");
             JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
-            JsonNode contentResponse = transformUtility.callCiosReadAPi(courseId, partnerId);
-            if(enrollmentService.validatePaidCourseEnrollment(userId, courseId, partnerId, providerResponse, contentResponse, response)) {
-                if(!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse, contentResponse)) {
+            if (enrollmentService.validatePaidCourseEnrollment(userId, partnerId, courseId, contentResponse, providerResponse, response)) {
+                if (!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse.path(Constants.DATA), contentResponse)) {
                     enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
-                    Object pointsToConvert = paidCourseEvent.get(Constants.POINTS_TO_CONVERT);
+                    Object pointsToConvert = eventData.get(Constants.EVENT_COINS_REDEEMED);
 
                     enrollmentService.triggerCoinsReaward(userId, courseId, pointsToConvert instanceof Number number ? number.intValue() : 0, courseName, providerName, transactionId , "Enrollment failed");
                 }
                 //delete cache
             } else {
                 enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
-                Object pointsToConvert = paidCourseEvent.get(Constants.POINTS_TO_CONVERT);
+                Object pointsToConvert = eventData.get(Constants.EVENT_COINS_REDEEMED);
                 enrollmentService.triggerCoinsReaward(userId, courseId, pointsToConvert instanceof Number number ? number.intValue() : 0, courseName, providerName, transactionId, response.getParams().getMsg());
             }
         } catch (Exception e) {

@@ -1040,17 +1040,11 @@ class KafkaConsumerTest {
     // ------------------------------------------------------------------
     // validateAndEnrolPaidCourses
     //
-    // NOTE ON A CONFIRMED CALL-SITE BUG (documented, not fixed here):
-    // KafkaConsumer#validateAndEnrolPaidCourses invokes
-    //   enrollmentService.validatePaidCourseEnrollment(userId, courseId, partnerId, providerResponse, contentResponse, response)
-    // but EnrollmentServiceImpl#validatePaidCourseEnrollment is declared as
-    //   validatePaidCourseEnrollment(String userId, String partnerId, String courseId, JsonNode contentResponse, JsonNode providerResponse, SBApiResponse response)
-    // so courseId/partnerId land in swapped positions, and providerResponse/contentResponse
-    // land in swapped positions too, relative to the callee's parameter names. Mockito only
-    // cares about the literal positional call the production code makes, so the verifications
-    // below assert against the ACTUAL (buggy) call-site order - i.e. the 2nd positional arg is
-    // courseId's value and the 4th positional arg is providerResponse's value - to reflect real
-    // current behavior rather than the presumably-intended behavior.
+    // The real event on this topic is the unified karma ledger's enrolment-confirmation
+    // callback: everything is nested under "data", using "userId"/"contextId" (not
+    // "userid"/"courseid"), and there is no partnerId field at all - it's re-derived from the
+    // course content (contentResponse.contentPartner.id), the same fallback enrolValidation
+    // uses when partnerId isn't supplied directly. See KafkaConsumer#validateAndEnrolPaidCourses.
     // ------------------------------------------------------------------
 
     private ConsumerRecord<String, String> buildPaidCourseRecord(Map<String, Object> event) throws Exception {
@@ -1059,15 +1053,30 @@ class KafkaConsumerTest {
     }
 
     private Map<String, Object> basePaidCourseEvent() {
+        Map<String, Object> eventData = new HashMap<>();
+        eventData.put(Constants.EVENT_USER_ID, "user1");
+        eventData.put(Constants.CONTEXT_ID, "course1");
+        eventData.put(Constants.COURSE_NAME, "Course One");
+        eventData.put(Constants.PROVIDER_NAME, "Provider One");
+        eventData.put(Constants.TRANSACTION_ID, "txn1");
+        eventData.put(Constants.EVENT_COINS_REDEEMED, 50);
+
         Map<String, Object> event = new HashMap<>();
-        event.put(Constants.USER_ID, "user1");
-        event.put(Constants.COURSE_ID, "course1");
-        event.put(Constants.PARTNER_ID, "partner1");
-        event.put(Constants.COURSE_NAME, "Course One");
-        event.put(Constants.PROVIDER_NAME, "Provider One");
-        event.put(Constants.TRANSACTION_ID, "txn1");
-        event.put(Constants.POINTS_TO_CONVERT, 50);
+        event.put(Constants.DATA, eventData);
+        event.put("eventType", "EXT_COURSE_ENROLLMENT");
         return event;
+    }
+
+    private ObjectNode paidCourseContentResponse() {
+        ObjectNode contentResponse = mapper.createObjectNode();
+        contentResponse.set(Constants.CONTENT_PARTNER, mapper.createObjectNode().put(Constants.ID, "partner1"));
+        return contentResponse;
+    }
+
+    private ObjectNode paidCourseProviderResponse() {
+        ObjectNode providerResponse = mapper.createObjectNode();
+        providerResponse.set(Constants.DATA, mapper.createObjectNode().put(Constants.ID, "partner1"));
+        return providerResponse;
     }
 
     @Test
@@ -1075,17 +1084,17 @@ class KafkaConsumerTest {
         Map<String, Object> event = basePaidCourseEvent();
         ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
 
-        JsonNode providerResponse = mapper.createObjectNode().put("id", "partner1");
-        JsonNode contentResponse = mapper.createObjectNode().put("id", "course1");
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
         SBApiResponse response = new SBApiResponse();
 
         when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
-        when(transformUtility.callCiosReadAPi("course1", "partner1")).thenReturn(contentResponse);
-        when(enrollmentService.validatePaidCourseEnrollment("user1", "course1", "partner1", providerResponse,
-                contentResponse, response)).thenReturn(true);
-        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse, contentResponse))
-                .thenReturn(true);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse)).thenReturn(true);
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
@@ -1099,17 +1108,17 @@ class KafkaConsumerTest {
         Map<String, Object> event = basePaidCourseEvent();
         ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
 
-        JsonNode providerResponse = mapper.createObjectNode().put("id", "partner1");
-        JsonNode contentResponse = mapper.createObjectNode().put("id", "course1");
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
         SBApiResponse response = new SBApiResponse();
 
         when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
-        when(transformUtility.callCiosReadAPi("course1", "partner1")).thenReturn(contentResponse);
-        when(enrollmentService.validatePaidCourseEnrollment("user1", "course1", "partner1", providerResponse,
-                contentResponse, response)).thenReturn(true);
-        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse, contentResponse))
-                .thenReturn(false);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse)).thenReturn(false);
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
@@ -1124,16 +1133,16 @@ class KafkaConsumerTest {
         Map<String, Object> event = basePaidCourseEvent();
         ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
 
-        JsonNode providerResponse = mapper.createObjectNode().put("id", "partner1");
-        JsonNode contentResponse = mapper.createObjectNode().put("id", "course1");
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
         SBApiResponse response = new SBApiResponse();
         response.getParams().setMsg("Validation failed for course");
 
         when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
-        when(transformUtility.callCiosReadAPi("course1", "partner1")).thenReturn(contentResponse);
-        when(enrollmentService.validatePaidCourseEnrollment("user1", "course1", "partner1", providerResponse,
-                contentResponse, response)).thenReturn(false);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(false);
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
@@ -1161,19 +1170,19 @@ class KafkaConsumerTest {
     @Test
     void validateAndEnrolPaidCourses_pointsToConvertMissing_reawardsWithZeroPoints() throws Exception {
         Map<String, Object> event = basePaidCourseEvent();
-        event.remove(Constants.POINTS_TO_CONVERT);
+        ((Map<String, Object>) event.get(Constants.DATA)).remove(Constants.EVENT_COINS_REDEEMED);
         ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
 
-        JsonNode providerResponse = mapper.createObjectNode().put("id", "partner1");
-        JsonNode contentResponse = mapper.createObjectNode().put("id", "course1");
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
         SBApiResponse response = new SBApiResponse();
         response.getParams().setMsg("Validation failed for course");
 
         when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
-        when(transformUtility.callCiosReadAPi("course1", "partner1")).thenReturn(contentResponse);
-        when(enrollmentService.validatePaidCourseEnrollment("user1", "course1", "partner1", providerResponse,
-                contentResponse, response)).thenReturn(false);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(false);
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
