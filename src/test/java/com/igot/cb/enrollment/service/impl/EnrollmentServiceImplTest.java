@@ -2934,11 +2934,6 @@ class EnrollmentServiceImplTest {
 
         boolean result = enrollmentService.validatePaidCourseEnrollment(
                 userId, partnerId, courseId, contentResponse, providerResponse, response);
-
-        // Free course => karmaValidationResult = (allowed=true, redeemedPoints=0). Since
-        // redeemedPoints is not > 0, the Coursera-invite branch is skipped entirely and
-        // execution falls out of the "if (redeemedPoints > 0)" block straight to the
-        // unconditional "return false;" at the end of the method.
         assertFalse(result);
         verify(transformUtility, never()).callCourseraInviteApi(any(), any());
     }
@@ -3109,7 +3104,7 @@ class EnrollmentServiceImplTest {
 
     @Test
     @DisplayName("isAccessControlAllowed: returns true immediately without delegating when access settings are not enabled")
-    void isAccessControlAllowed_NotEnabled_ReturnsTrueWithoutDelegating() throws Exception {
+    void isAccessControlAllowed_NotEnabled_ReturnsTrueWithoutDelegating(){
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.ACCESS_SETTINGS_ENABLED, false);
@@ -3124,7 +3119,7 @@ class EnrollmentServiceImplTest {
 
     @Test
     @DisplayName("isAccessControlAllowed: delegates to handleAccessControlledEnrollment when access settings are enabled")
-    void isAccessControlAllowed_Enabled_DelegatesToHandleAccessControlledEnrollment() throws Exception {
+    void isAccessControlAllowed_Enabled_DelegatesToHandleAccessControlledEnrollment() {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.ACCESS_SETTINGS_ENABLED, true);

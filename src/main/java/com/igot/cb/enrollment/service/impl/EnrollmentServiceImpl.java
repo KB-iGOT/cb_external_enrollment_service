@@ -1289,7 +1289,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return true;
             }
         } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
+           log.error("Error processing JSON while validating paid course enrollment: {}", e.getMessage(), e);
+           throw new CustomException("JSON_PROCESSING_ERROR", "Error processing JSON while validating paid course enrollment", HttpStatus.BAD_REQUEST);
         }
         return false;
     }
