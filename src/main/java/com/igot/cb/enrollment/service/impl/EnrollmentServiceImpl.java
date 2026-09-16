@@ -541,6 +541,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     public boolean enrollUserInCourse(String userId, String courseId, String partnerId, JsonNode providerResponse, JsonNode contentResponse) throws JsonProcessingException {
+        log.info("Enrolling user {} to course {} for partner {}", userId, courseId, partnerId);
         ZoneId zoneId = ZoneId.of(Constants.UTC);
         Instant instant = LocalDateTime.now().atZone(zoneId).toInstant();
 
@@ -1277,8 +1278,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
             int redeemedPoints = karmaValidationResult.getRedeemedKarmaPoints();
             if (redeemedPoints > 0) {
+                log.info("Karma points deduction required for userId: {}, courseId: {}, points: {}", userId, courseId, redeemedPoints);
                 String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
                 if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
+                    log.warn("Calling Coursera invite API for userId: {}, courseId: {}", userId, courseId);
                     boolean inviteSuccess = transformUtility.callCourseraInviteApi(
                             contentResponse,
                             userProfile);
@@ -1332,7 +1335,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         eventData.put(Constants.EID, Constants.KARMA_COIN_REAWARD);
         eventData.put(Constants.ETS, System.currentTimeMillis());
         eventData.put(Constants.EVENT_USER_ID, userId);
-        eventData.put(Constants.OPERATION, Constants.REAWARD_OPERATION);
+        eventData.put(Constants.OPERATION, Constants.CREDIT_OPERATION);
         eventData.put(Constants.ACTION_TYPE, Constants.COINS_REAWARD_ACTION);
         eventData.put(Constants.COINS_TO_REAWARD, pointsToConvert);
         eventData.put(Constants.CONTEXT_TYPE, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);

@@ -440,10 +440,11 @@ public class KafkaConsumer {
                 if (!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse.path(Constants.DATA), contentResponse)) {
                     enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
                     Object pointsToConvert = eventData.get(Constants.EVENT_COINS_REDEEMED);
-
                     enrollmentService.triggerCoinsReaward(userId, courseId, pointsToConvert instanceof Number number ? number.intValue() : 0, courseName, providerName, transactionId , "Enrollment failed");
+                } else {
+                    log.info("User {} successfully enrolled in course {} and deleting cache", userId, courseId);
+                    cacheService.deleteCache(Constants.USER_ENROLMENTS_PREFIX + userId + "_" + courseId, cbServerProperties.getRedisIndex());
                 }
-                //delete cache
             } else {
                 enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
                 Object pointsToConvert = eventData.get(Constants.EVENT_COINS_REDEEMED);

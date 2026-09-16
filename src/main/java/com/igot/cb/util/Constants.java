@@ -218,6 +218,7 @@ public class Constants {
     public static final String USER_NOT_ENROLLED = "User not enrolled into the course";
     public static final String CERTIFICATE_TEMPLATE_URL = "certificateTemplateUrl";
     public static final String EVENT_COINS_REDEEMED = "coinsRedeemed";
+    public static final String CREDIT_OPERATION = "CREDIT";
 
     private Constants() {
     }

@@ -2960,7 +2960,7 @@ class EnrollmentServiceImplTest {
         Map<String, Object> eventData = (Map<String, Object>) event.get(Constants.DATA);
         assertNotNull(eventData);
         assertEquals(Constants.KARMA_COIN_REAWARD, eventData.get(Constants.EID));
-        assertEquals(Constants.REAWARD_OPERATION, eventData.get(Constants.OPERATION));
+        assertEquals(Constants.CREDIT_OPERATION, eventData.get(Constants.OPERATION));
         assertEquals(Constants.COINS_REAWARD_ACTION, eventData.get(Constants.ACTION_TYPE));
         assertEquals(42, eventData.get(Constants.COINS_TO_REAWARD));
         assertEquals(Constants.EXT_COURSE_ENROLLMENT_CONTEXT, eventData.get(Constants.CONTEXT_TYPE));
