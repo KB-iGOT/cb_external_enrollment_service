@@ -97,8 +97,8 @@ class KafkaConsumerTest {
         ReflectionTestUtils.setField(kafkaConsumer, "cacheService", cacheService);
         lenient().when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
         lenient().when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
-        lenient().when(cbServerProperties.getEnrolmentCounterDedupeTtlSeconds()).thenReturn(DEDUPE_TTL_SECONDS);
-        lenient().when(cbServerProperties.getPaidCourseEnrolmentDedupeTtlSeconds()).thenReturn(DEDUPE_TTL_SECONDS);
+        lenient().when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(DEDUPE_TTL_SECONDS);
+        lenient().when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(DEDUPE_TTL_SECONDS);
     }
 
     @Test
