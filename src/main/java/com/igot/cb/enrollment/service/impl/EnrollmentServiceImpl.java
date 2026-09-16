@@ -1260,7 +1260,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     ? getUserAttributes(userProfile)
                     : new HashMap<>();
 
-            KarmaValidationResult karmaValidationResult = validatePartnerEnrollmentLimits(
+            KarmaValidationResult karmaValidationResult = validatePartnerLimits(
                     userId,
                     partnerId,
                     courseId,
@@ -1276,26 +1276,21 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return false;
             }
 
-            int redeemedPoints = karmaValidationResult.getRedeemedKarmaPoints();
-            if (redeemedPoints > 0) {
-                log.info("Karma points deduction required for userId: {}, courseId: {}, points: {}", userId, courseId, redeemedPoints);
-                String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
-                if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
-                    log.warn("Calling Coursera invite API for userId: {}, courseId: {}", userId, courseId);
-                    boolean inviteSuccess = transformUtility.callCourseraInviteApi(
-                            contentResponse,
-                            userProfile);
-                    if (!inviteSuccess) {
-                        return false;
-                    }
+            String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();
+            if (cbServerProperties.getCourseraPartnerCode().equalsIgnoreCase(providerCode)) {
+                log.warn("Calling Coursera invite API for userId: {}, courseId: {}", userId, courseId);
+                boolean inviteSuccess = transformUtility.callCourseraInviteApi(
+                        contentResponse,
+                        userProfile);
+                if (!inviteSuccess) {
+                    return false;
                 }
-                return true;
             }
+            return true;
         } catch (JsonProcessingException e) {
            log.error("Error processing JSON while validating paid course enrollment: {}", e.getMessage(), e);
            throw new CustomException("JSON_PROCESSING_ERROR", "Error processing JSON while validating paid course enrollment", HttpStatus.BAD_REQUEST);
         }
-        return false;
     }
 
     /**
@@ -1330,21 +1325,22 @@ public class EnrollmentServiceImpl implements EnrollmentService {
      * Reverses a previously debited karma-coin amount for a paid course enrolment that
      * could not be completed, so the user's balance is restored.
      */
-    public void triggerCoinsReaward(String userId, String courseId, int pointsToConvert, String courseName, String providerName, String transactionId, String message) {
+    public void triggerCoinsReaward(Map<String, Object> reawardData, String courseName, String providerName, String message) {
         Map<String, Object> eventData = new HashMap<>();
+        String userId = (String) reawardData.get(Constants.EVENT_USER_ID);
         eventData.put(Constants.EID, Constants.KARMA_COIN_REAWARD);
         eventData.put(Constants.ETS, System.currentTimeMillis());
         eventData.put(Constants.EVENT_USER_ID, userId);
         eventData.put(Constants.OPERATION, Constants.CREDIT_OPERATION);
         eventData.put(Constants.ACTION_TYPE, Constants.COINS_REAWARD_ACTION);
-        eventData.put(Constants.COINS_TO_REAWARD, pointsToConvert);
+        eventData.put(Constants.COINS_TO_REAWARD, reawardData.get(Constants.COINS_TO_REAWARD));
         eventData.put(Constants.CONTEXT_TYPE, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);
-        eventData.put(Constants.CONTEXT_ID, courseId);
+        eventData.put(Constants.CONTEXT_ID, reawardData.get(Constants.CONTEXT_ID));
         eventData.put(Constants.INFO, message);
         eventData.put(Constants.COURSE_NAME, courseName);
         eventData.put(Constants.PROVIDER_NAME, providerName);
-        eventData.put(Constants.TRANSACTION_ID, transactionId);
-        eventData.put(Constants.CREATED_AT, System.currentTimeMillis());
+        eventData.put(Constants.TRANSACTION_ID, reawardData.get(Constants.TRANSACTION_ID));
+        eventData.put(Constants.CREATED_AT, reawardData.get(Constants.CREATED_AT));
         eventData.put(Constants.REQ_ID, UUID.randomUUID().toString());
 
         Map<String, Object> event = new HashMap<>();
@@ -1353,7 +1349,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         event.put(Constants.VERSION, Constants.EVENT_VERSION);
 
         producer.push(cbServerProperties.getKarmaPointsUnifiedEventTopic(), event, userId);
-        log.info("Coins reaward event triggered for userId: {}, courseId: {}, points: {}", userId, courseId, pointsToConvert);
+        log.info("Coins reaward event triggered for userId: {}", userId);
     }
 
     /**
@@ -1448,6 +1444,39 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
 
         return handleAccessControlledEnrollment(courseId, userAttributes);
+    }
+
+    private KarmaValidationResult validatePartnerLimits(
+            String userId,
+            String partnerId,
+            String courseId,
+            SBApiResponse response,
+            JsonNode providerResponse,
+            JsonNode contentResponse,
+            Map<String, String> userAttributes) {
+
+        // Free courses skip course-level and partner-level validation entirely
+        if (isCourseFree(contentResponse)) {
+            return new KarmaValidationResult(true, 0);
+        }
+
+        if (isOverallLimitExceeded(userId, partnerId, providerResponse, response)) {
+            return new KarmaValidationResult(false, 0);
+        }
+
+        if (isUserWiseLimitExceeded(userId, partnerId, providerResponse, response)) {
+            return new KarmaValidationResult(false, 0);
+        }
+
+        if (isConcurrentLimitExceeded(userId, partnerId, providerResponse, response)) {
+            return new KarmaValidationResult(false, 0);
+        }
+
+        if (isCourseLevelCapExceeded(courseId, partnerId, providerResponse, contentResponse, response)) {
+            return new KarmaValidationResult(false, 0);
+        }
+
+        return new KarmaValidationResult(true, 0);
     }
 }
 

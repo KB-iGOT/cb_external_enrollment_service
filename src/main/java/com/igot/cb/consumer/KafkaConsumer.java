@@ -92,7 +92,7 @@ public class KafkaConsumer {
         // Only claim the reqId once the Cassandra batch has actually succeeded - claiming it
         // earlier could mark a never-applied event as done if the write later failed.
         if (dedupeKey != null) {
-            cacheService.putCache(dedupeKey, cbServerProperties.getRedisIndex(), Boolean.TRUE, Constants.ENROLMENT_COUNTER_DEDUPE_TTL_SECONDS);
+            cacheService.putCache(dedupeKey, cbServerProperties.getRedisIndex(), Boolean.TRUE, cbServerProperties.getDedupeTtlSeconds());
         }
         acknowledgment.acknowledge();
     }
@@ -428,27 +428,33 @@ public class KafkaConsumer {
             Map<String, Object> paidCourseEvent = mapper.readValue(data.value(), new TypeReference<>() {
             });
             Map<String, Object> eventData = (Map<String, Object>) paidCourseEvent.get(Constants.DATA);
+            String reqId = (String) eventData.get(Constants.REQ_ID);
+            String dedupeKey = StringUtils.isNotBlank(reqId) ? Constants.PAID_COURSE_ENROLMENT_DEDUPE_PREFIX + reqId : null;
+            if (dedupeKey != null && StringUtils.isNotBlank(cacheService.getCache(dedupeKey, cbServerProperties.getRedisIndex()))) {
+                log.info("Paid course enrolment event {} already processed, skipping", reqId);
+                return;
+            }
             String userId = (String) eventData.get(Constants.EVENT_USER_ID);
             String courseId = (String) eventData.get(Constants.CONTEXT_ID);
             String courseName = (String) eventData.get(Constants.COURSE_NAME);
             String providerName = (String) eventData.get(Constants.PROVIDER_NAME);
-            String transactionId = (String) eventData.get(Constants.TRANSACTION_ID);
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
             String partnerId = contentResponse.path(Constants.CONTENT_PARTNER).path(Constants.ID).asText("");
             JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
             if (enrollmentService.validatePaidCourseEnrollment(userId, partnerId, courseId, contentResponse, providerResponse, response)) {
                 if (!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse.path(Constants.DATA), contentResponse)) {
                     enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
-                    Object pointsToConvert = eventData.get(Constants.EVENT_COINS_REDEEMED);
-                    enrollmentService.triggerCoinsReaward(userId, courseId, pointsToConvert instanceof Number number ? number.intValue() : 0, courseName, providerName, transactionId , "Enrollment failed");
+                    enrollmentService.triggerCoinsReaward(eventData, courseName, providerName, "Enrollment failed");
                 } else {
                     log.info("User {} successfully enrolled in course {} and deleting cache", userId, courseId);
                     cacheService.deleteCache(Constants.USER_ENROLMENTS_PREFIX + userId + "_" + courseId, cbServerProperties.getRedisIndex());
                 }
             } else {
                 enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
-                Object pointsToConvert = eventData.get(Constants.EVENT_COINS_REDEEMED);
-                enrollmentService.triggerCoinsReaward(userId, courseId, pointsToConvert instanceof Number number ? number.intValue() : 0, courseName, providerName, transactionId, response.getParams().getMsg());
+                enrollmentService.triggerCoinsReaward(eventData, courseName, providerName, response.getParams().getMsg());
+            }
+            if (dedupeKey != null) {
+                cacheService.putCache(dedupeKey, cbServerProperties.getRedisIndex(), Boolean.TRUE, cbServerProperties.getDedupeTtlSeconds());
             }
         } catch (Exception e) {
             log.error("Failed to read enroll Request. Message received : {}", data.value(), e);

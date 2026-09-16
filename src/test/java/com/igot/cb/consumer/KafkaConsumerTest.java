@@ -89,12 +89,16 @@ class KafkaConsumerTest {
     @Mock
     private EnrollmentServiceImpl enrollmentService;
 
+    static final long DEDUPE_TTL_SECONDS = 14400L;
+
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(kafkaConsumer, "mapper", mapper);
         ReflectionTestUtils.setField(kafkaConsumer, "cacheService", cacheService);
         lenient().when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
         lenient().when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
+        lenient().when(cbServerProperties.getEnrolmentCounterDedupeTtlSeconds()).thenReturn(DEDUPE_TTL_SECONDS);
+        lenient().when(cbServerProperties.getPaidCourseEnrolmentDedupeTtlSeconds()).thenReturn(DEDUPE_TTL_SECONDS);
     }
 
     @Test
@@ -932,7 +936,7 @@ class KafkaConsumerTest {
                 eq(Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + "req-2"),
                 anyInt(),
                 eq(Boolean.TRUE),
-                eq(Constants.ENROLMENT_COUNTER_DEDUPE_TTL_SECONDS));
+                eq(DEDUPE_TTL_SECONDS));
         verify(acknowledgment).acknowledge();
     }
 
@@ -1052,6 +1056,9 @@ class KafkaConsumerTest {
         return new ConsumerRecord<>("paid-course-topic", 0, 0L, "key", payload);
     }
 
+    private static final long PAID_COURSE_EVENT_CREATED_AT = 1789561308650L;
+    private static final String PAID_COURSE_EVENT_REQ_ID = "d7a8bf43-6436-4ec1-869e-de6745a62849";
+
     private Map<String, Object> basePaidCourseEvent() {
         Map<String, Object> eventData = new HashMap<>();
         eventData.put(Constants.EVENT_USER_ID, "user1");
@@ -1060,11 +1067,17 @@ class KafkaConsumerTest {
         eventData.put(Constants.PROVIDER_NAME, "Provider One");
         eventData.put(Constants.TRANSACTION_ID, "txn1");
         eventData.put(Constants.EVENT_COINS_REDEEMED, 50);
+        eventData.put(Constants.CREATED_AT, PAID_COURSE_EVENT_CREATED_AT);
+        eventData.put(Constants.REQ_ID, PAID_COURSE_EVENT_REQ_ID);
 
         Map<String, Object> event = new HashMap<>();
         event.put(Constants.DATA, eventData);
         event.put("eventType", "EXT_COURSE_ENROLLMENT");
         return event;
+    }
+
+    private String paidCourseDedupeKey() {
+        return Constants.PAID_COURSE_ENROLMENT_DEDUPE_PREFIX + PAID_COURSE_EVENT_REQ_ID;
     }
 
     private ObjectNode paidCourseContentResponse() {
@@ -1099,7 +1112,9 @@ class KafkaConsumerTest {
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
         verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
-        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), anyInt(), any(), any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
+        verify(cacheService).putCache(eq(paidCourseDedupeKey()), anyInt(), eq(Boolean.TRUE),
+                eq(DEDUPE_TTL_SECONDS));
     }
 
     @Test
@@ -1122,9 +1137,12 @@ class KafkaConsumerTest {
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
+        Map<String, Object> expectedEventData = (Map<String, Object>) basePaidCourseEvent().get(Constants.DATA);
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED);
-        verify(enrollmentService).triggerCoinsReaward("user1", "course1", 50, "Course One", "Provider One", "txn1",
-                "Enrollment failed");
+        verify(enrollmentService).triggerCoinsReaward(eq(expectedEventData), eq("Course One"), eq("Provider One"),
+                eq("Enrollment failed"));
+        verify(cacheService).putCache(eq(paidCourseDedupeKey()), anyInt(), eq(Boolean.TRUE),
+                eq(DEDUPE_TTL_SECONDS));
     }
 
     @Test
@@ -1146,9 +1164,10 @@ class KafkaConsumerTest {
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
+        Map<String, Object> expectedEventData = (Map<String, Object>) basePaidCourseEvent().get(Constants.DATA);
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED);
-        verify(enrollmentService).triggerCoinsReaward("user1", "course1", 50, "Course One", "Provider One", "txn1",
-                "Validation failed for course");
+        verify(enrollmentService).triggerCoinsReaward(eq(expectedEventData), eq("Course One"), eq("Provider One"),
+                eq("Validation failed for course"));
         verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
     }
 
@@ -1164,30 +1183,56 @@ class KafkaConsumerTest {
         verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
         verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
         verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
-        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), anyInt(), any(), any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
+    }
+
+    // ------------------------------------------------------------------
+    // validateAndEnrolPaidCourses - reqId dedup guard
+    // ------------------------------------------------------------------
+
+    @Test
+    void validateAndEnrolPaidCourses_duplicateReqId_skipsProcessingEntirely() throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        when(cacheService.getCache(paidCourseDedupeKey(), cbServerProperties.getRedisIndex())).thenReturn("true");
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(transformUtility, never()).callCiosContentReadAPi(any());
+        verify(transformUtility, never()).callContentPartnerReadApi(any());
+        verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
     }
 
     @Test
-    void validateAndEnrolPaidCourses_pointsToConvertMissing_reawardsWithZeroPoints() throws Exception {
+    void validateAndEnrolPaidCourses_noReqId_processesNormallyWithoutDedupeGuard() throws Exception {
         Map<String, Object> event = basePaidCourseEvent();
-        ((Map<String, Object>) event.get(Constants.DATA)).remove(Constants.EVENT_COINS_REDEEMED);
+        ((Map<String, Object>) event.get(Constants.DATA)).remove(Constants.REQ_ID);
         ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
 
         ObjectNode providerResponse = paidCourseProviderResponse();
         ObjectNode contentResponse = paidCourseContentResponse();
         SBApiResponse response = new SBApiResponse();
-        response.getParams().setMsg("Validation failed for course");
 
         when(transformUtility.createDefaultResponse("")).thenReturn(response);
         when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
         when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
-                providerResponse, response)).thenReturn(false);
+                providerResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse)).thenReturn(true);
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
-        verify(enrollmentService).triggerCoinsReaward("user1", "course1", 0, "Course One", "Provider One", "txn1",
-                "Validation failed for course");
+        verify(enrollmentService).enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse);
+        verify(cacheService, never()).getCache(anyString(), anyInt());
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
     }
 
     @SuppressWarnings("unchecked")

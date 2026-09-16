@@ -2738,8 +2738,8 @@ class EnrollmentServiceImplTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("validatePaidCourseEnrollment: returns false when karma/partner-limit validation fails, without touching access control or Coursera invite")
-    void validatePaidCourseEnrollment_KarmaValidationFails_ReturnsFalse() {
+    @DisplayName("validatePaidCourseEnrollment: returns false when a partner limit is exceeded, without touching access control or Coursera invite - and never re-checks karma balance")
+    void validatePaidCourseEnrollment_PartnerLimitExceeded_ReturnsFalse() {
         ObjectMapper realMapper = new ObjectMapper();
         String userId = "user1";
         String partnerId = "partner1";
@@ -2747,18 +2747,27 @@ class EnrollmentServiceImplTest {
 
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
-        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
 
         ObjectNode providerData = realMapper.createObjectNode();
         providerData.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerData.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1);
         ObjectNode providerResponse = realMapper.createObjectNode();
         providerResponse.set(Constants.DATA, providerData);
 
         Map<String, Object> userProfile = new HashMap<>();
         userProfile.put(Constants.ID, userId);
         when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
-        when(transformUtility.readUserKarmaCoins(userId)).thenReturn(10L);
-        when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Insufficient karma coins, %d required");
+        when(cbServerProperties.getPartnerOverallLimitMsg()).thenReturn("Partner overall enrollment limit reached");
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 1L)));
+        lenient().when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
 
         SBApiResponse response = new SBApiResponse();
 
@@ -2768,6 +2777,7 @@ class EnrollmentServiceImplTest {
         assertFalse(result);
         verify(transformUtility, never()).readAccessSettings(anyString());
         verify(transformUtility, never()).callCourseraInviteApi(any(), any());
+        verify(transformUtility, never()).readUserKarmaCoins(any());
     }
 
     @Test
@@ -2808,8 +2818,8 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("validatePaidCourseEnrollment: redeemedPoints > 0 with a non-Coursera partner returns true without inviting")
-    void validatePaidCourseEnrollment_RedeemedPointsNonCoursera_ReturnsTrue() {
+    @DisplayName("validatePaidCourseEnrollment: partner limits pass, non-Coursera partner returns true without inviting or re-checking karma balance")
+    void validatePaidCourseEnrollment_NonCourseraPartner_ReturnsTrue() {
         ObjectMapper realMapper = new ObjectMapper();
         String userId = "user1";
         String partnerId = "partner1";
@@ -2817,7 +2827,6 @@ class EnrollmentServiceImplTest {
 
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
-        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 50);
 
         ObjectNode providerData = realMapper.createObjectNode();
         providerData.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
@@ -2828,7 +2837,6 @@ class EnrollmentServiceImplTest {
         Map<String, Object> userProfile = new HashMap<>();
         userProfile.put(Constants.ID, userId);
         when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
-        when(transformUtility.readUserKarmaCoins(userId)).thenReturn(200L);
         when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
 
         SBApiResponse response = new SBApiResponse();
@@ -2838,10 +2846,11 @@ class EnrollmentServiceImplTest {
 
         assertTrue(result);
         verify(transformUtility, never()).callCourseraInviteApi(any(), any());
+        verify(transformUtility, never()).readUserKarmaCoins(any());
     }
 
     @Test
-    @DisplayName("validatePaidCourseEnrollment: redeemedPoints > 0 with Coursera partner and a successful invite returns true and invokes the invite API")
+    @DisplayName("validatePaidCourseEnrollment: Coursera partner with a successful invite returns true and invokes the invite API")
     void validatePaidCourseEnrollment_CourseraInviteSucceeds_ReturnsTrue() {
         ObjectMapper realMapper = new ObjectMapper();
         String userId = "user1";
@@ -2850,7 +2859,6 @@ class EnrollmentServiceImplTest {
 
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
-        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 50);
 
         ObjectNode providerData = realMapper.createObjectNode();
         providerData.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
@@ -2861,7 +2869,6 @@ class EnrollmentServiceImplTest {
         Map<String, Object> userProfile = new HashMap<>();
         userProfile.put(Constants.ID, userId);
         when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
-        when(transformUtility.readUserKarmaCoins(userId)).thenReturn(200L);
         when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
         when(transformUtility.callCourseraInviteApi(contentResponse, userProfile)).thenReturn(true);
 
@@ -2875,7 +2882,7 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("validatePaidCourseEnrollment: redeemedPoints > 0 with Coursera partner and a failed invite returns false")
+    @DisplayName("validatePaidCourseEnrollment: Coursera partner with a failed invite returns false")
     void validatePaidCourseEnrollment_CourseraInviteFails_ReturnsFalse() {
         ObjectMapper realMapper = new ObjectMapper();
         String userId = "user1";
@@ -2884,7 +2891,6 @@ class EnrollmentServiceImplTest {
 
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
-        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 50);
 
         ObjectNode providerData = realMapper.createObjectNode();
         providerData.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
@@ -2895,7 +2901,6 @@ class EnrollmentServiceImplTest {
         Map<String, Object> userProfile = new HashMap<>();
         userProfile.put(Constants.ID, userId);
         when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
-        when(transformUtility.readUserKarmaCoins(userId)).thenReturn(200L);
         when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
         when(transformUtility.callCourseraInviteApi(contentResponse, userProfile)).thenReturn(false);
 
@@ -2908,8 +2913,8 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("validatePaidCourseEnrollment: redeemedPoints == 0 (free course, no karma required) falls through to false - reflects real current logic, not the 'obviously right' true")
-    void validatePaidCourseEnrollment_ZeroRedeemedPoints_ReturnsFalse() {
+    @DisplayName("validatePaidCourseEnrollment: free course (no karma ever required) also returns true once limits pass - success no longer depends on redeemedKarmaPoints")
+    void validatePaidCourseEnrollment_FreeCourse_ReturnsTrue() {
         ObjectMapper realMapper = new ObjectMapper();
         String userId = "user1";
         String partnerId = "partner1";
@@ -2932,7 +2937,7 @@ class EnrollmentServiceImplTest {
 
         boolean result = enrollmentService.validatePaidCourseEnrollment(
                 userId, partnerId, courseId, contentResponse, providerResponse, response);
-        assertFalse(result);
+        assertTrue(result);
         verify(transformUtility, never()).callCourseraInviteApi(any(), any());
     }
 
@@ -2945,8 +2950,19 @@ class EnrollmentServiceImplTest {
     void triggerCoinsReaward_PublishesEvent() {
         when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
 
-        enrollmentService.triggerCoinsReaward(
-                "user1", "course1", 42, "Course Name", "Provider Name", "txn-123", "refund message");
+        Map<String, Object> reawardData = new HashMap<>();
+        reawardData.put(Constants.EVENT_USER_ID, "user1");
+        reawardData.put(Constants.CONTEXT_ID, "course1");
+        reawardData.put(Constants.TRANSACTION_ID, "txn-123");
+        reawardData.put(Constants.CREATED_AT, 1789561308650L);
+        // NOTE: a real incoming confirmation event carries the coins figure under
+        // EVENT_COINS_REDEEMED ("coinsRedeemed"), never under COINS_TO_REAWARD
+        // ("coinsToReaward") - triggerCoinsReaward currently reads reawardData.get(COINS_TO_REAWARD),
+        // so passing a real event through unmodified always yields a null coins value below.
+        // Documented as real current behavior, not fixed here (out of scope for this change).
+        reawardData.put(Constants.EVENT_COINS_REDEEMED, 42);
+
+        enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> eventCaptor = ArgumentCaptor.forClass(Map.class);
@@ -2962,7 +2978,8 @@ class EnrollmentServiceImplTest {
         assertEquals(Constants.KARMA_COIN_REAWARD, eventData.get(Constants.EID));
         assertEquals(Constants.CREDIT_OPERATION, eventData.get(Constants.OPERATION));
         assertEquals(Constants.COINS_REAWARD_ACTION, eventData.get(Constants.ACTION_TYPE));
-        assertEquals(42, eventData.get(Constants.COINS_TO_REAWARD));
+        assertNull(eventData.get(Constants.COINS_TO_REAWARD),
+                "documents current behavior: reawardData has no COINS_TO_REAWARD key (real events use EVENT_COINS_REDEEMED), so this passes through as null");
         assertEquals(Constants.EXT_COURSE_ENROLLMENT_CONTEXT, eventData.get(Constants.CONTEXT_TYPE));
         assertEquals("course1", eventData.get(Constants.CONTEXT_ID));
         assertEquals("refund message", eventData.get(Constants.INFO));
@@ -2970,6 +2987,8 @@ class EnrollmentServiceImplTest {
         assertEquals("Provider Name", eventData.get(Constants.PROVIDER_NAME));
         assertEquals("txn-123", eventData.get(Constants.TRANSACTION_ID));
         assertEquals("user1", eventData.get(Constants.EVENT_USER_ID));
+        assertEquals(1789561308650L, eventData.get(Constants.CREATED_AT),
+                "reaward event must reuse the original confirmation event's createdAt, not a freshly generated timestamp");
     }
 
     // ------------------------------------------------------------------

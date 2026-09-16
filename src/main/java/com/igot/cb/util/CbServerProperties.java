@@ -126,4 +126,7 @@ public class CbServerProperties {
 
     @Value("${failed.enrollment.ttl.seconds}")
     private Long failedEnrolmentTtlSeconds;
+
+    @Value("${dedupe.ttl.seconds}")
+    private long dedupeTtlSeconds;
 }
