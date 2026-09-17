@@ -1206,6 +1206,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             );
             int requiredKarmaPoints = karmaValidationResult.getRedeemedKarmaPoints();
             if (!karmaValidationResult.isAllowed()) {
+                response.setResponseCode(HttpStatus.PAYMENT_REQUIRED);
                 return response;
             }
             Map<String, Object> result = new HashMap<>();
