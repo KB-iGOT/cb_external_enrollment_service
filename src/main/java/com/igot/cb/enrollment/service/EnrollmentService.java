@@ -13,6 +13,8 @@ public interface EnrollmentService {
 
   SBApiResponse readByUserIdAndCourseId(String courseId,String token);
 
+  SBApiResponse readByUserIdAndCourseIdV2(String courseId, String token);
+
   SBApiResponse readByUserIdAndPartnerId(Map<String, Object> searchRequest, String token);
 
   SBApiResponse userProgressUpdate(JsonNode jsonNode, String partnerid);

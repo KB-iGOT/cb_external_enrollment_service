@@ -119,11 +119,8 @@ public class Constants {
     public static final String SCOPE_TYPE_USER_ENROLMENTS = "USER_ENROLMENTS";
     public static final String SCOPE_TYPE_COURSE_ENROLMENTS = "COURSE_ENROLMENTS";
     public static final String ENROLMENT_COUNTER_CACHE_PREFIX = "enrolCounter_";
-    // Dedup guard for enrolmentCounterUpdateConsumer - one key per reqId, set only after the
-    // Cassandra batch succeeds, so a Kafka redelivery of the same event is skipped instead of
-    // re-applied. 4 hours comfortably outlasts any realistic redelivery/retry window.
     public static final String ENROLMENT_COUNTER_DEDUPE_PREFIX = "enrolCounterDedupe_";
-    public static final long ENROLMENT_COUNTER_DEDUPE_TTL_SECONDS = 4 * 60 * 60L;
+    public static final String PAID_COURSE_ENROLMENT_DEDUPE_PREFIX = "paidCourseEnrolDedupe_";
     public static final String REQ_ID = "reqId";
     public static final String COURSE_TYPE_PAID = "paid";
     public static final String COURSE_TYPE_FREE = "free";
@@ -176,6 +173,49 @@ public class Constants {
     public static final String ENROLLED_WITH_KARMA_DEDUCTION = "You have been successfully enrolled into \"%s\", and \"%d\" Karma Coin has been deducted from your Karma Wallet.";
     public static final String ENROLLED_WITHOUT_KARMA_DEDUCTION = "You have been successfully enrolled into \"%s\".";
     public static final String NAME = "name";
+
+    // Coins redemption (unified karma ledger) event - triggered for a paid course under a
+    // course-level license, in place of an immediate synchronous enrolment.
+    public static final String EVENT_TYPE = "eventType";
+    public static final String COINS_REDEMPTION_EVENT_TYPE = "COINS_REDEMPTION";
+    public static final String EID = "eid";
+    public static final String KARMA_COIN_DEBIT = "KARMA_COIN_DEBIT";
+    public static final String ETS = "ets";
+    public static final String EVENT_USER_ID = "userId";
+    public static final String OPERATION = "operation";
+    public static final String DEBIT_OPERATION = "DEBIT";
+    public static final String ACTION_TYPE = "actionType";
+    public static final String POINTS_REDEMPTION_ACTION = "POINTS_REDEMPTION";
+    public static final String CONTEXT_TYPE = "contextType";
+    public static final String EXT_COURSE_ENROLLMENT_CONTEXT = "EXT_COURSE_ENROLLMENT";
+    public static final String PENDING_ENROLMENT_KEY_PREFIX = "pendingEnrolment_";
+    public static final String REQUIRED_KARMA_COINS = "requiredKarmaCoins";
+
+    // user_karma_coin_wallet (sunbird keyspace) - balance = total_earned - total_redeemed
+    public static final String TABLE_USER_KARMA_COIN_WALLET = "user_karma_coin_wallet";
+    public static final String TOTAL_EARNED = "total_earned";
+    public static final String TOTAL_REDEEMED = "total_redeemed";
+    public static final String POINTS_TO_REDEEM = "pointsToRedeem";
+    public static final String KARMA_COIN_REAWARD = "KARMA_COIN_REAWARD";
+    public static final String REAWARD_OPERATION = "REAWARD";
+    public static final String COINS_REAWARD_ACTION = "COINS_REAWARD";
+    public static final String COINS_REAWARD_EVENT_TYPE = "COINS_REAWARD";
+    public static final String POINTS_TO_CONVERT = "pointsToConvert";
+    public static final String VERSION = "version";
+    public static final String EVENT_VERSION = "1";
+    public static final String PENDING_ENROLMENT_STATUS = "Pending";
+    public static final String ISSUED_BADGES = "issued_badges";
+    public static final String ENROLLMENT_PROGRESS = "Enrollment in progress";
+    public static final String COINS_TO_REDEEM = "coinsToRedeem";
+    public static final String CONTENT_PARTNER_NAME = "contentPartnerName";
+    public static final String COINS_TO_REAWARD = "coinsToReaward";
+    public static final String INFO = "info";
+    public static final String TRANSACTION_ID = "transactionId";
+    public static final String CREATED_AT = "createdAt";
+    public static final String USER_NOT_ENROLLED = "User not enrolled into the course";
+    public static final String CERTIFICATE_TEMPLATE_URL = "certificateTemplateUrl";
+    public static final String EVENT_COINS_REDEEMED = "coinsRedeemed";
+    public static final String CREDIT_OPERATION = "CREDIT";
 
     private Constants() {
     }

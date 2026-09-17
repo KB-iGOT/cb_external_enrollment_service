@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.TransformUtility;
@@ -15,12 +16,13 @@ import java.io.InputStream;
 
 
 import com.igot.cb.util.cache.CacheService;
+import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.exceptions.CustomException;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.WordUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -37,26 +39,18 @@ import org.springframework.core.io.*;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class KafkaConsumer {
     private ObjectMapper mapper = new ObjectMapper();
+    private final CassandraOperation cassandraOperation;
+    private final Producer producer;
+    private final CbServerProperties cbServerProperties;
+    private final TransformUtility transformUtility;
+    private final ResourceLoader resourceLoader;
+    private final CacheService cacheService;
+    private final EnrollmentServiceImpl enrollmentService;
 
-    @Autowired
-    private CassandraOperation cassandraOperation;
 
-    @Autowired
-    private Producer producer;
-
-    @Autowired
-    private CbServerProperties cbServerProperties;
-
-    @Autowired
-    TransformUtility transformUtility;
-
-    @Autowired
-    private ResourceLoader resourceLoader;
-
-    @Autowired
-    private CacheService cacheService;
 
     @KafkaListener(topics = "${spring.kafka.enrolment.counter.update.topic.name}", groupId = "${spring.kafka.enrolment.counter.update.consumer.group.id}")
     public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
@@ -98,7 +92,7 @@ public class KafkaConsumer {
         // Only claim the reqId once the Cassandra batch has actually succeeded - claiming it
         // earlier could mark a never-applied event as done if the write later failed.
         if (dedupeKey != null) {
-            cacheService.putCache(dedupeKey, cbServerProperties.getRedisIndex(), Boolean.TRUE, Constants.ENROLMENT_COUNTER_DEDUPE_TTL_SECONDS);
+            cacheService.putCache(dedupeKey, cbServerProperties.getRedisIndex(), Boolean.TRUE, cbServerProperties.getDedupeTtlSeconds());
         }
         acknowledgment.acknowledge();
     }
@@ -187,7 +181,8 @@ public class KafkaConsumer {
                 if (!CollectionUtils.isEmpty(listOfMasterData)) {
                     Map<String, Object> enrolledData = listOfMasterData.get(0);
                     Object statusValue = enrolledData.get(Constants.STATUS);
-                    boolean alreadyCompleted = statusValue instanceof Number && ((Number) statusValue).intValue() == 2;
+                    boolean alreadyCompleted = statusValue instanceof Number number
+                            && number.intValue() == 2;
                     if (alreadyCompleted) {
                         log.info("User {} has already completed the course {}. No update needed.", userId, courseId);
                         acknowledgment.acknowledge();
@@ -275,8 +270,8 @@ public class KafkaConsumer {
                 }
             }
             JsonNode partnerApiResponse = transformUtility.callContentPartnerReadApi(partnerId);
-            if (!partnerApiResponse.path("certificateTemplateUrl").isMissingNode() && !partnerApiResponse.path("certificateTemplateUrl").isNull()) {
-                String svgTemplate = partnerApiResponse.get("certificateTemplateUrl").asText();
+            if (!partnerApiResponse.path(Constants.CERTIFICATE_TEMPLATE_URL).isMissingNode() && !partnerApiResponse.path(Constants.CERTIFICATE_TEMPLATE_URL).isNull()) {
+                String svgTemplate = partnerApiResponse.get(Constants.CERTIFICATE_TEMPLATE_URL).asText();
                 Resource resource = resourceLoader.getResource("classpath:certificateTemplate.json");
                 InputStream inputStream = resource.getInputStream();
                 JsonNode jsonNode = mapper.readTree(inputStream);
@@ -423,6 +418,47 @@ public class KafkaConsumer {
         ZonedDateTime zonedDateTime = instant.atZone(ZoneId.of("UTC"));
         DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         return outputFormatter.format(zonedDateTime);
+    }
+
+    @KafkaListener(topics = "${spring.kafka.user.paid.course.enrolment.topic.name}", groupId = "${spring.kafka.user.paid.course.enrolment.consumer.group.id}")
+    public void validateAndEnrolPaidCourses(ConsumerRecord<String, String> data) {
+        log.info("KafkaConsumer::validateAndEnrolPaidCourses:topic name: {} and recievedData: {}", data.topic(), data.value());
+        try {
+            SBApiResponse response = transformUtility.createDefaultResponse("");
+            Map<String, Object> paidCourseEvent = mapper.readValue(data.value(), new TypeReference<>() {
+            });
+            Map<String, Object> eventData = (Map<String, Object>) paidCourseEvent.get(Constants.DATA);
+            String reqId = (String) eventData.get(Constants.REQ_ID);
+            String dedupeKey = StringUtils.isNotBlank(reqId) ? Constants.PAID_COURSE_ENROLMENT_DEDUPE_PREFIX + reqId : null;
+            if (dedupeKey != null && StringUtils.isNotBlank(cacheService.getCache(dedupeKey, cbServerProperties.getRedisIndex()))) {
+                log.info("Paid course enrolment event {} already processed, skipping", reqId);
+                return;
+            }
+            String userId = (String) eventData.get(Constants.EVENT_USER_ID);
+            String courseId = (String) eventData.get(Constants.CONTEXT_ID);
+            String courseName = (String) eventData.get(Constants.COURSE_NAME);
+            String providerName = (String) eventData.get(Constants.PROVIDER_NAME);
+            JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
+            String partnerId = contentResponse.path(Constants.CONTENT_PARTNER).path(Constants.ID).asText("");
+            JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
+            if (enrollmentService.validatePaidCourseEnrollment(userId, partnerId, courseId, contentResponse, providerResponse, response)) {
+                if (!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse.path(Constants.DATA), contentResponse)) {
+                    enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
+                    enrollmentService.triggerCoinsReaward(eventData, courseName, providerName, "Enrollment failed");
+                } else {
+                    log.info("User {} successfully enrolled in course {} and deleting cache", userId, courseId);
+                    cacheService.deleteCache(Constants.USER_ENROLMENTS_PREFIX + userId + "_" + courseId, cbServerProperties.getRedisIndex());
+                }
+            } else {
+                enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
+                enrollmentService.triggerCoinsReaward(eventData, courseName, providerName, response.getParams().getMsg());
+            }
+            if (dedupeKey != null) {
+                cacheService.putCache(dedupeKey, cbServerProperties.getRedisIndex(), Boolean.TRUE, cbServerProperties.getDedupeTtlSeconds());
+            }
+        } catch (Exception e) {
+            log.error("Failed to read enroll Request. Message received : {}", data.value(), e);
+        }
     }
 
 }
