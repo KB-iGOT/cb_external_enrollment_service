@@ -32,7 +32,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.aspectj.apache.bcel.classfile.ConstantNameAndType;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -1266,8 +1265,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     courseId,
                     response,
                     providerResponse.get(Constants.DATA),
-                    contentResponse,
-                    userAttributes
+                    contentResponse
             );
             if (!karmaValidationResult.isAllowed()) {
                 return false;
@@ -1452,8 +1450,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String courseId,
             SBApiResponse response,
             JsonNode providerResponse,
-            JsonNode contentResponse,
-            Map<String, String> userAttributes) {
+            JsonNode contentResponse) {
 
         // Free courses skip course-level and partner-level validation entirely
         if (isCourseFree(contentResponse)) {

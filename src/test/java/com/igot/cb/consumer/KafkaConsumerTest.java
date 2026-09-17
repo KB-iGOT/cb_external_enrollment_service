@@ -1139,8 +1139,8 @@ class KafkaConsumerTest {
 
         Map<String, Object> expectedEventData = (Map<String, Object>) basePaidCourseEvent().get(Constants.DATA);
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED);
-        verify(enrollmentService).triggerCoinsReaward(eq(expectedEventData), eq("Course One"), eq("Provider One"),
-                eq("Enrollment failed"));
+        verify(enrollmentService).triggerCoinsReaward(expectedEventData, "Course One", "Provider One",
+                "Enrollment failed");
         verify(cacheService).putCache(eq(paidCourseDedupeKey()), anyInt(), eq(Boolean.TRUE),
                 eq(DEDUPE_TTL_SECONDS));
     }
@@ -1166,8 +1166,8 @@ class KafkaConsumerTest {
 
         Map<String, Object> expectedEventData = (Map<String, Object>) basePaidCourseEvent().get(Constants.DATA);
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED);
-        verify(enrollmentService).triggerCoinsReaward(eq(expectedEventData), eq("Course One"), eq("Provider One"),
-                eq("Validation failed for course"));
+        verify(enrollmentService).triggerCoinsReaward(expectedEventData, "Course One", "Provider One",
+                "Validation failed for course");
         verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
     }
 
