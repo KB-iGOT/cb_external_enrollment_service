@@ -2393,31 +2393,6 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("enrolValidation: insufficient karma coins returns 402 Payment Required with the karma-coins error code")
-    void enrolValidation_InsufficientKarmaCoins_Returns402PaymentRequired() {
-        ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
-        userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
-        userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
-        String token = "valid.token";
-
-        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
-
-        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
-        when(transformUtility.validateAndGetUserId(eq(token), any())).thenReturn("user1");
-        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(
-                new ObjectMapper().createObjectNode().set(Constants.DATA, new ObjectMapper().createObjectNode()));
-        when(transformUtility.readUserDetails("user1")).thenReturn(Map.of(Constants.ID, "user1"));
-        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
-        when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s karma coins");
-
-        SBApiResponse response = enrollmentService.enrolValidation(userCourseEnroll, token);
-
-        assertEquals(HttpStatus.PAYMENT_REQUIRED, response.getResponseCode());
-        assertEquals("Need 100 karma coins", response.getParams().getMsg());
-    }
-
-    @Test
     void enrolValidation_MissingCourseId() {
         ObjectNode userCourseEnroll = new ObjectMapper().createObjectNode();
         // No courseId

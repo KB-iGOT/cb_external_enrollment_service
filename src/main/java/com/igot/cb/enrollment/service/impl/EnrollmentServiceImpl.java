@@ -977,14 +977,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     : new HashMap<>();
             log.info("User attributes fetched for enrollment: {}", userAttributes);
 
-            KarmaValidationResult karmaValidationResult = validatePartnerEnrollmentLimits(
+            KarmaValidationResult karmaValidationResult = validatePartnerLimits(
                     userId,
                     partnerId,
                     courseId,
                     response,
                     providerResponse.get(Constants.DATA),
-                    contentResponse,
-                    userAttributes
+                    contentResponse
             );
             if (!karmaValidationResult.isAllowed()) {
                 return response;
@@ -1206,8 +1205,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     response
             );
             int requiredKarmaPoints = karmaValidationResult.getRedeemedKarmaPoints();
-            if (!cbServerProperties.isKarmaPointsDeductionEnabled() || isCourseFree(contentResponse)) {
-                requiredKarmaPoints = 0;
+            if (!karmaValidationResult.isAllowed()) {
+                return response;
             }
             Map<String, Object> result = new HashMap<>();
             result.put(Constants.REQUIRED_KARMA_POINTS, requiredKarmaPoints);
