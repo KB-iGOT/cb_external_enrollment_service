@@ -13,6 +13,7 @@ class CiosEnrolmentStatusTest {
         // Act & Assert
         assertEquals("In-Progress", CiosEnrolmentStatus.IN_PROGRESS.getLabel());
         assertEquals("Completed", CiosEnrolmentStatus.COMPLETED.getLabel());
+        assertEquals("Pending", CiosEnrolmentStatus.PENDING.getLabel());
         assertEquals("All", CiosEnrolmentStatus.ALL.getLabel());
     }
 
@@ -21,6 +22,7 @@ class CiosEnrolmentStatusTest {
         // Act & Assert
         assertEquals(0, CiosEnrolmentStatus.IN_PROGRESS.getCode());
         assertEquals(2, CiosEnrolmentStatus.COMPLETED.getCode());
+        assertEquals(3, CiosEnrolmentStatus.PENDING.getCode());
         assertEquals(-1, CiosEnrolmentStatus.ALL.getCode());
     }
 
@@ -28,11 +30,12 @@ class CiosEnrolmentStatusTest {
     void testToMap() {
         // Act
         Map<String, Integer> map = CiosEnrolmentStatus.toMap();
-        
+
         // Assert
-        assertEquals(3, map.size());
+        assertEquals(4, map.size());
         assertEquals(0, map.get("In-Progress"));
         assertEquals(2, map.get("Completed"));
+        assertEquals(3, map.get("Pending"));
         assertEquals(-1, map.get("All"));
     }
 }

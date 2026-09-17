@@ -620,6 +620,95 @@ class TransformUtilityTest {
     }
 
     @Test
+    void readUserKarmaCoins_NoWalletRowFound_ReturnsZero() {
+        String userId = "user123";
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_USER_KARMA_COIN_WALLET),
+                anyMap(),
+                anyList(),
+                eq(1)))
+                .thenReturn(List.of());
+
+        Long result = transformUtility.readUserKarmaCoins(userId);
+
+        assertEquals(0L, result);
+    }
+
+    @Test
+    void readUserKarmaCoins_Success() {
+        String userId = "user123";
+
+        Map<String, Object> row = new HashMap<>();
+        row.put(Constants.TOTAL_EARNED, 150L);
+        row.put(Constants.TOTAL_REDEEMED, 40L);
+
+        ArgumentCaptor<Map<String, Object>> propertyMapCaptor = ArgumentCaptor.forClass(Map.class);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_USER_KARMA_COIN_WALLET),
+                propertyMapCaptor.capture(),
+                anyList(),
+                eq(1)))
+                .thenReturn(List.of(row));
+
+        Long result = transformUtility.readUserKarmaCoins(userId);
+
+        assertEquals(110L, result);
+        assertEquals(userId, propertyMapCaptor.getValue().get(Constants.USER_ID));
+        verify(cassandraOperation).getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_USER_KARMA_COIN_WALLET),
+                anyMap(),
+                eq(List.of(Constants.TOTAL_EARNED, Constants.TOTAL_REDEEMED)),
+                eq(1));
+    }
+
+    @Test
+    void readUserKarmaCoins_RedeemedExceedsEarned_ClampedToZero() {
+        String userId = "user123";
+
+        Map<String, Object> row = new HashMap<>();
+        row.put(Constants.TOTAL_EARNED, 50L);
+        row.put(Constants.TOTAL_REDEEMED, 80L);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_USER_KARMA_COIN_WALLET),
+                anyMap(),
+                anyList(),
+                eq(1)))
+                .thenReturn(List.of(row));
+
+        Long result = transformUtility.readUserKarmaCoins(userId);
+
+        assertEquals(0L, result);
+    }
+
+    @Test
+    void readUserKarmaCoins_NullRedeemedValue_TreatedAsZero() {
+        String userId = "user123";
+
+        Map<String, Object> row = new HashMap<>();
+        row.put(Constants.TOTAL_EARNED, 50L);
+        row.put(Constants.TOTAL_REDEEMED, null);
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_USER_KARMA_COIN_WALLET),
+                anyMap(),
+                anyList(),
+                eq(1)))
+                .thenReturn(List.of(row));
+
+        Long result = transformUtility.readUserKarmaCoins(userId);
+
+        assertEquals(50L, result);
+    }
+
+    @Test
     void readUserKarmaPoints_Success() {
         String userId = "user123";
         String token = "auth-token";

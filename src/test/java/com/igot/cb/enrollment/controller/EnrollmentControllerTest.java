@@ -3,6 +3,7 @@ package com.igot.cb.enrollment.controller;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Map;
@@ -78,6 +79,43 @@ class EnrollmentControllerTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(mockResponse, response.getBody());
+    }
+
+    @Test
+    void testReadByUserIdAndCourseIdV2_Success() {
+        String courseId = "course123";
+        String token = "validToken";
+
+        SBApiResponse mockResponse = new SBApiResponse();
+        mockResponse.setResponseCode(HttpStatus.OK);
+
+        when(enrollmentService.readByUserIdAndCourseIdV2(courseId, token)).thenReturn(mockResponse);
+
+        ResponseEntity<SBApiResponse> response = enrollmentController.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(mockResponse, response.getBody());
+        verify(enrollmentService).readByUserIdAndCourseIdV2(courseId, token);
+    }
+
+    @Test
+    void testReadByUserIdAndCourseIdV2_ServiceReturnsBadRequest_StillWrapsAsHttp200() {
+        String courseId = "course123";
+        String token = "validToken";
+
+        SBApiResponse mockResponse = new SBApiResponse();
+        mockResponse.setResponseCode(HttpStatus.BAD_REQUEST);
+
+        when(enrollmentService.readByUserIdAndCourseIdV2(courseId, token)).thenReturn(mockResponse);
+
+        ResponseEntity<SBApiResponse> response = enrollmentController.readByUserIdAndCourseIdV2(courseId, token);
+
+        // Controller always wraps in ResponseEntity with HttpStatus.OK regardless of the
+        // response body's internal responseCode field - this is the current (intentional) behavior.
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(mockResponse, response.getBody());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getBody().getResponseCode());
+        verify(enrollmentService).readByUserIdAndCourseIdV2(courseId, token);
     }
 
     @Test

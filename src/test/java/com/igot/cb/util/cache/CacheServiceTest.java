@@ -82,6 +82,33 @@ class CacheServiceTest {
     }
 
     @Test
+    void putCacheWithoutTtl_Success() throws Exception {
+        String key = "testKey";
+        Map<String, String> object = new HashMap<>();
+        object.put("field", "value");
+        String jsonString = "{\"field\":\"value\"}";
+
+        when(objectMapper.writeValueAsString(object)).thenReturn(jsonString);
+
+        cacheService.putCacheWithoutTtl(key, 2, object);
+
+        verify(jedis).select(2);
+        verify(jedis).set(key, jsonString);
+        verify(jedis, never()).setex(anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void putCacheWithoutTtl_Exception() throws Exception {
+        String key = "testKey";
+        Object object = new Object();
+
+        when(objectMapper.writeValueAsString(object)).thenThrow(new RuntimeException("Test exception"));
+
+        assertDoesNotThrow(() -> cacheService.putCacheWithoutTtl(key, 0, object));
+        verify(jedis, never()).set(anyString(), anyString());
+    }
+
+    @Test
     void getCache_Success() {
         String key = "testKey";
         String cachedValue = "{\"field\":\"value\"}";

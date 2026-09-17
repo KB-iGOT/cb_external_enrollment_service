@@ -38,6 +38,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.authentication.util.AccessTokenValidator;
 import com.igot.cb.enrollment.entity.CiosContentEntity;
+import com.igot.cb.enrollment.entity.CiosEnrolmentStatus;
 import com.igot.cb.enrollment.repository.CiosContentRepository;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
@@ -1497,7 +1498,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1536,7 +1537,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
         assertFalse(result);
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
@@ -1559,23 +1560,23 @@ class EnrollmentServiceImplTest {
         providerResponse.put(Constants.KARMA_POINTS, 100);
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
         when(cbServerProperties.getKarmaInsufficientMsg())
                 .thenReturn(
                         "You don't have enough Karma Points to enroll. Minimum Karma Points required: %s. Please complete other relevant courses on iGOT to earn Karma Points and try again later.");
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
-        when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(50L);
+        when(transformUtility.readUserKarmaCoins(userId)).thenReturn(50L);
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
         assertEquals(0, karmaResult.getRedeemedKarmaPoints());
-        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals(HttpStatus.PAYMENT_REQUIRED, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("100"));
     }
 
@@ -1597,15 +1598,15 @@ class EnrollmentServiceImplTest {
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
         providerResponse.set(Constants.KARMA_POINTS_EXEMPTION, exemption);
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
-        when(transformUtility.readUserKarmaPoints(userId, token)).thenReturn(0L);
+        when(transformUtility.readUserKarmaCoins(userId)).thenReturn(0L);
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1666,7 +1667,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
@@ -1685,7 +1686,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
@@ -1697,7 +1698,7 @@ class EnrollmentServiceImplTest {
     void validateAndResolveKarma_ExemptUser_ReturnsFalseDespiteInsufficientBalance() {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
 
         ObjectNode exemption = realMapper.createObjectNode();
         exemption.putArray(Constants.GROUP).add("Group A");
@@ -1708,12 +1709,12 @@ class EnrollmentServiceImplTest {
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.GROUP, "Group A");
 
-        when(transformUtility.readUserKarmaPoints("user1", "token")).thenReturn(10L);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", userAttributes, response);
+                userAttributes, response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
@@ -1735,7 +1736,7 @@ class EnrollmentServiceImplTest {
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
 
         assertTrue(karmaResult.isAllowed());
         assertEquals(0, karmaResult.getRedeemedKarmaPoints());
@@ -1747,16 +1748,16 @@ class EnrollmentServiceImplTest {
     void validateAndResolveKarma_SufficientBalance_ReturnsFalse() {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
         ObjectNode providerResponse = realMapper.createObjectNode();
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
 
-        when(transformUtility.readUserKarmaPoints("user1", "token")).thenReturn(150L);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(150L);
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
@@ -1768,17 +1769,17 @@ class EnrollmentServiceImplTest {
     void validateAndResolveKarma_InsufficientBalance_ReturnsTrue() {
         ObjectMapper realMapper = new ObjectMapper();
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 100);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
         ObjectNode providerResponse = new ObjectMapper().createObjectNode();
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
 
-        when(transformUtility.readUserKarmaPoints("user1", "token")).thenReturn(10L);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
         when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s points");
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                "token", new HashMap<String, String>(), response);
+                new HashMap<String, String>(), response);
         boolean blocked = !karmaResult.isAllowed();
 
         assertTrue(blocked);
@@ -1815,7 +1816,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1852,7 +1853,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -1885,7 +1886,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1923,7 +1924,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -1950,7 +1951,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -1984,7 +1985,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -2016,7 +2017,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -2056,7 +2057,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -2089,7 +2090,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
@@ -2122,7 +2123,7 @@ class EnrollmentServiceImplTest {
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
-                providerResponse, contentResponse, token, userAttributes);
+                providerResponse, contentResponse, userAttributes);
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
@@ -2503,7 +2504,7 @@ class EnrollmentServiceImplTest {
 
         ObjectNode contentResponse = realMapper.createObjectNode();
         contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 60);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 60);
         when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
 
         ObjectNode providerData = realMapper.createObjectNode();
@@ -2516,7 +2517,7 @@ class EnrollmentServiceImplTest {
         when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
 
         when(transformUtility.readUserDetails("user123")).thenReturn(Map.of(Constants.ID, "user123"));
-        when(transformUtility.readUserKarmaPoints("user123", token)).thenReturn(200L);
+        when(transformUtility.readUserKarmaCoins("user123")).thenReturn(200L);
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
@@ -2526,12 +2527,20 @@ class EnrollmentServiceImplTest {
 
         SBApiResponse response = enrollmentService.enrollUser(userCourseEnroll, token);
 
-        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertEquals(HttpStatus.ACCEPTED, response.getResponseCode());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
         String message = (String) result.get("message");
-        assertTrue(message.contains("Karma Coin has been deducted"));
-        assertTrue(message.contains("60"));
+        // Karma-funded enrolments are now completed asynchronously: processEnrolment reports
+        // "Enrollment in progress" immediately and separately triggers a karma-coin debit event
+        // (coinsToRedeem = the course's required karma coins) rather than embedding the redeemed
+        // amount into the response message.
+        assertEquals(Constants.ENROLLMENT_PROGRESS, message);
+        verify(producer).push(any(), argThat(evt -> {
+            Map<?, ?> eventData = (Map<?, ?>) ((Map<?, ?>) evt).get(Constants.DATA);
+            return Integer.valueOf(60).equals(eventData.get(Constants.COINS_TO_REDEEM))
+                    && "user123".equals(eventData.get(Constants.EVENT_USER_ID));
+        }), eq("user123"));
     }
 
     @Test
@@ -2587,7 +2596,7 @@ class EnrollmentServiceImplTest {
         String token = "jwt.token";
 
         ObjectNode contentResponse = realMapper.createObjectNode();
-        contentResponse.put(Constants.REQUIRED_KARMA_POINTS, 80);
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 80);
         when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.validateAndGetUserId(eq(token), any(SBApiResponse.class))).thenReturn("user1");
 
@@ -2604,7 +2613,7 @@ class EnrollmentServiceImplTest {
         when(cbServerProperties.isKarmaPointsDeductionEnabled()).thenReturn(true);
         // Balance has to cover the requirement, otherwise validateAndResolveKarma reports the
         // enrolment blocked and resolves 0 points instead of 80.
-        when(transformUtility.readUserKarmaPoints("user1", token)).thenReturn(200L);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(200L);
 
         SBApiResponse response = enrollmentService.karmapointsDeductionRule(userCourseEnroll, token);
 
@@ -2697,5 +2706,431 @@ class EnrollmentServiceImplTest {
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("Error while performing enrollment operation"));
+    }
+
+    // ------------------------------------------------------------------
+    // validatePaidCourseEnrollment
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("validatePaidCourseEnrollment: returns false when a partner limit is exceeded, without touching access control or Coursera invite - and never re-checks karma balance")
+    void validatePaidCourseEnrollment_PartnerLimitExceeded_ReturnsFalse() {
+        ObjectMapper realMapper = new ObjectMapper();
+        String userId = "user1";
+        String partnerId = "partner1";
+        String courseId = "course1";
+
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+
+        ObjectNode providerData = realMapper.createObjectNode();
+        providerData.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerData.put(Constants.OVER_ALL_PROVIDER_LIMIT, 1);
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.set(Constants.DATA, providerData);
+
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+        when(cbServerProperties.getPartnerOverallLimitMsg()).thenReturn("Partner overall enrollment limit reached");
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 1L)));
+        lenient().when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
+
+        SBApiResponse response = new SBApiResponse();
+
+        boolean result = enrollmentService.validatePaidCourseEnrollment(
+                userId, partnerId, courseId, contentResponse, providerResponse, response);
+
+        assertFalse(result);
+        verify(transformUtility, never()).readAccessSettings(anyString());
+        verify(transformUtility, never()).callCourseraInviteApi(any(), any());
+        verify(transformUtility, never()).readUserKarmaCoins(any());
+    }
+
+    @Test
+    @DisplayName("validatePaidCourseEnrollment: returns false when access-controlled enrolment is disallowed")
+    void validatePaidCourseEnrollment_AccessControlDisallowed_ReturnsFalse() {
+        ObjectMapper realMapper = new ObjectMapper();
+        String userId = "user1";
+        String partnerId = "partner1";
+        String courseId = "course1";
+
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+        contentResponse.put(Constants.ACCESS_SETTINGS_ENABLED, true);
+
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.set(Constants.DATA, realMapper.createObjectNode());
+
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+
+        UserGroupCriteria criteria = mock(UserGroupCriteria.class);
+        when(criteria.evaluate(any())).thenReturn(false);
+        UserGroup userGroup = new UserGroup();
+        userGroup.setUserGroupId("group1");
+        userGroup.setUserGroupCriteriaList(List.of(criteria));
+        AccessControl accessControl = new AccessControl();
+        accessControl.setUserGroups(List.of(userGroup));
+        when(transformUtility.readAccessSettings(courseId)).thenReturn(accessControl);
+
+        SBApiResponse response = new SBApiResponse();
+
+        boolean result = enrollmentService.validatePaidCourseEnrollment(
+                userId, partnerId, courseId, contentResponse, providerResponse, response);
+
+        assertFalse(result);
+        verify(transformUtility, never()).callCourseraInviteApi(any(), any());
+    }
+
+    @Test
+    @DisplayName("validatePaidCourseEnrollment: partner limits pass, non-Coursera partner returns true without inviting or re-checking karma balance")
+    void validatePaidCourseEnrollment_NonCourseraPartner_ReturnsTrue() {
+        ObjectMapper realMapper = new ObjectMapper();
+        String userId = "user1";
+        String partnerId = "partner1";
+        String courseId = "course1";
+
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+
+        ObjectNode providerData = realMapper.createObjectNode();
+        providerData.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerData.put(Constants.PARTNER_CODE, "udemy");
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.set(Constants.DATA, providerData);
+
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+        when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
+
+        SBApiResponse response = new SBApiResponse();
+
+        boolean result = enrollmentService.validatePaidCourseEnrollment(
+                userId, partnerId, courseId, contentResponse, providerResponse, response);
+
+        assertTrue(result);
+        verify(transformUtility, never()).callCourseraInviteApi(any(), any());
+        verify(transformUtility, never()).readUserKarmaCoins(any());
+    }
+
+    @Test
+    @DisplayName("validatePaidCourseEnrollment: Coursera partner with a successful invite returns true and invokes the invite API")
+    void validatePaidCourseEnrollment_CourseraInviteSucceeds_ReturnsTrue() {
+        ObjectMapper realMapper = new ObjectMapper();
+        String userId = "user1";
+        String partnerId = "partner1";
+        String courseId = "course1";
+
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+
+        ObjectNode providerData = realMapper.createObjectNode();
+        providerData.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerData.put(Constants.PARTNER_CODE, "coursera");
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.set(Constants.DATA, providerData);
+
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+        when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
+        when(transformUtility.callCourseraInviteApi(contentResponse, userProfile)).thenReturn(true);
+
+        SBApiResponse response = new SBApiResponse();
+
+        boolean result = enrollmentService.validatePaidCourseEnrollment(
+                userId, partnerId, courseId, contentResponse, providerResponse, response);
+
+        assertTrue(result);
+        verify(transformUtility, times(1)).callCourseraInviteApi(contentResponse, userProfile);
+    }
+
+    @Test
+    @DisplayName("validatePaidCourseEnrollment: Coursera partner with a failed invite returns false")
+    void validatePaidCourseEnrollment_CourseraInviteFails_ReturnsFalse() {
+        ObjectMapper realMapper = new ObjectMapper();
+        String userId = "user1";
+        String partnerId = "partner1";
+        String courseId = "course1";
+
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+
+        ObjectNode providerData = realMapper.createObjectNode();
+        providerData.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        providerData.put(Constants.PARTNER_CODE, "coursera");
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.set(Constants.DATA, providerData);
+
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+        when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
+        when(transformUtility.callCourseraInviteApi(contentResponse, userProfile)).thenReturn(false);
+
+        SBApiResponse response = new SBApiResponse();
+
+        boolean result = enrollmentService.validatePaidCourseEnrollment(
+                userId, partnerId, courseId, contentResponse, providerResponse, response);
+
+        assertFalse(result);
+    }
+
+    @Test
+    @DisplayName("validatePaidCourseEnrollment: free course (no karma ever required) also returns true once limits pass - success no longer depends on redeemedKarmaPoints")
+    void validatePaidCourseEnrollment_FreeCourse_ReturnsTrue() {
+        ObjectMapper realMapper = new ObjectMapper();
+        String userId = "user1";
+        String partnerId = "partner1";
+        String courseId = "course1";
+
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+
+        ObjectNode providerData = realMapper.createObjectNode();
+        providerData.put(Constants.PARTNER_CODE, "udemy");
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.set(Constants.DATA, providerData);
+
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, userId);
+        when(transformUtility.readUserDetails(userId)).thenReturn(userProfile);
+        when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
+
+        SBApiResponse response = new SBApiResponse();
+
+        boolean result = enrollmentService.validatePaidCourseEnrollment(
+                userId, partnerId, courseId, contentResponse, providerResponse, response);
+        assertTrue(result);
+        verify(transformUtility, never()).callCourseraInviteApi(any(), any());
+    }
+
+    // ------------------------------------------------------------------
+    // triggerCoinsReaward
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("triggerCoinsReaward: publishes a correctly populated reaward event to the karma points unified topic")
+    void triggerCoinsReaward_PublishesEvent() {
+        when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
+
+        Map<String, Object> reawardData = new HashMap<>();
+        reawardData.put(Constants.EVENT_USER_ID, "user1");
+        reawardData.put(Constants.CONTEXT_ID, "course1");
+        reawardData.put(Constants.TRANSACTION_ID, "txn-123");
+        reawardData.put(Constants.CREATED_AT, 1789561308650L);
+        // NOTE: a real incoming confirmation event carries the coins figure under
+        // EVENT_COINS_REDEEMED ("coinsRedeemed"), never under COINS_TO_REAWARD
+        // ("coinsToReaward") - triggerCoinsReaward currently reads reawardData.get(COINS_TO_REAWARD),
+        // so passing a real event through unmodified always yields a null coins value below.
+        // Documented as real current behavior, not fixed here (out of scope for this change).
+        reawardData.put(Constants.EVENT_COINS_REDEEMED, 42);
+
+        enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> eventCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(producer).push(eq("karma-unified-topic"), eventCaptor.capture(), eq("user1"));
+
+        Map<String, Object> event = eventCaptor.getValue();
+        assertEquals(Constants.COINS_REAWARD_EVENT_TYPE, event.get(Constants.EVENT_TYPE));
+        assertEquals(Constants.EVENT_VERSION, event.get(Constants.VERSION));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> eventData = (Map<String, Object>) event.get(Constants.DATA);
+        assertNotNull(eventData);
+        assertEquals(Constants.KARMA_COIN_REAWARD, eventData.get(Constants.EID));
+        assertEquals(Constants.CREDIT_OPERATION, eventData.get(Constants.OPERATION));
+        assertEquals(Constants.COINS_REAWARD_ACTION, eventData.get(Constants.ACTION_TYPE));
+        assertNull(eventData.get(Constants.COINS_TO_REAWARD),
+                "documents current behavior: reawardData has no COINS_TO_REAWARD key (real events use EVENT_COINS_REDEEMED), so this passes through as null");
+        assertEquals(Constants.EXT_COURSE_ENROLLMENT_CONTEXT, eventData.get(Constants.CONTEXT_TYPE));
+        assertEquals("course1", eventData.get(Constants.CONTEXT_ID));
+        assertEquals("refund message", eventData.get(Constants.INFO));
+        assertEquals("Course Name", eventData.get(Constants.COURSE_NAME));
+        assertEquals("Provider Name", eventData.get(Constants.PROVIDER_NAME));
+        assertEquals("txn-123", eventData.get(Constants.TRANSACTION_ID));
+        assertEquals("user1", eventData.get(Constants.EVENT_USER_ID));
+        assertEquals(1789561308650L, eventData.get(Constants.CREATED_AT),
+                "reaward event must reuse the original confirmation event's createdAt, not a freshly generated timestamp");
+    }
+
+    // ------------------------------------------------------------------
+    // markEnrolmentPending
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("markEnrolmentPending: FAILED status writes through putCache with the configured TTL")
+    void markEnrolmentPending_FailedStatus_UsesTtlCache() {
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        when(cbServerProperties.getFailedEnrolmentTtlSeconds()).thenReturn(600L);
+
+        enrollmentService.markEnrolmentPending("user1", "course1", Constants.FAILED);
+
+        String expectedKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + "user1" + "_" + "course1";
+        verify(cacheService).putCache(expectedKey, 3, Constants.FAILED, 600L);
+        verify(cacheService, never()).putCacheWithoutTtl(anyString(), anyInt(), any());
+    }
+
+    @Test
+    @DisplayName("markEnrolmentPending: non-FAILED status writes through putCacheWithoutTtl")
+    void markEnrolmentPending_PendingStatus_UsesCacheWithoutTtl() {
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+
+        enrollmentService.markEnrolmentPending("user1", "course1", Constants.PENDING_ENROLMENT_STATUS);
+
+        String expectedKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + "user1" + "_" + "course1";
+        verify(cacheService).putCacheWithoutTtl(expectedKey, 3, Constants.PENDING_ENROLMENT_STATUS);
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
+    }
+
+    // ------------------------------------------------------------------
+    // readByUserIdAndCourseIdV2
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: invalid/blank token returns BAD_REQUEST")
+    void readByUserIdAndCourseIdV2_InvalidToken_ReturnsBadRequest() {
+        String token = "invalid.token";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(Constants.UNAUTHORIZED);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains(Constants.USER_ID_DOESNT_EXIST));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: pending cache hit short-circuits to a synthetic PENDING result without querying cassandra")
+    void readByUserIdAndCourseIdV2_PendingCacheHit_ReturnsPendingWithoutCassandra() {
+        String token = "token";
+        String userId = "user1";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
+        when(cacheService.getCache(pendingKey, 3)).thenReturn(Constants.PENDING_ENROLMENT_STATUS);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        assertEquals(CiosEnrolmentStatus.PENDING.getCode(), result.get(Constants.STATUS));
+        assertEquals(userId, result.get("userid"));
+        assertEquals(courseId, result.get("courseid"));
+        verify(cassandraOperation, never()).getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: no pending cache entry, cassandra returns a matching enrollment row")
+    void readByUserIdAndCourseIdV2_NoPendingEntry_CassandraFound() {
+        String token = "token";
+        String userId = "user1";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
+        when(cacheService.getCache(pendingKey, 3)).thenReturn(null);
+
+        Map<String, Object> enrolmentMap = new HashMap<>();
+        enrolmentMap.put("courseid", courseId);
+        enrolmentMap.put("userid", userId);
+        List<Map<String, Object>> records = Collections.singletonList(enrolmentMap);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), isNull(), eq(1)))
+                .thenReturn(records);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertEquals(enrolmentMap, response.getResult());
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: no pending cache entry, cassandra returns no rows")
+    void readByUserIdAndCourseIdV2_NoPendingEntry_CassandraEmpty() {
+        String token = "token";
+        String userId = "user1";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
+        when(cacheService.getCache(pendingKey, 3)).thenReturn("");
+
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), isNull(), eq(1)))
+                .thenReturn(Collections.emptyList());
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("User not enrolled into the course"));
+    }
+
+    // ------------------------------------------------------------------
+    // isAccessControlAllowed (private) - only directly exercised here because the existing
+    // processEnrolment-driven tests exercise the "access settings disabled" short-circuit
+    // (enrollUser_successful, with accessSettingsEnabled=false) but never route through
+    // processEnrolment with accessSettingsEnabled=true, so the delegating branch is otherwise
+    // untested at this call site (handleAccessControlledEnrollment itself has direct tests,
+    // but not this wrapper).
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("isAccessControlAllowed: returns true immediately without delegating when access settings are not enabled")
+    void isAccessControlAllowed_NotEnabled_ReturnsTrueWithoutDelegating(){
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.ACCESS_SETTINGS_ENABLED, false);
+        Map<String, String> userAttributes = new HashMap<>();
+
+        boolean result = ReflectionTestUtils.invokeMethod(
+                enrollmentService, "isAccessControlAllowed", contentResponse, "course1", userAttributes);
+
+        assertTrue(result);
+        verify(transformUtility, never()).readAccessSettings(anyString());
+    }
+
+    @Test
+    @DisplayName("isAccessControlAllowed: delegates to handleAccessControlledEnrollment when access settings are enabled")
+    void isAccessControlAllowed_Enabled_DelegatesToHandleAccessControlledEnrollment() {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.ACCESS_SETTINGS_ENABLED, true);
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.USER, "user1");
+
+        UserGroupCriteria criteria = mock(UserGroupCriteria.class);
+        when(criteria.evaluate(any())).thenReturn(true);
+        UserGroup userGroup = new UserGroup();
+        userGroup.setUserGroupId("group1");
+        userGroup.setUserGroupCriteriaList(List.of(criteria));
+        AccessControl accessControl = new AccessControl();
+        accessControl.setUserGroups(List.of(userGroup));
+        when(transformUtility.readAccessSettings("course1")).thenReturn(accessControl);
+
+        boolean result = ReflectionTestUtils.invokeMethod(
+                enrollmentService, "isAccessControlAllowed", contentResponse, "course1", userAttributes);
+
+        assertTrue(result);
+        verify(transformUtility, times(1)).readAccessSettings("course1");
     }
 }

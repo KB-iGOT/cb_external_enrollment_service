@@ -73,4 +73,10 @@ public class EnrollmentController {
     return new ResponseEntity<>(response, response.getResponseCode());
   }
 
+  @GetMapping("/v2/readby/useridcourseid/{courseid}")
+  public ResponseEntity<SBApiResponse> readByUserIdAndCourseIdV2(@PathVariable String courseid, @RequestHeader(Constants.X_AUTH_TOKEN) String token) {
+    SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseid,token);
+    return new ResponseEntity<>(response, HttpStatus.OK);
+  }
+
 }

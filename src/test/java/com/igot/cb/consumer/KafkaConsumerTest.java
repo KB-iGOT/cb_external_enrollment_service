@@ -43,6 +43,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.transactional.cassandrautils.CounterIncrement;
@@ -50,6 +51,7 @@ import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.TransformUtility;
 import com.igot.cb.util.cache.CacheService;
+import com.igot.cb.util.dto.SBApiResponse;
 
 @ExtendWith(MockitoExtension.class)
 class KafkaConsumerTest {
@@ -84,12 +86,19 @@ class KafkaConsumerTest {
     @Mock
     private Acknowledgment acknowledgment;
 
+    @Mock
+    private EnrollmentServiceImpl enrollmentService;
+
+    static final long DEDUPE_TTL_SECONDS = 14400L;
+
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(kafkaConsumer, "mapper", mapper);
         ReflectionTestUtils.setField(kafkaConsumer, "cacheService", cacheService);
         lenient().when(cbServerProperties.getCertificateCharLength()).thenReturn(30);
         lenient().when(cbServerProperties.getCertificateTopic()).thenReturn("certTopic");
+        lenient().when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(DEDUPE_TTL_SECONDS);
+        lenient().when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(DEDUPE_TTL_SECONDS);
     }
 
     @Test
@@ -927,7 +936,7 @@ class KafkaConsumerTest {
                 eq(Constants.ENROLMENT_COUNTER_DEDUPE_PREFIX + "req-2"),
                 anyInt(),
                 eq(Boolean.TRUE),
-                eq(Constants.ENROLMENT_COUNTER_DEDUPE_TTL_SECONDS));
+                eq(DEDUPE_TTL_SECONDS));
         verify(acknowledgment).acknowledge();
     }
 
@@ -1030,6 +1039,200 @@ class KafkaConsumerTest {
         kafkaConsumer.enrollUpdateConsumer(consumerRecord, acknowledgment);
 
         verify(cassandraOperation, never()).incrementCounter(any(), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER), any(), any());
+    }
+
+    // ------------------------------------------------------------------
+    // validateAndEnrolPaidCourses
+    //
+    // The real event on this topic is the unified karma ledger's enrolment-confirmation
+    // callback: everything is nested under "data", using "userId"/"contextId" (not
+    // "userid"/"courseid"), and there is no partnerId field at all - it's re-derived from the
+    // course content (contentResponse.contentPartner.id), the same fallback enrolValidation
+    // uses when partnerId isn't supplied directly. See KafkaConsumer#validateAndEnrolPaidCourses.
+    // ------------------------------------------------------------------
+
+    private ConsumerRecord<String, String> buildPaidCourseRecord(Map<String, Object> event) throws Exception {
+        String payload = mapper.writeValueAsString(event);
+        return new ConsumerRecord<>("paid-course-topic", 0, 0L, "key", payload);
+    }
+
+    private static final long PAID_COURSE_EVENT_CREATED_AT = 1789561308650L;
+    private static final String PAID_COURSE_EVENT_REQ_ID = "d7a8bf43-6436-4ec1-869e-de6745a62849";
+
+    private Map<String, Object> basePaidCourseEvent() {
+        Map<String, Object> eventData = new HashMap<>();
+        eventData.put(Constants.EVENT_USER_ID, "user1");
+        eventData.put(Constants.CONTEXT_ID, "course1");
+        eventData.put(Constants.COURSE_NAME, "Course One");
+        eventData.put(Constants.PROVIDER_NAME, "Provider One");
+        eventData.put(Constants.TRANSACTION_ID, "txn1");
+        eventData.put(Constants.EVENT_COINS_REDEEMED, 50);
+        eventData.put(Constants.CREATED_AT, PAID_COURSE_EVENT_CREATED_AT);
+        eventData.put(Constants.REQ_ID, PAID_COURSE_EVENT_REQ_ID);
+
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.DATA, eventData);
+        event.put("eventType", "EXT_COURSE_ENROLLMENT");
+        return event;
+    }
+
+    private String paidCourseDedupeKey() {
+        return Constants.PAID_COURSE_ENROLMENT_DEDUPE_PREFIX + PAID_COURSE_EVENT_REQ_ID;
+    }
+
+    private ObjectNode paidCourseContentResponse() {
+        ObjectNode contentResponse = mapper.createObjectNode();
+        contentResponse.set(Constants.CONTENT_PARTNER, mapper.createObjectNode().put(Constants.ID, "partner1"));
+        return contentResponse;
+    }
+
+    private ObjectNode paidCourseProviderResponse() {
+        ObjectNode providerResponse = mapper.createObjectNode();
+        providerResponse.set(Constants.DATA, mapper.createObjectNode().put(Constants.ID, "partner1"));
+        return providerResponse;
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_happyPath_noPendingOrReawardCalls() throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
+        SBApiResponse response = new SBApiResponse();
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse)).thenReturn(true);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
+        verify(cacheService).putCache(eq(paidCourseDedupeKey()), anyInt(), eq(Boolean.TRUE),
+                eq(DEDUPE_TTL_SECONDS));
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_validationPassesEnrollmentFails_marksPendingAndReawardsWithEnrollmentFailedMessage()
+            throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
+        SBApiResponse response = new SBApiResponse();
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse)).thenReturn(false);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        Map<String, Object> expectedEventData = (Map<String, Object>) basePaidCourseEvent().get(Constants.DATA);
+        verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED);
+        verify(enrollmentService).triggerCoinsReaward(expectedEventData, "Course One", "Provider One",
+                "Enrollment failed");
+        verify(cacheService).putCache(eq(paidCourseDedupeKey()), anyInt(), eq(Boolean.TRUE),
+                eq(DEDUPE_TTL_SECONDS));
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_validationFails_marksPendingAndReawardsWithResponseMsg_neverEnrolls()
+            throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
+        SBApiResponse response = new SBApiResponse();
+        response.getParams().setMsg("Validation failed for course");
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(false);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        Map<String, Object> expectedEventData = (Map<String, Object>) basePaidCourseEvent().get(Constants.DATA);
+        verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED);
+        verify(enrollmentService).triggerCoinsReaward(expectedEventData, "Course One", "Provider One",
+                "Validation failed for course");
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_malformedJson_doesNotThrowAndNoDownstreamCalls() throws Exception {
+        String invalidJson = "{invalid json}";
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("paid-course-topic", 0, 0L, "key",
+                invalidJson);
+
+        org.junit.jupiter.api.Assertions
+                .assertDoesNotThrow(() -> kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord));
+
+        verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
+    }
+
+    // ------------------------------------------------------------------
+    // validateAndEnrolPaidCourses - reqId dedup guard
+    // ------------------------------------------------------------------
+
+    @Test
+    void validateAndEnrolPaidCourses_duplicateReqId_skipsProcessingEntirely() throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        when(cacheService.getCache(paidCourseDedupeKey(), cbServerProperties.getRedisIndex())).thenReturn("true");
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(transformUtility, never()).callCiosContentReadAPi(any());
+        verify(transformUtility, never()).callContentPartnerReadApi(any());
+        verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_noReqId_processesNormallyWithoutDedupeGuard() throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ((Map<String, Object>) event.get(Constants.DATA)).remove(Constants.REQ_ID);
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
+        SBApiResponse response = new SBApiResponse();
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse)).thenReturn(true);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(enrollmentService).enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse);
+        verify(cacheService, never()).getCache(anyString(), anyInt());
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
     }
 
     @SuppressWarnings("unchecked")

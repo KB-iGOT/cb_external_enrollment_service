@@ -40,6 +40,17 @@ public class CacheService {
     }
   }
 
+  public void putCacheWithoutTtl(String key, int dbIndex, Object object) {
+    try (Jedis jedis = jedisPool.getResource()) {
+      jedis.select(dbIndex);
+      String data = objectMapper.writeValueAsString(object);
+      jedis.set(key, data);
+      log.debug("Data saved to database {} with key: {} (no ttl)", dbIndex, key);
+    } catch (Exception e) {
+      log.error("Error while putting data in Redis cache: {} ", e.getMessage());
+    }
+  }
+
   public String getCache(String key, int dbIndex) {
     try (Jedis jedis = jedisPool.getResource()) {
       jedis.select(dbIndex);
