@@ -331,40 +331,48 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-            //List<String> fields = Arrays.asList("userid", "courseid", "completedon", "updatedon", "completionpercentage", "enrolled_date", "issued_certificates", "progress", "status"); // Assuming user_id is the column name in your table
-            Map<String, Object> propertyMap = new HashMap<>();
-            propertyMap.put(Constants.USER_ID, userId);
-            propertyMap.put(Constants.COURSE_ID, courseid);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                    propertyMap,
-                    null,
-                    1
-            );
-            if (!userEnrollmentList.isEmpty()) {
-                for (Map<String, Object> enrollment : userEnrollmentList) {
-                    if (!enrollment.isEmpty()) {
-                        response.setResponseCode(HttpStatus.OK);
-                        response.setResult(enrollment);
-                    } else {
-                        response.getParams().setMsg("courseId is not matching");
-                        response.getParams().setStatus(Constants.FAILED);
-                        response.setResponseCode(HttpStatus.BAD_REQUEST);
-                        return response;
-                    }
-                }
-            } else {
-                response.getParams().setMsg(Constants.USER_NOT_ENROLLED);
-                response.getParams().setStatus(Constants.SUCCESS);
-                response.setResponseCode(HttpStatus.OK);
-                return response;
-            }
-            return response;
+            return lookupUserCourseEnrollment(response, userId, courseid);
         } catch (Exception e) {
             log.error("error while processing", e);
             throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Shared by readByUserIdAndCourseId and readByUserIdAndCourseIdV2 - looks up the single
+     * user_external_enrolments row for this userId+courseid pair and populates response
+     * accordingly (found, not found, or the courseId-mismatch edge case of an empty row).
+     */
+    private SBApiResponse lookupUserCourseEnrollment(SBApiResponse response, String userId, String courseid) {
+        Map<String, Object> propertyMap = new HashMap<>();
+        propertyMap.put(Constants.USER_ID, userId);
+        propertyMap.put(Constants.COURSE_ID, courseid);
+        List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
+                propertyMap,
+                null,
+                1
+        );
+        if (!userEnrollmentList.isEmpty()) {
+            for (Map<String, Object> enrollment : userEnrollmentList) {
+                if (!enrollment.isEmpty()) {
+                    response.setResponseCode(HttpStatus.OK);
+                    response.setResult(enrollment);
+                } else {
+                    response.getParams().setMsg("courseId is not matching");
+                    response.getParams().setStatus(Constants.FAILED);
+                    response.setResponseCode(HttpStatus.BAD_REQUEST);
+                    return response;
+                }
+            }
+        } else {
+            response.getParams().setMsg(Constants.USER_NOT_ENROLLED);
+            response.getParams().setStatus(Constants.SUCCESS);
+            response.setResponseCode(HttpStatus.OK);
+            return response;
+        }
+        return response;
     }
 
     @Override
@@ -1397,35 +1405,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
 
-            Map<String, Object> propertyMap = new HashMap<>();
-            propertyMap.put("userid", userId);
-            propertyMap.put("courseid", courseid);
-            List<Map<String, Object>> userEnrollmentList = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
-                    Constants.KEYSPACE_SUNBIRD_COURSES,
-                    Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
-                    propertyMap,
-                    null,
-                    1
-            );
-            if (!userEnrollmentList.isEmpty()) {
-                for (Map<String, Object> enrollment : userEnrollmentList) {
-                    if (!enrollment.isEmpty()) {
-                        response.setResponseCode(HttpStatus.OK);
-                        response.setResult(enrollment);
-                    } else {
-                        response.getParams().setMsg("courseId is not matching");
-                        response.getParams().setStatus(Constants.FAILED);
-                        response.setResponseCode(HttpStatus.BAD_REQUEST);
-                        return response;
-                    }
-                }
-            } else {
-                response.getParams().setMsg("User not enrolled into the course");
-                response.getParams().setStatus(Constants.SUCCESS);
-                response.setResponseCode(HttpStatus.OK);
-                return response;
-            }
-            return response;
+            return lookupUserCourseEnrollment(response, userId, courseid);
         } catch (Exception e) {
             log.error("error while processing", e);
             throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
