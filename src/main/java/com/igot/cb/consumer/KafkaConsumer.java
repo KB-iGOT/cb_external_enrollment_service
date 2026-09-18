@@ -447,7 +447,7 @@ public class KafkaConsumer {
                     enrollmentService.triggerCoinsReaward(eventData, courseName, providerName, "Enrollment failed");
                 } else {
                     log.info("User {} successfully enrolled in course {} and deleting cache", userId, courseId);
-                    cacheService.deleteCache(Constants.USER_ENROLMENTS_PREFIX + userId + "_" + courseId, cbServerProperties.getRedisIndex());
+                    cacheService.deleteCache(Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId, cbServerProperties.getRedisIndex());
                 }
             } else {
                 enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
