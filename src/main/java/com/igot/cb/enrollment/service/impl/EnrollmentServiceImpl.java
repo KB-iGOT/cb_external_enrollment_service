@@ -936,12 +936,21 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         Long userKarmaCoins = transformUtility.readUserKarmaCoins(userId);
         boolean isExemptGroup = isKarmaPointsExempt(userAttributes, providerResponse.path(Constants.KARMA_POINTS_EXEMPTION));
 
-        if (!isExemptGroup && userKarmaCoins < requiredKarmaCoins) {
-            response.getParams().setMsg(String.format(cbServerProperties.getKarmaInsufficientMsg(), requiredKarmaCoins));
-            return new KarmaValidationResult(false,
-                    0);
-
+        if (isExemptGroup) {
+            return new KarmaValidationResult(true, 0);
         }
+
+        if (userKarmaCoins < requiredKarmaCoins) {
+            response.getParams().setMsg(
+                    String.format(
+                            cbServerProperties.getKarmaInsufficientMsg(),
+                            requiredKarmaCoins
+                    )
+            );
+
+            return new KarmaValidationResult(false, requiredKarmaCoins);
+        }
+
         return new KarmaValidationResult(true, requiredKarmaCoins);
     }
 
@@ -1043,7 +1052,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return true;
     }
 
-    private boolean isUserEnrolled(SBApiResponse response, String userId, String courseId) {
+    public boolean isUserEnrolled(SBApiResponse response, String userId, String courseId) {
         Map<String, Object> propertyMap = new HashMap<>();
         propertyMap.put(Constants.USER_ID, userId);
         propertyMap.put(Constants.COURSE_ID, courseId);
@@ -1205,13 +1214,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     response
             );
             int requiredKarmaPoints = karmaValidationResult.getRedeemedKarmaPoints();
+            Map<String, Object> result = new HashMap<>();
+            result.put(Constants.REQUIRED_KARMA_POINTS, requiredKarmaPoints);
+            response.setResult(result);
             if (!karmaValidationResult.isAllowed()) {
                 response.setResponseCode(HttpStatus.PAYMENT_REQUIRED);
                 return response;
             }
-            Map<String, Object> result = new HashMap<>();
-            result.put(Constants.REQUIRED_KARMA_POINTS, requiredKarmaPoints);
-            response.setResult(result);
             return response;
         } catch (Exception e) {
             String errMsg = Constants.ENROLLMENT_ERROR + e.getMessage();

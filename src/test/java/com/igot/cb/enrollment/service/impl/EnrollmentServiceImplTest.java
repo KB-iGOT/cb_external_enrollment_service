@@ -1575,7 +1575,7 @@ class EnrollmentServiceImplTest {
         boolean result = karmaResult.isAllowed();
 
         assertFalse(result);
-        assertEquals(0, karmaResult.getRedeemedKarmaPoints());
+        assertEquals(100, karmaResult.getRedeemedKarmaPoints());
         assertEquals(HttpStatus.PAYMENT_REQUIRED, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("100"));
     }
@@ -1610,7 +1610,7 @@ class EnrollmentServiceImplTest {
         boolean result = karmaResult.isAllowed();
 
         assertTrue(result);
-        assertEquals(100, karmaResult.getRedeemedKarmaPoints());
+        assertEquals(0, karmaResult.getRedeemedKarmaPoints());
     }
 
     @Test
@@ -1718,7 +1718,7 @@ class EnrollmentServiceImplTest {
         boolean blocked = !karmaResult.isAllowed();
 
         assertFalse(blocked);
-        assertEquals(100, karmaResult.getRedeemedKarmaPoints());
+        assertEquals(0, karmaResult.getRedeemedKarmaPoints());
     }
 
     @Test
@@ -1783,7 +1783,7 @@ class EnrollmentServiceImplTest {
         boolean blocked = !karmaResult.isAllowed();
 
         assertTrue(blocked);
-        assertEquals(0, karmaResult.getRedeemedKarmaPoints());
+        assertEquals(100, karmaResult.getRedeemedKarmaPoints());
         assertEquals("Need 100 points", response.getParams().getMsg());
     }
 
