@@ -436,6 +436,11 @@ public class KafkaConsumer {
             }
             String userId = (String) eventData.get(Constants.EVENT_USER_ID);
             String courseId = (String) eventData.get(Constants.CONTEXT_ID);
+
+            if(enrollmentService.isUserEnrolled(response, userId, courseId)){
+                cacheService.deleteCache(Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId, cbServerProperties.getRedisIndex());
+                return;
+            }
             String courseName = (String) eventData.get(Constants.COURSE_NAME);
             String providerName = (String) eventData.get(Constants.PROVIDER_NAME);
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
