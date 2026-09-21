@@ -1102,6 +1102,7 @@ class KafkaConsumerTest {
         SBApiResponse response = new SBApiResponse();
 
         when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(enrollmentService.isUserEnrolled(response, "user1", "course1")).thenReturn(false);
         when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
         when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
@@ -1111,10 +1112,40 @@ class KafkaConsumerTest {
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
 
+        verify(enrollmentService).isUserEnrolled(response, "user1", "course1");
         verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
         verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
         verify(cacheService).putCache(eq(paidCourseDedupeKey()), anyInt(), eq(Boolean.TRUE),
                 eq(DEDUPE_TTL_SECONDS));
+    }
+
+    // ------------------------------------------------------------------
+    // validateAndEnrolPaidCourses - already-enrolled short-circuit
+    // ------------------------------------------------------------------
+
+    @Test
+    void validateAndEnrolPaidCourses_userAlreadyEnrolled_deletesPendingCacheAndSkipsProcessing() throws Exception {
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        SBApiResponse response = new SBApiResponse();
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(enrollmentService.isUserEnrolled(response, "user1", "course1")).thenReturn(true);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+
+        verify(cacheService).deleteCache(
+                Constants.PENDING_ENROLMENT_KEY_PREFIX + "user1_course1", cbServerProperties.getRedisIndex());
+        verify(transformUtility, never()).callCiosContentReadAPi(any());
+        verify(transformUtility, never()).callContentPartnerReadApi(any());
+        verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any());
+        verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
+        // The reqId dedupe key is only claimed at the very end of the normal flow, which this
+        // early return skips entirely - a redelivery of the same event would hit this same
+        // already-enrolled branch again rather than being suppressed by the dedupe guard.
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
     }
 
     @Test
