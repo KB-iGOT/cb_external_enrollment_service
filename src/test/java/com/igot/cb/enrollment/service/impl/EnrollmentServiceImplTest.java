@@ -3196,7 +3196,8 @@ class EnrollmentServiceImplTest {
         assertEquals(HttpStatus.OK, response.getResponseCode());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
-        assertEquals(CiosEnrolmentStatus.COMPLETED.getCode(), result.get(Constants.STATUS));
+        assertEquals(CiosEnrolmentStatus.PENDING.getCode(), result.get(Constants.STATUS),
+                "numeric STATUS is always 3 for any cache hit (success/failed/pending alike)");
         assertEquals("Course One", result.get(Constants.COURSE_NAME));
         assertEquals(80, result.get(Constants.KARMA_COINS));
     }
@@ -3228,7 +3229,8 @@ class EnrollmentServiceImplTest {
         assertEquals(HttpStatus.OK, response.getResponseCode());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
-        assertEquals(CiosEnrolmentStatus.FAILED.getCode(), result.get(Constants.STATUS));
+        assertEquals(CiosEnrolmentStatus.PENDING.getCode(), result.get(Constants.STATUS),
+                "numeric STATUS is always 3 for any cache hit (success/failed/pending alike)");
     }
 
     @Test

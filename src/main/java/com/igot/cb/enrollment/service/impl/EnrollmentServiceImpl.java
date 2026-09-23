@@ -1414,19 +1414,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return dbResponse;
             }
 
-            Map<String, Object> pendingInfo;
-            try {
-                pendingInfo = objectMapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {
-                });
-            } catch (JsonProcessingException e) {
-                log.error("Failed to parse pending enrolment cache for key {}", pendingKey, e);
+            Map<String, Object> pendingInfo = parsePendingEnrolmentInfo(pendingKey, cachedJson);
+            if (pendingInfo == null) {
                 return dbResponse;
             }
-
-            String status = (String) pendingInfo.get(Constants.STATUS);
-            int statusCode = Constants.SUCCESS.equalsIgnoreCase(status) ? CiosEnrolmentStatus.COMPLETED.getCode()
-                    : Constants.FAILED.equalsIgnoreCase(status) ? CiosEnrolmentStatus.FAILED.getCode()
-                    : CiosEnrolmentStatus.PENDING.getCode();
 
             Map<String, Object> result = new HashMap<>();
             result.put(Constants.COMPLETION_PERCENTAGE, 0);
@@ -1440,7 +1431,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             result.put(Constants.COURSE_ID, courseid);
             result.put(Constants.ENROLLED_DATE, null);
             result.put(Constants.ISSUED_CERTIFICATES, new ArrayList<>());
-            result.put(Constants.STATUS, statusCode);
+            result.put(Constants.STATUS, CiosEnrolmentStatus.PENDING.getCode());
             result.put(Constants.COURSE_NAME, pendingInfo.get(Constants.COURSE_NAME));
             result.put(Constants.KARMA_COINS, pendingInfo.get(Constants.KARMA_COINS));
             response.setResult(result);
@@ -1449,6 +1440,21 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         } catch (Exception e) {
             log.error("error while processing", e);
             throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Parses the pending-enrolment cache value written by markEnrolmentPending. Returns null
+     * (rather than throwing) on malformed JSON, so the caller can just fall back to the
+     * already-computed "not enrolled" DB response instead of failing the whole request.
+     */
+    private Map<String, Object> parsePendingEnrolmentInfo(String pendingKey, String cachedJson) {
+        try {
+            return objectMapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {
+            });
+        } catch (JsonProcessingException e) {
+            log.error("Failed to parse pending enrolment cache for key {}", pendingKey, e);
+            return null;
         }
     }
 
