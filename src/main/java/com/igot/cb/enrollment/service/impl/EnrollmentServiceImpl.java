@@ -934,7 +934,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
 
         Long userKarmaCoins = transformUtility.readUserKarmaCoins(userId);
-        boolean isExemptGroup = isKarmaPointsExempt(userAttributes, providerResponse.path(Constants.KARMA_POINTS_EXEMPTION));
+        boolean exemptionEnabled = providerResponse.path(Constants.KARMA_POINTS_EXEMPTION_ENABLED).asBoolean(true);
+        boolean isExemptGroup = exemptionEnabled
+                && isKarmaPointsExempt(userAttributes, providerResponse.path(Constants.KARMA_POINTS_EXEMPTION));
 
         if (isExemptGroup) {
             return new KarmaValidationResult(true, 0);
