@@ -1415,7 +1415,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
 
             Map<String, Object> pendingInfo = parsePendingEnrolmentInfo(pendingKey, cachedJson);
-            if (pendingInfo == null) {
+            if (pendingInfo.isEmpty()) {
                 return dbResponse;
             }
 
@@ -1454,7 +1454,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             });
         } catch (JsonProcessingException e) {
             log.error("Failed to parse pending enrolment cache for key {}", pendingKey, e);
-            return null;
+            return Collections.emptyMap();
         }
     }
 

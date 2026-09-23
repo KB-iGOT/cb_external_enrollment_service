@@ -31,6 +31,7 @@ import org.mockito.Spy;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -3277,6 +3278,43 @@ class EnrollmentServiceImplTest {
 
         assertEquals(HttpStatus.OK, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("User not enrolled into the course"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: malformed pending cache JSON falls back to the DB 'not enrolled' response instead of failing")
+    void readByUserIdAndCourseIdV2_MalformedPendingCache_FallsBackToDbResponse() throws Exception {
+        String token = "token";
+        String userId = "user1";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), isNull(), eq(1)))
+                .thenReturn(Collections.emptyList());
+
+        String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
+        String cachedJson = "not valid json";
+        when(cacheService.getCache(pendingKey, 3)).thenReturn(cachedJson);
+        when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class)))
+                .thenThrow(new JsonParseException(null, "bad json"));
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("User not enrolled into the course"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: unexpected exception is wrapped in CustomException with INTERNAL_SERVER_ERROR")
+    void readByUserIdAndCourseIdV2_UnexpectedException_WrapsInCustomException() {
+        String token = "token";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenThrow(new RuntimeException("Test exception"));
+
+        assertThrows(CustomException.class, () -> enrollmentService.readByUserIdAndCourseIdV2(courseId, token));
+        verify(accessTokenValidator).verifyUserToken(token);
     }
 
     // ------------------------------------------------------------------
