@@ -436,26 +436,28 @@ public class KafkaConsumer {
             }
             String userId = (String) eventData.get(Constants.EVENT_USER_ID);
             String courseId = (String) eventData.get(Constants.CONTEXT_ID);
-
-            if(enrollmentService.isUserEnrolled(response, userId, courseId)){
-                cacheService.deleteCache(Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId, cbServerProperties.getRedisIndex());
-                return;
-            }
             String courseName = (String) eventData.get(Constants.COURSE_NAME);
             String providerName = (String) eventData.get(Constants.PROVIDER_NAME);
+            Object coinsRaw = eventData.get(Constants.EVENT_COINS_REDEEMED);
+            int karmaCoins = coinsRaw instanceof Number number ? number.intValue() : 0;
+
+            if(enrollmentService.isUserEnrolled(response, userId, courseId)){
+                enrollmentService.markEnrolmentPending(userId, courseId, Constants.SUCCESS, courseName, karmaCoins);
+                return;
+            }
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
             String partnerId = contentResponse.path(Constants.CONTENT_PARTNER).path(Constants.ID).asText("");
             JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
             if (enrollmentService.validatePaidCourseEnrollment(userId, partnerId, courseId, contentResponse, providerResponse, response)) {
                 if (!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse.path(Constants.DATA), contentResponse)) {
-                    enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
+                    enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED, courseName, karmaCoins);
                     enrollmentService.triggerCoinsReaward(eventData, courseName, providerName, "Enrollment failed");
                 } else {
-                    log.info("User {} successfully enrolled in course {} and deleting cache", userId, courseId);
-                    cacheService.deleteCache(Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId, cbServerProperties.getRedisIndex());
+                    log.info("User {} successfully enrolled in course {} and updating cache", userId, courseId);
+                    enrollmentService.markEnrolmentPending(userId, courseId, Constants.SUCCESS, courseName, karmaCoins);
                 }
             } else {
-                enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED);
+                enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED, courseName, karmaCoins);
                 enrollmentService.triggerCoinsReaward(eventData, courseName, providerName, response.getParams().getMsg());
             }
             if (dedupeKey != null) {

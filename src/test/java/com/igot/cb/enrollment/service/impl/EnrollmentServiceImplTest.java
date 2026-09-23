@@ -31,6 +31,7 @@ import org.mockito.Spy;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -3058,28 +3059,62 @@ class EnrollmentServiceImplTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("markEnrolmentPending: FAILED status writes through putCache with the configured TTL")
+    @DisplayName("markEnrolmentPending: FAILED status writes {status,courseName,karmaCoins} through putCache with the terminal-status TTL")
     void markEnrolmentPending_FailedStatus_UsesTtlCache() {
         when(cbServerProperties.getRedisIndex()).thenReturn(3);
-        when(cbServerProperties.getFailedEnrolmentTtlSeconds()).thenReturn(600L);
+        when(cbServerProperties.getFailedEnrolmentTtlSeconds()).thenReturn(5L);
 
-        enrollmentService.markEnrolmentPending("user1", "course1", Constants.FAILED);
+        enrollmentService.markEnrolmentPending("user1", "course1", Constants.FAILED, "Course One", 80);
 
         String expectedKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + "user1" + "_" + "course1";
-        verify(cacheService).putCache(expectedKey, 3, Constants.FAILED, 600L);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> valueCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(cacheService).putCache(eq(expectedKey), eq(3), valueCaptor.capture(), eq(5L));
         verify(cacheService, never()).putCacheWithoutTtl(anyString(), anyInt(), any());
+
+        Map<String, Object> value = valueCaptor.getValue();
+        assertEquals(Constants.FAILED, value.get(Constants.STATUS));
+        assertEquals("Course One", value.get(Constants.COURSE_NAME));
+        assertEquals(80, value.get(Constants.KARMA_COINS));
     }
 
     @Test
-    @DisplayName("markEnrolmentPending: non-FAILED status writes through putCacheWithoutTtl")
+    @DisplayName("markEnrolmentPending: SUCCESS status also writes through putCache with the terminal-status TTL")
+    void markEnrolmentPending_SuccessStatus_UsesTtlCache() {
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        when(cbServerProperties.getFailedEnrolmentTtlSeconds()).thenReturn(5L);
+
+        enrollmentService.markEnrolmentPending("user1", "course1", Constants.SUCCESS, "Course One", 80);
+
+        String expectedKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + "user1" + "_" + "course1";
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> valueCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(cacheService).putCache(eq(expectedKey), eq(3), valueCaptor.capture(), eq(5L));
+        verify(cacheService, never()).putCacheWithoutTtl(anyString(), anyInt(), any());
+
+        Map<String, Object> value = valueCaptor.getValue();
+        assertEquals(Constants.SUCCESS, value.get(Constants.STATUS));
+        assertEquals("Course One", value.get(Constants.COURSE_NAME));
+        assertEquals(80, value.get(Constants.KARMA_COINS));
+    }
+
+    @Test
+    @DisplayName("markEnrolmentPending: pending status writes {status,courseName,karmaCoins} through putCacheWithoutTtl")
     void markEnrolmentPending_PendingStatus_UsesCacheWithoutTtl() {
         when(cbServerProperties.getRedisIndex()).thenReturn(3);
 
-        enrollmentService.markEnrolmentPending("user1", "course1", Constants.PENDING_ENROLMENT_STATUS);
+        enrollmentService.markEnrolmentPending("user1", "course1", Constants.PENDING_ENROLMENT_STATUS, "Course One", 80);
 
         String expectedKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + "user1" + "_" + "course1";
-        verify(cacheService).putCacheWithoutTtl(expectedKey, 3, Constants.PENDING_ENROLMENT_STATUS);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> valueCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(cacheService).putCacheWithoutTtl(eq(expectedKey), eq(3), valueCaptor.capture());
         verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
+
+        Map<String, Object> value = valueCaptor.getValue();
+        assertEquals(Constants.PENDING_ENROLMENT_STATUS, value.get(Constants.STATUS));
+        assertEquals("Course One", value.get(Constants.COURSE_NAME));
+        assertEquals(80, value.get(Constants.KARMA_COINS));
     }
 
     // ------------------------------------------------------------------
@@ -3101,16 +3136,26 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
-    @DisplayName("readByUserIdAndCourseIdV2: pending cache hit short-circuits to a synthetic PENDING result without querying cassandra")
-    void readByUserIdAndCourseIdV2_PendingCacheHit_ReturnsPendingWithoutCassandra() {
+    @DisplayName("readByUserIdAndCourseIdV2: cassandra is checked first; when it has no row, a pending cache entry produces a synthetic PENDING result")
+    void readByUserIdAndCourseIdV2_NoCassandraRow_PendingCacheHit_ReturnsPending() throws Exception {
         String token = "token";
         String userId = "user1";
         String courseId = "c1";
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
         when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), isNull(), eq(1)))
+                .thenReturn(Collections.emptyList());
+
         String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
-        when(cacheService.getCache(pendingKey, 3)).thenReturn(Constants.PENDING_ENROLMENT_STATUS);
+        String cachedJson = "{\"status\":\"Pending\",\"courseName\":\"Course One\",\"karmaCoins\":80}";
+        when(cacheService.getCache(pendingKey, 3)).thenReturn(cachedJson);
+        Map<String, Object> pendingInfo = new HashMap<>();
+        pendingInfo.put(Constants.STATUS, Constants.PENDING_ENROLMENT_STATUS);
+        pendingInfo.put(Constants.COURSE_NAME, "Course One");
+        pendingInfo.put(Constants.KARMA_COINS, 80);
+        when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class))).thenReturn(pendingInfo);
 
         SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
 
@@ -3120,21 +3165,83 @@ class EnrollmentServiceImplTest {
         assertEquals(CiosEnrolmentStatus.PENDING.getCode(), result.get(Constants.STATUS));
         assertEquals(userId, result.get("userid"));
         assertEquals(courseId, result.get("courseid"));
-        verify(cassandraOperation, never()).getRecordsByPropertiesWithoutFiltering(
-                any(), any(), any(), any(), any());
+        assertEquals("Course One", result.get(Constants.COURSE_NAME));
+        assertEquals(80, result.get(Constants.KARMA_COINS));
+        verify(cassandraOperation).getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any());
     }
 
     @Test
-    @DisplayName("readByUserIdAndCourseIdV2: no pending cache entry, cassandra returns a matching enrollment row")
-    void readByUserIdAndCourseIdV2_NoPendingEntry_CassandraFound() {
+    @DisplayName("readByUserIdAndCourseIdV2: cassandra returns no rows, cache has a terminal SUCCESS entry")
+    void readByUserIdAndCourseIdV2_NoCassandraRow_SuccessCacheHit_ReturnsCompleted() throws Exception {
         String token = "token";
         String userId = "user1";
         String courseId = "c1";
 
         when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
         when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), isNull(), eq(1)))
+                .thenReturn(Collections.emptyList());
+
         String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
-        when(cacheService.getCache(pendingKey, 3)).thenReturn(null);
+        String cachedJson = "{\"status\":\"success\",\"courseName\":\"Course One\",\"karmaCoins\":80}";
+        when(cacheService.getCache(pendingKey, 3)).thenReturn(cachedJson);
+        Map<String, Object> cachedInfo = new HashMap<>();
+        cachedInfo.put(Constants.STATUS, Constants.SUCCESS);
+        cachedInfo.put(Constants.COURSE_NAME, "Course One");
+        cachedInfo.put(Constants.KARMA_COINS, 80);
+        when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class))).thenReturn(cachedInfo);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        assertEquals(CiosEnrolmentStatus.PENDING.getCode(), result.get(Constants.STATUS),
+                "numeric STATUS is always 3 for any cache hit (success/failed/pending alike)");
+        assertEquals("Course One", result.get(Constants.COURSE_NAME));
+        assertEquals(80, result.get(Constants.KARMA_COINS));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: cassandra returns no rows, cache has a terminal FAILED entry")
+    void readByUserIdAndCourseIdV2_NoCassandraRow_FailedCacheHit_ReturnsFailed() throws Exception {
+        String token = "token";
+        String userId = "user1";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), isNull(), eq(1)))
+                .thenReturn(Collections.emptyList());
+
+        String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
+        String cachedJson = "{\"status\":\"Failed\",\"courseName\":\"Course One\",\"karmaCoins\":80}";
+        when(cacheService.getCache(pendingKey, 3)).thenReturn(cachedJson);
+        Map<String, Object> cachedInfo = new HashMap<>();
+        cachedInfo.put(Constants.STATUS, Constants.FAILED);
+        cachedInfo.put(Constants.COURSE_NAME, "Course One");
+        cachedInfo.put(Constants.KARMA_COINS, 80);
+        when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class))).thenReturn(cachedInfo);
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        assertEquals(CiosEnrolmentStatus.PENDING.getCode(), result.get(Constants.STATUS),
+                "numeric STATUS is always 3 for any cache hit (success/failed/pending alike)");
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: cassandra has a matching row - returned immediately, cache never consulted")
+    void readByUserIdAndCourseIdV2_CassandraFound_NeverChecksCache() {
+        String token = "token";
+        String userId = "user1";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
 
         Map<String, Object> enrolmentMap = new HashMap<>();
         enrolmentMap.put("courseid", courseId);
@@ -3148,11 +3255,12 @@ class EnrollmentServiceImplTest {
 
         assertEquals(HttpStatus.OK, response.getResponseCode());
         assertEquals(enrolmentMap, response.getResult());
+        verify(cacheService, never()).getCache(anyString(), anyInt());
     }
 
     @Test
-    @DisplayName("readByUserIdAndCourseIdV2: no pending cache entry, cassandra returns no rows")
-    void readByUserIdAndCourseIdV2_NoPendingEntry_CassandraEmpty() {
+    @DisplayName("readByUserIdAndCourseIdV2: cassandra empty and no cache entry - falls through to 'not enrolled'")
+    void readByUserIdAndCourseIdV2_CassandraEmpty_NoCacheEntry_ReturnsNotEnrolled() {
         String token = "token";
         String userId = "user1";
         String courseId = "c1";
@@ -3170,6 +3278,43 @@ class EnrollmentServiceImplTest {
 
         assertEquals(HttpStatus.OK, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("User not enrolled into the course"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: malformed pending cache JSON falls back to the DB 'not enrolled' response instead of failing")
+    void readByUserIdAndCourseIdV2_MalformedPendingCache_FallsBackToDbResponse() throws Exception {
+        String token = "token";
+        String userId = "user1";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenReturn(userId);
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                any(), any(), any(), isNull(), eq(1)))
+                .thenReturn(Collections.emptyList());
+
+        String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
+        String cachedJson = "not valid json";
+        when(cacheService.getCache(pendingKey, 3)).thenReturn(cachedJson);
+        when(objectMapper.readValue(eq(cachedJson), any(TypeReference.class)))
+                .thenThrow(new JsonParseException(null, "bad json"));
+
+        SBApiResponse response = enrollmentService.readByUserIdAndCourseIdV2(courseId, token);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getParams().getMsg().contains("User not enrolled into the course"));
+    }
+
+    @Test
+    @DisplayName("readByUserIdAndCourseIdV2: unexpected exception is wrapped in CustomException with INTERNAL_SERVER_ERROR")
+    void readByUserIdAndCourseIdV2_UnexpectedException_WrapsInCustomException() {
+        String token = "token";
+        String courseId = "c1";
+
+        when(accessTokenValidator.verifyUserToken(token)).thenThrow(new RuntimeException("Test exception"));
+
+        assertThrows(CustomException.class, () -> enrollmentService.readByUserIdAndCourseIdV2(courseId, token));
+        verify(accessTokenValidator).verifyUserToken(token);
     }
 
     // ------------------------------------------------------------------
