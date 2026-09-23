@@ -1722,6 +1722,93 @@ class EnrollmentServiceImplTest {
     }
 
     @Test
+    @DisplayName("validateAndResolveKarma: karmaPointsExemptionEnabled explicitly true behaves the same as the default - matching group is exempt")
+    void validateAndResolveKarma_ExemptionExplicitlyEnabled_MatchingGroupExempt() {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
+
+        ObjectNode exemption = realMapper.createObjectNode();
+        exemption.putArray(Constants.GROUP).add("Group A");
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
+        providerResponse.put(Constants.KARMA_POINTS_EXEMPTION_ENABLED, true);
+        providerResponse.set(Constants.KARMA_POINTS_EXEMPTION, exemption);
+
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.GROUP, "Group A");
+
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
+
+        SBApiResponse response = new SBApiResponse();
+        KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
+                userAttributes, response);
+
+        assertTrue(karmaResult.isAllowed());
+        assertEquals(0, karmaResult.getRedeemedKarmaPoints());
+    }
+
+    @Test
+    @DisplayName("validateAndResolveKarma: karmaPointsExemptionEnabled=false blocks even a user matching the exemption criteria")
+    void validateAndResolveKarma_ExemptionDisabled_MatchingGroupStillBlocked() {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
+
+        ObjectNode exemption = realMapper.createObjectNode();
+        exemption.putArray(Constants.GROUP).add("Group A");
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
+        providerResponse.put(Constants.KARMA_POINTS_EXEMPTION_ENABLED, false);
+        providerResponse.set(Constants.KARMA_POINTS_EXEMPTION, exemption);
+
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.GROUP, "Group A");
+
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
+        when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s points");
+
+        SBApiResponse response = new SBApiResponse();
+        KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
+                userAttributes, response);
+
+        assertFalse(karmaResult.isAllowed(),
+                "exemption criteria match Group A, but karmaPointsExemptionEnabled=false must skip the check entirely");
+        assertEquals(100, karmaResult.getRedeemedKarmaPoints());
+    }
+
+    @Test
+    @DisplayName("validateAndResolveKarma: karmaPointsExemptionEnabled=false with a non-matching group is blocked the same as if it were enabled")
+    void validateAndResolveKarma_ExemptionDisabled_NonMatchingGroupStillBlocked() {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
+
+        ObjectNode exemption = realMapper.createObjectNode();
+        exemption.putArray(Constants.GROUP).add("Group A");
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
+        providerResponse.put(Constants.KARMA_POINTS_EXEMPTION_ENABLED, false);
+        providerResponse.set(Constants.KARMA_POINTS_EXEMPTION, exemption);
+
+        Map<String, String> userAttributes = new HashMap<>();
+        userAttributes.put(Constants.GROUP, "Group C");
+
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
+        when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s points");
+
+        SBApiResponse response = new SBApiResponse();
+        KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
+                userAttributes, response);
+
+        assertFalse(karmaResult.isAllowed());
+        assertEquals(100, karmaResult.getRedeemedKarmaPoints());
+    }
+
+    @Test
     @DisplayName("validateAndResolveKarma: provider licenseType user bypasses karma validation entirely")
     void validateAndResolveKarma_LicenseTypeUser_SkipsKarmaValidation() {
         ObjectMapper realMapper = new ObjectMapper();
