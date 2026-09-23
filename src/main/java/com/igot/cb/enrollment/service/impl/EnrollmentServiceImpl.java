@@ -1111,7 +1111,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String message = "";
             if (redeemedPoints > 0) {
                 triggerCoinsRedemption(userId, courseId, redeemedPoints, courseName, providerName);
-                markEnrolmentPending(userId, courseId, Constants.PENDING_ENROLMENT_STATUS);
+                markEnrolmentPending(userId, courseId, Constants.PENDING_ENROLMENT_STATUS, courseName, redeemedPoints);
                 log.info("Karma points deduction event triggered for userId: {}, courseId: {}, points: {}",
                         userId, courseId, redeemedPoints);
                 message = String.format(Constants.ENROLLMENT_PROGRESS);
@@ -1370,15 +1370,23 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     /**
-     * Marks a userId+courseId pair as awaiting coins-redemption confirmation. No value is
-     * needed - presence of the key is the signal a downstream consumer checks and clears.
+     * Marks a userId+courseId pair's status in the async karma-coins enrolment flow. The
+     * value carries courseName/karmaCoins alongside status so readByUserIdAndCourseIdV2 can
+     * synthesize a full response from cache alone while a row has not landed in Cassandra yet.
+     * "pending" persists without a TTL until explicitly resolved; "success"/"failed" are
+     * terminal and only need to survive a short window for a client polling right after the
+     * outcome resolves, so they get a short TTL instead of lingering indefinitely.
      */
-    public void markEnrolmentPending(String userId, String courseId, String status) {
+    public void markEnrolmentPending(String userId, String courseId, String status, String courseName, int karmaCoins) {
         String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseId;
-        if (Constants.FAILED.equalsIgnoreCase(status)) {
-            cacheService.putCache(pendingKey, cbServerProperties.getRedisIndex(), status, cbServerProperties.getFailedEnrolmentTtlSeconds());
+        Map<String, Object> value = new HashMap<>();
+        value.put(Constants.STATUS, status);
+        value.put(Constants.COURSE_NAME, courseName);
+        value.put(Constants.KARMA_COINS, karmaCoins);
+        if (Constants.FAILED.equalsIgnoreCase(status) || Constants.SUCCESS.equalsIgnoreCase(status)) {
+            cacheService.putCache(pendingKey, cbServerProperties.getRedisIndex(), value, cbServerProperties.getFailedEnrolmentTtlSeconds());
         } else {
-            cacheService.putCacheWithoutTtl(pendingKey, cbServerProperties.getRedisIndex(), status);
+            cacheService.putCacheWithoutTtl(pendingKey, cbServerProperties.getRedisIndex(), value);
         }
     }
 
@@ -1395,28 +1403,49 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
 
-            String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseid;
-            String pendingStatus = cacheService.getCache(pendingKey, cbServerProperties.getRedisIndex());
-            if (StringUtils.isNotBlank(pendingStatus)) {
-                Map<String, Object> result = new HashMap<>();
-                result.put(Constants.COMPLETION_PERCENTAGE, 0);
-                result.put(Constants.COMPLETED_ON, null);
-                result.put(Constants.PROGRESS, 0);
-                result.put(Constants.ISSUED_BADGES, new ArrayList<>());
-                result.put(Constants.ADDITIONAL_PROPERTIES, "{}");
-                result.put(Constants.PARTNER_ID_REQ, null);
-                result.put(Constants.UPDATED_ON, Instant.now().toString());
-                result.put("userid", userId);
-                result.put("courseid", courseid);
-                result.put(Constants.ENROLLED_DATE, null);
-                result.put(Constants.ISSUED_CERTIFICATES, new ArrayList<>());
-                result.put(Constants.STATUS, CiosEnrolmentStatus.PENDING.getCode());
-                response.setResult(result);
-                response.setResponseCode(HttpStatus.OK);
-                return response;
+            SBApiResponse dbResponse = lookupUserCourseEnrollment(response, userId, courseid);
+            if (!Constants.USER_NOT_ENROLLED.equals(dbResponse.getParams().getMsg())) {
+                return dbResponse;
             }
 
-            return lookupUserCourseEnrollment(response, userId, courseid);
+            String pendingKey = Constants.PENDING_ENROLMENT_KEY_PREFIX + userId + "_" + courseid;
+            String cachedJson = cacheService.getCache(pendingKey, cbServerProperties.getRedisIndex());
+            if (StringUtils.isBlank(cachedJson)) {
+                return dbResponse;
+            }
+
+            Map<String, Object> pendingInfo;
+            try {
+                pendingInfo = objectMapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {
+                });
+            } catch (JsonProcessingException e) {
+                log.error("Failed to parse pending enrolment cache for key {}", pendingKey, e);
+                return dbResponse;
+            }
+
+            String status = (String) pendingInfo.get(Constants.STATUS);
+            int statusCode = Constants.SUCCESS.equalsIgnoreCase(status) ? CiosEnrolmentStatus.COMPLETED.getCode()
+                    : Constants.FAILED.equalsIgnoreCase(status) ? CiosEnrolmentStatus.FAILED.getCode()
+                    : CiosEnrolmentStatus.PENDING.getCode();
+
+            Map<String, Object> result = new HashMap<>();
+            result.put(Constants.COMPLETION_PERCENTAGE, 0);
+            result.put(Constants.COMPLETED_ON, null);
+            result.put(Constants.PROGRESS, 0);
+            result.put(Constants.ISSUED_BADGES, new ArrayList<>());
+            result.put(Constants.ADDITIONAL_PROPERTIES, "{}");
+            result.put(Constants.PARTNER_ID_REQ, null);
+            result.put(Constants.UPDATED_ON, Instant.now().toString());
+            result.put(Constants.USER_ID, userId);
+            result.put(Constants.COURSE_ID, courseid);
+            result.put(Constants.ENROLLED_DATE, null);
+            result.put(Constants.ISSUED_CERTIFICATES, new ArrayList<>());
+            result.put(Constants.STATUS, statusCode);
+            result.put(Constants.COURSE_NAME, pendingInfo.get(Constants.COURSE_NAME));
+            result.put(Constants.KARMA_COINS, pendingInfo.get(Constants.KARMA_COINS));
+            response.setResult(result);
+            response.setResponseCode(HttpStatus.OK);
+            return response;
         } catch (Exception e) {
             log.error("error while processing", e);
             throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);

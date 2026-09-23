@@ -216,6 +216,7 @@ public class Constants {
     public static final String CERTIFICATE_TEMPLATE_URL = "certificateTemplateUrl";
     public static final String EVENT_COINS_REDEEMED = "coinsRedeemed";
     public static final String CREDIT_OPERATION = "CREDIT";
+    public static final String KARMA_COINS = "karmaCoins";
 
     private Constants() {
     }

@@ -14,6 +14,7 @@ class CiosEnrolmentStatusTest {
         assertEquals("In-Progress", CiosEnrolmentStatus.IN_PROGRESS.getLabel());
         assertEquals("Completed", CiosEnrolmentStatus.COMPLETED.getLabel());
         assertEquals("Pending", CiosEnrolmentStatus.PENDING.getLabel());
+        assertEquals("Failed", CiosEnrolmentStatus.FAILED.getLabel());
         assertEquals("All", CiosEnrolmentStatus.ALL.getLabel());
     }
 
@@ -23,6 +24,7 @@ class CiosEnrolmentStatusTest {
         assertEquals(0, CiosEnrolmentStatus.IN_PROGRESS.getCode());
         assertEquals(2, CiosEnrolmentStatus.COMPLETED.getCode());
         assertEquals(3, CiosEnrolmentStatus.PENDING.getCode());
+        assertEquals(4, CiosEnrolmentStatus.FAILED.getCode());
         assertEquals(-1, CiosEnrolmentStatus.ALL.getCode());
     }
 
@@ -32,10 +34,11 @@ class CiosEnrolmentStatusTest {
         Map<String, Integer> map = CiosEnrolmentStatus.toMap();
 
         // Assert
-        assertEquals(4, map.size());
+        assertEquals(5, map.size());
         assertEquals(0, map.get("In-Progress"));
         assertEquals(2, map.get("Completed"));
         assertEquals(3, map.get("Pending"));
+        assertEquals(4, map.get("Failed"));
         assertEquals(-1, map.get("All"));
     }
 }
