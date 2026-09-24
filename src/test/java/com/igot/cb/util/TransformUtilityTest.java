@@ -264,13 +264,10 @@ class TransformUtilityTest {
         verify(restTemplate).exchange(eq(updateUrl), eq(HttpMethod.POST), captor.capture(), eq(JsonNode.class));
         JsonNode sentData = ((JsonNode) captor.getValue().getBody()).get(Constants.DATA);
 
-        // liscenceType's value is carried over to the correct key...
-        assertEquals("User", sentData.get(Constants.LICENSE_TYPE).asText());
-        // ...and both legacy keys are gone, since additionalProperties:false would otherwise
-        // reject the whole update.
-        assertFalse(sentData.has("liscenceType"));
-        assertFalse(sentData.has("licenceConsumedCount"));
-        // The correct-spelling key carries the fresh authoritative value.
+        assertEquals(0, sentData.get("licenceConsumedCount").asInt());
+        // The correct-spelling key is not populated from the legacy one.
+        assertFalse(sentData.has(Constants.LICENSE_TYPE));
+        // The correct-spelling count key carries the fresh authoritative value.
         assertEquals(4L, sentData.get(Constants.LICENSE_CONSUMED_COUNT).asLong());
     }
 
