@@ -2215,6 +2215,98 @@ class EnrollmentServiceImplTest {
         assertTrue(increments.stream().allMatch(i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event ->
                 Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))), eq(partnerId + "_" + userId));
+        // A free course never consumes a partner license, even though the internal
+        // totalEnrolments counter above still tracks it.
+        verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(any(), anyLong());
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType course, paid course - updates the partner license count")
+    void enrollUserInCourse_LicenseTypeCourse_Paid_UpdatesPartnerLicenseCount() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+
+        when(cassandraOperation.insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertRecordResponse(Constants.SUCCESS));
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 9L)));
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(transformUtility).updateContentPartnerLicenseConsumedCount(partnerId, 9L);
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user, new user, free course - still updates the partner license count since courseType is irrelevant for per-user licensing")
+    void enrollUserInCourse_LicenseTypeUser_NewUser_FreeCourse_StillUpdatesPartnerLicenseCount() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+
+        when(cassandraOperation.insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertRecordResponse(Constants.SUCCESS));
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        // No prior USER_ENROLMENTS row -> genuinely new/distinct user for this partner.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L)));
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(transformUtility).updateContentPartnerLicenseConsumedCount(partnerId, 3L);
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user, existing user - never updates the partner license count regardless of courseType")
+    void enrollUserInCourse_LicenseTypeUser_ExistingUser_NeverUpdatesPartnerLicenseCount() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        when(cassandraOperation.insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertRecordResponse(Constants.SUCCESS));
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 1L)));
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(any(), anyLong());
     }
 
     @Test
