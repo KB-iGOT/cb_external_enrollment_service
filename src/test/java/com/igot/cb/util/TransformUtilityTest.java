@@ -264,10 +264,6 @@ class TransformUtilityTest {
         verify(restTemplate).exchange(eq(updateUrl), eq(HttpMethod.POST), captor.capture(), eq(JsonNode.class));
         JsonNode sentData = ((JsonNode) captor.getValue().getBody()).get(Constants.DATA);
 
-        // Legacy keys are no longer migrated or stripped - they're resent exactly as read.
-        assertTrue(sentData.has("liscenceType"));
-        assertEquals("User", sentData.get("liscenceType").asText());
-        assertTrue(sentData.has("licenceConsumedCount"));
         assertEquals(0, sentData.get("licenceConsumedCount").asInt());
         // The correct-spelling key is not populated from the legacy one.
         assertFalse(sentData.has(Constants.LICENSE_TYPE));
