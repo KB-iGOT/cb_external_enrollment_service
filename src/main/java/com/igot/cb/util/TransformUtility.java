@@ -207,30 +207,15 @@ public class TransformUtility {
             }
 
             ObjectNode dataNode = ((ObjectNode) partnerResponse.get(Constants.DATA)).deepCopy();
-
-            // Some older partner records still carry pre-fix, misspelled keys
-            // ("liscenceType", "licenceConsumedCount") instead of the schema's actual
-            // "licenseType"/"licenseConsumedCount" properties. The update schema has
-            // additionalProperties:false, so blindly resending those legacy keys verbatim
-            // gets the whole update rejected. Migrate the value across when the correct key
-            // isn't already set, then drop the legacy key before it goes back out.
-            if (!dataNode.has(Constants.LICENSE_TYPE) && dataNode.has(Constants.LEGACY_LICENSE_TYPE)) {
-                dataNode.set(Constants.LICENSE_TYPE, dataNode.get(Constants.LEGACY_LICENSE_TYPE));
-            }
-            dataNode.remove(Constants.LEGACY_LICENSE_TYPE);
-            dataNode.remove(Constants.LEGACY_LICENSE_CONSUMED_COUNT);
-
             dataNode.put(Constants.LICENSE_CONSUMED_COUNT, licenseConsumedCount);
 
-            ObjectNode requestBody = mapper.createObjectNode();
-            requestBody.put(Constants.ID, partnerResponse.path(Constants.ID).asText(partnerId));
-            requestBody.set(Constants.DATA, dataNode);
+            ((ObjectNode) partnerResponse).set(Constants.DATA, dataNode);
 
             String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerUpdateApiUrl();
             HttpHeaders headers = new HttpHeaders();
             headers.setAccept(List.of(MediaType.APPLICATION_JSON));
             headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<JsonNode> entity = new HttpEntity<>(requestBody, headers);
+            HttpEntity<JsonNode> entity = new HttpEntity<>(partnerResponse, headers);
             ResponseEntity<JsonNode> response = restTemplate.exchange(
                     url,
                     HttpMethod.POST,
