@@ -601,16 +601,20 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         List<CounterIncrement> increments = new ArrayList<>();
         boolean countTowardTotal;
         boolean incrementCourseAndUser;
+        boolean updatePartnerLicense;
 
         if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType)) {
             countTowardTotal = getCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType) == 0;
             incrementCourseAndUser = true;
+            updatePartnerLicense = countTowardTotal;
         } else if (Constants.COURSE_TYPE_FREE.equalsIgnoreCase(courseType)) {
             countTowardTotal = true;
             incrementCourseAndUser = false;
+            updatePartnerLicense = false;
         } else {
             countTowardTotal = true;
             incrementCourseAndUser = true;
+            updatePartnerLicense = true;
         }
 
         if (incrementCourseAndUser) {
@@ -630,7 +634,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
                 increments);
 
-        if (countTowardTotal) {
+        if (updatePartnerLicense) {
             long licenseConsumedCount = getCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
             transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
         }
