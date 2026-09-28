@@ -1481,7 +1481,6 @@ class EnrollmentServiceImplTest {
     void validatePartnerEnrollmentLimits_Success() {
         String userId = "user123";
         String partnerId = "partner789";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -1510,7 +1509,6 @@ class EnrollmentServiceImplTest {
     void validatePartnerEnrollmentLimits_OverallLimitReached() {
         String userId = "user123";
         String partnerId = "partner789";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -1550,7 +1548,6 @@ class EnrollmentServiceImplTest {
     void validatePartnerEnrollmentLimits_InsufficientKarmaPoints() {
         String userId = "user123";
         String partnerId = "partner789";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.GROUP, "Group C");
@@ -1590,7 +1587,6 @@ class EnrollmentServiceImplTest {
     void validatePartnerEnrollmentLimits_KarmaExemptUser_Passes() {
         String userId = "user123";
         String partnerId = "partner789";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
         userAttributes.put(Constants.GROUP, "Group A");
@@ -1904,9 +1900,10 @@ class EnrollmentServiceImplTest {
         // the swallowed error the same as "key already existed" and go on to decrement a key that
         // was never actually seeded - DECRBY on an absent key starts from 0 and goes negative,
         // wrongly reporting insufficient balance regardless of the user's real balance.
+        Map<String, String> userAttributes = new HashMap<>();
         assertThrows(RuntimeException.class, () -> ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
-                new HashMap<String, String>(), response));
+                userAttributes, response));
 
         verify(cacheService, never()).decrementBy(anyString(), anyInt(), anyLong());
         verify(cacheService, never()).incrementIfExists(anyString(), anyLong(), anyInt());
@@ -1917,7 +1914,6 @@ class EnrollmentServiceImplTest {
     void validatePartnerEnrollmentLimits_LicenseTypeUser_NewUser_UnderLimit() {
         String userId = "user123";
         String partnerId = "partner789";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -1953,7 +1949,6 @@ class EnrollmentServiceImplTest {
     void validatePartnerEnrollmentLimits_LicenseTypeUser_NewUser_OverallLimitReached() {
         String userId = "user123";
         String partnerId = "partner789";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -1992,7 +1987,6 @@ class EnrollmentServiceImplTest {
     void validatePartnerEnrollmentLimits_LicenseTypeUser_ExistingUser_SkipsOverallLimit() {
         String userId = "user123";
         String partnerId = "partner789";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -2027,7 +2021,6 @@ class EnrollmentServiceImplTest {
     void validatePartnerEnrollmentLimits_LicenseTypeUser_UserWiseLimitReached() {
         String userId = "user123";
         String partnerId = "partner789";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -2064,7 +2057,6 @@ class EnrollmentServiceImplTest {
         String userId = "user123";
         String partnerId = "partner789";
         String courseId = "course1";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -2092,7 +2084,6 @@ class EnrollmentServiceImplTest {
         String userId = "user123";
         String partnerId = "partner789";
         String courseId = "course1";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -2129,7 +2120,6 @@ class EnrollmentServiceImplTest {
         String userId = "user123";
         String partnerId = "partner789";
         String courseId = "course1";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -2163,7 +2153,6 @@ class EnrollmentServiceImplTest {
         String userId = "user123";
         String partnerId = "partner789";
         String courseId = "course1";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -2197,7 +2186,6 @@ class EnrollmentServiceImplTest {
         String userId = "user123";
         String partnerId = "partner789";
         String courseId = "course1";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -2228,7 +2216,6 @@ class EnrollmentServiceImplTest {
         String userId = "user123";
         String partnerId = "partner789";
         String courseId = "course1";
-        String token = "auth-token";
         SBApiResponse response = new SBApiResponse();
         Map<String, String> userAttributes = new HashMap<>();
 
@@ -3241,7 +3228,7 @@ class EnrollmentServiceImplTest {
         enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
 
         verify(cacheService).setIfAbsentWithTtl(
-                eq(Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "orig-req-2"), eq(1), eq(1L), eq(14400L));
+                Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "orig-req-2", 1, 1L, 14400L);
         verify(producer).push(eq("karma-unified-topic"), any(), eq("user1"));
     }
 
@@ -3284,7 +3271,7 @@ class EnrollmentServiceImplTest {
         // Without this, the claim taken above would sit for the full dedupe TTL with the
         // reaward never actually sent - silently blocking any retry/redelivery from resending it.
         verify(cacheService).deleteCache(
-                eq(Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "orig-req-4"), eq(1));
+                Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "orig-req-4", 1);
         verify(cacheService, never()).incrementIfExists(any(), anyLong(), anyInt());
     }
 

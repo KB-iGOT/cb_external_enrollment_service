@@ -8,7 +8,6 @@ import com.igot.cb.util.dto.SBApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,11 +38,14 @@ public class ConsumerConfiguration {
     @Value("${kafka.max.poll.records}")
     private Integer kafkaMaxPollRecords;
 
-    @Autowired
-    private EnrollmentServiceImpl enrollmentService;
+    private final EnrollmentServiceImpl enrollmentService;
 
-    @Autowired
-    private ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
+
+    public ConsumerConfiguration(EnrollmentServiceImpl enrollmentService, ObjectMapper objectMapper) {
+        this.enrollmentService = enrollmentService;
+        this.objectMapper = objectMapper;
+    }
 
     @Bean
     KafkaListenerContainerFactory<ConcurrentMessageListenerContainer<String, String>> kafkaListenerContainerFactory() {
@@ -77,9 +79,9 @@ public class ConsumerConfiguration {
     // invoking accept(...) on the returned recoverer, without needing to dig it back out of the
     // container factory bean.
     ConsumerRecordRecoverer buildPaidCourseRecoverer() {
-        return (record, exception) -> {
+        return (consumerRecord, exception) -> {
             log.error("Paid course enrolment failed after exhausting retries. topic={}, partition={}, offset={}",
-                    record.topic(), record.partition(), record.offset(), exception);
+                    consumerRecord.topic(), consumerRecord.partition(), consumerRecord.offset(), exception);
 
             Map<String, Object> eventData;
             String userId;
@@ -88,7 +90,7 @@ public class ConsumerConfiguration {
             String providerName;
             try {
                 Map<String, Object> paidCourseEvent = objectMapper.readValue(
-                        (String) record.value(), new TypeReference<Map<String, Object>>() {});
+                        (String) consumerRecord.value(), new TypeReference<Map<String, Object>>() {});
                 eventData = (Map<String, Object>) paidCourseEvent.get(Constants.DATA);
                 userId = (String) eventData.get(Constants.EVENT_USER_ID);
                 courseId = (String) eventData.get(Constants.CONTEXT_ID);
@@ -99,7 +101,7 @@ public class ConsumerConfiguration {
                 // this case, it is surfaced as a CRITICAL log only.
                 log.error("CRITICAL: could not parse the paid course enrolment event to attempt a reaward - "
                                 + "manual intervention required, coins are NOT refunded. offset={}, payload={}",
-                        record.offset(), record.value(), parseException);
+                        consumerRecord.offset(), consumerRecord.value(), parseException);
                 return;
             }
 
@@ -114,7 +116,7 @@ public class ConsumerConfiguration {
             } catch (Exception e) {
                 log.error("CRITICAL: reaward attempt failed after paid course enrolment retries were exhausted - "
                                 + "manual intervention required, coins are NOT refunded. userId={}, courseId={}, offset={}",
-                        userId, courseId, record.offset(), e);
+                        userId, courseId, consumerRecord.offset(), e);
             }
         };
     }

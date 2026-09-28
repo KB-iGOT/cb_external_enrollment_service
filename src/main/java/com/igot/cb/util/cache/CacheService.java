@@ -1,6 +1,7 @@
 package com.igot.cb.util.cache;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.igot.cb.util.cache.exceptions.EnrolmentException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -137,7 +138,7 @@ public class CacheService {
       return "OK".equals(result);
     } catch (Exception e) {
       log.error("Error while seeding key in Redis cache: {} ", e.getMessage());
-      throw new RuntimeException("Failed to seed Redis key " + key, e);
+      throw new EnrolmentException("Failed to seed Redis key " + key, e);
     }
   }
 
@@ -153,7 +154,7 @@ public class CacheService {
       return jedis.decrBy(key, amount);
     } catch (Exception e) {
       log.error("Error while decrementing key in Redis cache: {} ", e.getMessage());
-      throw new RuntimeException("Failed to decrement Redis key " + key, e);
+      throw new EnrolmentException("Failed to decrement Redis key " + key, e);
     }
   }
 }

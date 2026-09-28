@@ -17,6 +17,7 @@ import java.io.InputStream;
 
 
 import com.igot.cb.util.cache.CacheService;
+import com.igot.cb.util.cache.exceptions.EnrolmentException;
 import com.igot.cb.util.dto.SBApiResponse;
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.RequiredArgsConstructor;
@@ -468,7 +469,7 @@ public class KafkaConsumer {
             acknowledgment.acknowledge();
         } catch (Exception e){
             log.error("Failed to process paid course enrolment event. Message received: {}{}", data.value(), e);
-            throw new RuntimeException("Paid course enrolment event processing failed", e);
+            throw new EnrolmentException("Paid course enrolment event processing failed", e);
         }
     }
 

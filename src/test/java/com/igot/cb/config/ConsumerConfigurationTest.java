@@ -36,17 +36,14 @@ class ConsumerConfigurationTest {
 
     @BeforeEach
     void setUp() {
-        config = new ConsumerConfiguration();
+        enrollmentService = mock(EnrollmentServiceImpl.class);
+        config = new ConsumerConfiguration(enrollmentService, new ObjectMapper());
 
         // Inject test values manually
         setField(config, "kafkabootstrapAddress", "localhost:9092");
         setField(config, "kafkaOffsetResetValue", "earliest");
         setField(config, "kafkaMaxPollInterval", 300000);
         setField(config, "kafkaMaxPollRecords", 500);
-
-        enrollmentService = mock(EnrollmentServiceImpl.class);
-        setField(config, "enrollmentService", enrollmentService);
-        setField(config, "objectMapper", new ObjectMapper());
     }
 
     private void setField(Object target, String fieldName, Object value) {
@@ -139,12 +136,12 @@ class ConsumerConfigurationTest {
     @Test
     void buildPaidCourseRecoverer_malformedPayload_doesNotThrowAndNeverAttemptsReaward() {
         ConsumerRecordRecoverer recoverer = config.buildPaidCourseRecoverer();
-        ConsumerRecord<String, String> record = paidCourseRecord("{not valid json}");
+        ConsumerRecord<String, String> consumerRecord = paidCourseRecord("{not valid json}");
 
         // Nothing to reward without a parseable userId/courseId - there is no failure-topic
         // fallback here on purpose (a queue nobody drains is equivalent to silent loss), so this
         // case can only ever be a CRITICAL log; verify it at least never throws or half-acts.
-        assertDoesNotThrow(() -> recoverer.accept(record, new RuntimeException("retries exhausted")));
+        assertDoesNotThrow(() -> recoverer.accept(consumerRecord, new RuntimeException("retries exhausted")));
 
         verify(enrollmentService, never()).isUserEnrolled(any(), any(), any());
         verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
@@ -158,12 +155,12 @@ class ConsumerConfigurationTest {
                 .when(enrollmentService).triggerCoinsReaward(any(), any(), any(), any());
 
         ConsumerRecordRecoverer recoverer = config.buildPaidCourseRecoverer();
-        ConsumerRecord<String, String> record = paidCourseRecord(payload);
+        ConsumerRecord<String, String> consumerRecord = paidCourseRecord(payload);
 
         // No retry loop here: the container already retried the whole listener with backoff
         // before this ever ran. A failure here must still not propagate - the last resort is a
         // CRITICAL log, not an exception - but there's no second attempt to fall back on.
-        assertDoesNotThrow(() -> recoverer.accept(record, new RuntimeException("retries exhausted")));
+        assertDoesNotThrow(() -> recoverer.accept(consumerRecord, new RuntimeException("retries exhausted")));
 
         verify(enrollmentService, times(1)).triggerCoinsReaward(any(), any(), any(), any());
     }
