@@ -129,4 +129,7 @@ public class CbServerProperties {
 
     @Value("${dedupe.ttl.seconds}")
     private long dedupeTtlSeconds;
+
+    @Value("${karma.wallet.cache.ttl.seconds}")
+    private long karmaWalletCacheTtlSeconds;
 }

@@ -609,16 +609,27 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         List<CounterIncrement> increments = new ArrayList<>();
         boolean countTowardTotal;
         boolean incrementCourseAndUser;
+        boolean updatePartnerLicense;
 
         if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType)) {
+            // Per-user licensing: courseType (free/paid) is irrelevant here - a partner license
+            // is consumed exactly once, the first time a given user enrols in anything from
+            // this partner, regardless of what that first course happens to be. That's the same
+            // condition that gates the total-enrolments counter, so reuse it directly.
             countTowardTotal = getCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType) == 0;
             incrementCourseAndUser = true;
+            updatePartnerLicense = countTowardTotal;
         } else if (Constants.COURSE_TYPE_FREE.equalsIgnoreCase(courseType)) {
+            // Per-course licensing, free course: internal counters still track it, but a free
+            // course never consumes a paid license.
             countTowardTotal = true;
             incrementCourseAndUser = false;
+            updatePartnerLicense = false;
         } else {
+            // Per-course licensing, paid course: consumes a license every time.
             countTowardTotal = true;
             incrementCourseAndUser = true;
+            updatePartnerLicense = true;
         }
 
         if (incrementCourseAndUser) {
@@ -638,7 +649,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
                 increments);
 
-        if (countTowardTotal) {
+        if (updatePartnerLicense) {
             long licenseConsumedCount = getCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
             transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
         }
@@ -920,29 +931,12 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             Map<String, String> userAttributes,
             SBApiResponse response) {
 
-        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(providerResponse.path(Constants.LICENSE_TYPE).asText())) {
-            return new KarmaValidationResult(true, 0);
-        }
-
-        if (isCourseFree(contentResponse)) {
-            return new KarmaValidationResult(true, 0);
-        }
-
-        int requiredKarmaCoins = contentResponse.path(Constants.REQUIRED_KARMA_COINS).asInt(0);
+        int requiredKarmaCoins = resolveEffectiveRequiredKarmaCoins(contentResponse, providerResponse, userAttributes);
         if (requiredKarmaCoins <= 0) {
             return new KarmaValidationResult(true, 0);
         }
 
-        Long userKarmaCoins = transformUtility.readUserKarmaCoins(userId);
-        boolean exemptionEnabled = providerResponse.path(Constants.KARMA_POINTS_EXEMPTION_ENABLED).asBoolean(true);
-        boolean isExemptGroup = exemptionEnabled
-                && isKarmaPointsExempt(userAttributes, providerResponse.path(Constants.KARMA_POINTS_EXEMPTION));
-
-        if (isExemptGroup) {
-            return new KarmaValidationResult(true, 0);
-        }
-
-        if (userKarmaCoins < requiredKarmaCoins) {
+        if (!reserveKarmaCoins(userId, requiredKarmaCoins)) {
             response.getParams().setMsg(
                     String.format(
                             cbServerProperties.getKarmaInsufficientMsg(),
@@ -954,6 +948,55 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         }
 
         return new KarmaValidationResult(true, requiredKarmaCoins);
+    }
+
+    /**
+     * The required karma coins for this course, or 0 if the user is exempt for any reason
+     * (user-type license, free course, no requirement configured, or exemption criteria match).
+     */
+    private int resolveEffectiveRequiredKarmaCoins(
+            JsonNode contentResponse, JsonNode providerResponse, Map<String, String> userAttributes) {
+        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(providerResponse.path(Constants.LICENSE_TYPE).asText())) {
+            return 0;
+        }
+
+        if (isCourseFree(contentResponse)) {
+            return 0;
+        }
+
+        int requiredKarmaCoins = contentResponse.path(Constants.REQUIRED_KARMA_COINS).asInt(0);
+        if (requiredKarmaCoins <= 0) {
+            return 0;
+        }
+
+        boolean exemptionEnabled = providerResponse.path(Constants.KARMA_POINTS_EXEMPTION_ENABLED).asBoolean(true);
+        boolean isExemptGroup = exemptionEnabled
+                && isKarmaPointsExempt(userAttributes, providerResponse.path(Constants.KARMA_POINTS_EXEMPTION));
+
+        return isExemptGroup ? 0 : requiredKarmaCoins;
+    }
+
+    /**
+     * Atomically reserves requiredKarmaCoins against the user's cached wallet balance in
+     * Redis, seeding the cache from Cassandra on first use for this user. Concurrent requests
+     * for the same user are serialized by Redis's own DECRBY, so at most as many requests
+     * succeed as the real balance actually covers - the rest see a negative result, get their
+     * reservation undone immediately via incrementIfExists, and are rejected right here
+     * instead of all being forwarded to the (single, sequential) wallet ledger and racing
+     * there - which is what let 10 simultaneous 50-coin requests against a 100-coin balance
+     * all pass this service's check and reach the ledger before any of them had settled.
+     */
+    private boolean reserveKarmaCoins(String userId, int requiredKarmaCoins) {
+        String balanceKey = Constants.KARMA_WALLET_BALANCE_KEY_PREFIX + userId;
+        cacheService.setIfAbsentWithTtl(balanceKey, cbServerProperties.getRedisIndex(),
+                transformUtility.readUserKarmaCoins(userId), cbServerProperties.getKarmaWalletCacheTtlSeconds());
+
+        long remaining = cacheService.decrementBy(balanceKey, cbServerProperties.getRedisIndex(), requiredKarmaCoins);
+        if (remaining < 0) {
+            cacheService.incrementIfExists(balanceKey, requiredKarmaCoins, cbServerProperties.getRedisIndex());
+            return false;
+        }
+        return true;
     }
 
     @Override
@@ -1208,20 +1251,20 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     : new HashMap<>();
             log.warn("User attributes fetched for enrollment: {}", userAttributes);
 
-            KarmaValidationResult karmaValidationResult = validateAndResolveKarma(
-                    userId,
-                    contentResponse,
-                    providerResponse.path(Constants.DATA),
-                    userAttributes,
-                    response
-            );
-            int requiredKarmaPoints = karmaValidationResult.getRedeemedKarmaPoints();
+            // This is a preview only - it must never reserve/decrement the user's karma wallet
+            // the way the real enrolment path (validateAndResolveKarma -> reserveKarmaCoins)
+            // does, since nothing here is ever actually redeemed or credited back. Compute the
+            // same effective required-points figure, then check (not reserve) the live balance.
+            int requiredKarmaPoints = resolveEffectiveRequiredKarmaCoins(
+                    contentResponse, providerResponse.path(Constants.DATA), userAttributes);
+
             Map<String, Object> result = new HashMap<>();
             result.put(Constants.REQUIRED_KARMA_POINTS, requiredKarmaPoints);
             response.setResult(result);
-            if (!karmaValidationResult.isAllowed()) {
+
+            if (requiredKarmaPoints > 0 && transformUtility.readUserKarmaCoins(userId) < requiredKarmaPoints) {
+                response.getParams().setMsg(String.format(cbServerProperties.getKarmaInsufficientMsg(), requiredKarmaPoints));
                 response.setResponseCode(HttpStatus.PAYMENT_REQUIRED);
-                return response;
             }
             return response;
         } catch (Exception e) {
@@ -1343,30 +1386,57 @@ public class EnrollmentServiceImpl implements EnrollmentService {
      * could not be completed, so the user's balance is restored.
      */
     public void triggerCoinsReaward(Map<String, Object> reawardData, String courseName, String providerName, String message) {
-        Map<String, Object> eventData = new HashMap<>();
-        String userId = (String) reawardData.get(Constants.EVENT_USER_ID);
-        eventData.put(Constants.EID, Constants.KARMA_COIN_REAWARD);
-        eventData.put(Constants.ETS, System.currentTimeMillis());
-        eventData.put(Constants.EVENT_USER_ID, userId);
-        eventData.put(Constants.OPERATION, Constants.CREDIT_OPERATION);
-        eventData.put(Constants.ACTION_TYPE, Constants.COINS_REAWARD_ACTION);
-        eventData.put(Constants.COINS_TO_REAWARD, reawardData.get(Constants.COINS_TO_REAWARD));
-        eventData.put(Constants.CONTEXT_TYPE, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);
-        eventData.put(Constants.CONTEXT_ID, reawardData.get(Constants.CONTEXT_ID));
-        eventData.put(Constants.INFO, message);
-        eventData.put(Constants.COURSE_NAME, courseName);
-        eventData.put(Constants.PROVIDER_NAME, providerName);
-        eventData.put(Constants.TRANSACTION_ID, reawardData.get(Constants.TRANSACTION_ID));
-        eventData.put(Constants.CREATED_AT, reawardData.get(Constants.CREATED_AT));
-        eventData.put(Constants.REQ_ID, UUID.randomUUID().toString());
+        Object originalReqIdRaw = reawardData.get(Constants.REQ_ID);
+        String originalReqId = originalReqIdRaw != null ? originalReqIdRaw.toString() : null;
+        String claimKey = StringUtils.isNotBlank(originalReqId) ? Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + originalReqId : null;
+        if (claimKey != null && !cacheService.setIfAbsentWithTtl(claimKey, cbServerProperties.getRedisIndex(), 1, cbServerProperties.getDedupeTtlSeconds())) {
+            log.info("Karma coin reaward already triggered for reqId {}, skipping duplicate", originalReqId);
+            return;
+        }
 
-        Map<String, Object> event = new HashMap<>();
-        event.put(Constants.EVENT_TYPE, Constants.COINS_REAWARD_EVENT_TYPE);
-        event.put(Constants.DATA, eventData);
-        event.put(Constants.VERSION, Constants.EVENT_VERSION);
+        try {
+            Map<String, Object> eventData = new HashMap<>();
+            String userId = (String) reawardData.get(Constants.EVENT_USER_ID);
+            eventData.put(Constants.EID, Constants.KARMA_COIN_REAWARD);
+            eventData.put(Constants.ETS, System.currentTimeMillis());
+            eventData.put(Constants.EVENT_USER_ID, userId);
+            eventData.put(Constants.OPERATION, Constants.CREDIT_OPERATION);
+            eventData.put(Constants.ACTION_TYPE, Constants.COINS_REAWARD_ACTION);
+            eventData.put(Constants.COINS_TO_REAWARD, reawardData.get(Constants.EVENT_COINS_REDEEMED));
+            eventData.put(Constants.CONTEXT_TYPE, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);
+            eventData.put(Constants.CONTEXT_ID, reawardData.get(Constants.CONTEXT_ID));
+            eventData.put(Constants.INFO, message);
+            eventData.put(Constants.COURSE_NAME, courseName);
+            eventData.put(Constants.PROVIDER_NAME, providerName);
+            eventData.put(Constants.TRANSACTION_ID, reawardData.get(Constants.TRANSACTION_ID));
+            eventData.put(Constants.CREATED_AT, reawardData.get(Constants.CREATED_AT));
+            eventData.put(Constants.REQ_ID, StringUtils.isNotBlank(originalReqId) ? "reaward_" + originalReqId : UUID.randomUUID().toString());
 
-        producer.push(cbServerProperties.getKarmaPointsUnifiedEventTopic(), event, userId);
-        log.info("Coins reaward event triggered for userId: {}", userId);
+            Map<String, Object> event = new HashMap<>();
+            event.put(Constants.EVENT_TYPE, Constants.COINS_REAWARD_EVENT_TYPE);
+            event.put(Constants.DATA, eventData);
+            event.put(Constants.VERSION, Constants.EVENT_VERSION);
+
+            producer.push(cbServerProperties.getKarmaPointsUnifiedEventTopic(), event, userId);
+            log.info("Coins reaward event triggered for userId: {}", userId);
+
+            // Credits back the same wallet-balance cache reserveKarmaCoins decremented at
+            // request time. incrementIfExists is a no-op if the key already expired - by then
+            // Cassandra should already reflect this reaward's own event above, so a future
+            // request re-seeds correctly from the DB instead of this call recreating the key
+            // with just this delta.
+            Object coinsRaw = reawardData.get(Constants.EVENT_COINS_REDEEMED);
+            int karmaCoinsToRestore = coinsRaw instanceof Number number ? number.intValue() : 0;
+            if (karmaCoinsToRestore > 0) {
+                cacheService.incrementIfExists(
+                        Constants.KARMA_WALLET_BALANCE_KEY_PREFIX + userId, karmaCoinsToRestore, cbServerProperties.getRedisIndex());
+            }
+        } catch (RuntimeException e) {
+            if (claimKey != null) {
+                cacheService.deleteCache(claimKey, cbServerProperties.getRedisIndex());
+            }
+            throw e;
+        }
     }
 
     /**

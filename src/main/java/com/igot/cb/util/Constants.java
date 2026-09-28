@@ -189,9 +189,9 @@ public class Constants {
     public static final String CONTEXT_TYPE = "contextType";
     public static final String EXT_COURSE_ENROLLMENT_CONTEXT = "EXT_COURSE_ENROLLMENT";
     public static final String PENDING_ENROLMENT_KEY_PREFIX = "pendingEnrolment_";
+    public static final String KARMA_WALLET_BALANCE_KEY_PREFIX = "karmaWalletBalance_";
     public static final String REQUIRED_KARMA_COINS = "requiredKarmaCoins";
-
-    // user_karma_coin_wallet (sunbird keyspace) - balance = total_earned - total_redeemed
+    public static final String KARMA_COIN_REAWARD_CLAIM_PREFIX = "karmaCoinReawardClaim_";
     public static final String TABLE_USER_KARMA_COIN_WALLET = "user_karma_coin_wallet";
     public static final String TOTAL_EARNED = "total_earned";
     public static final String TOTAL_REDEEMED = "total_redeemed";

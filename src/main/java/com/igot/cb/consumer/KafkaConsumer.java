@@ -1,5 +1,6 @@
 package com.igot.cb.consumer;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -420,18 +421,19 @@ public class KafkaConsumer {
         return outputFormatter.format(zonedDateTime);
     }
 
-    @KafkaListener(topics = "${spring.kafka.user.paid.course.enrolment.topic.name}", groupId = "${spring.kafka.user.paid.course.enrolment.consumer.group.id}")
-    public void validateAndEnrolPaidCourses(ConsumerRecord<String, String> data) {
-        log.info("KafkaConsumer::validateAndEnrolPaidCourses:topic name: {} and recievedData: {}", data.topic(), data.value());
+    @KafkaListener(topics = "${spring.kafka.user.paid.course.enrolment.topic.name}", groupId = "${spring.kafka.user.paid.course.enrolment.consumer.group.id}", containerFactory = "paidCourseKafkaListenerContainerFactory")
+    public void validateAndEnrolPaidCourses(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) throws JsonProcessingException {
         try {
-            SBApiResponse response = transformUtility.createDefaultResponse("");
+            log.info("KafkaConsumer::validateAndEnrolPaidCourses:topic name: {} and recievedData: {}", data.topic(), data.value());
             Map<String, Object> paidCourseEvent = mapper.readValue(data.value(), new TypeReference<>() {
             });
+            SBApiResponse response = transformUtility.createDefaultResponse("");
             Map<String, Object> eventData = (Map<String, Object>) paidCourseEvent.get(Constants.DATA);
             String reqId = (String) eventData.get(Constants.REQ_ID);
             String dedupeKey = StringUtils.isNotBlank(reqId) ? Constants.PAID_COURSE_ENROLMENT_DEDUPE_PREFIX + reqId : null;
             if (dedupeKey != null && StringUtils.isNotBlank(cacheService.getCache(dedupeKey, cbServerProperties.getRedisIndex()))) {
                 log.info("Paid course enrolment event {} already processed, skipping", reqId);
+                acknowledgment.acknowledge();
                 return;
             }
             String userId = (String) eventData.get(Constants.EVENT_USER_ID);
@@ -440,9 +442,9 @@ public class KafkaConsumer {
             String providerName = (String) eventData.get(Constants.PROVIDER_NAME);
             Object coinsRaw = eventData.get(Constants.EVENT_COINS_REDEEMED);
             int karmaCoins = coinsRaw instanceof Number number ? number.intValue() : 0;
-
-            if(enrollmentService.isUserEnrolled(response, userId, courseId)){
+            if (enrollmentService.isUserEnrolled(response, userId, courseId)) {
                 enrollmentService.markEnrolmentPending(userId, courseId, Constants.SUCCESS, courseName, karmaCoins);
+                acknowledgment.acknowledge();
                 return;
             }
             JsonNode contentResponse = transformUtility.callCiosContentReadAPi(courseId);
@@ -463,8 +465,10 @@ public class KafkaConsumer {
             if (dedupeKey != null) {
                 cacheService.putCache(dedupeKey, cbServerProperties.getRedisIndex(), Boolean.TRUE, cbServerProperties.getDedupeTtlSeconds());
             }
-        } catch (Exception e) {
-            log.error("Failed to read enroll Request. Message received : {}", data.value(), e);
+            acknowledgment.acknowledge();
+        } catch (Exception e){
+            log.error("Failed to process paid course enrolment event. Message received: {}{}", data.value(), e);
+            throw new RuntimeException("Paid course enrolment event processing failed", e);
         }
     }
 

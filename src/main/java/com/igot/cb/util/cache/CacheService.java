@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.params.SetParams;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -114,6 +115,45 @@ public class CacheService {
     } catch (Exception e) {
       log.error("Error while incrementing key in Redis cache: {} ", e.getMessage());
       return null;
+    }
+  }
+
+  /**
+   * Seeds a numeric key only if it doesn't already exist (atomic SET...NX EX) - used to
+   * initialize a per-user cache value (e.g. karma coin balance) from its source of truth on
+   * first use, without a race between concurrent callers each trying to seed it: whichever
+   * request's SET NX lands first wins, every other concurrent caller's seed attempt is a
+   * silent no-op, and all of them proceed against whatever value is now in Redis.
+   *
+   * <p>A genuine Redis error throws rather than returning false, deliberately - a caller that
+   * treats "false" as just "someone else already seeded it" would otherwise silently proceed
+   * to operate (e.g. decrement) against a key that was never actually seeded, misreading a
+   * connection failure as a real balance of zero.
+   */
+  public boolean setIfAbsentWithTtl(String key, int dbIndex, long value, long ttlSeconds) {
+    try (Jedis jedis = jedisPool.getResource()) {
+      jedis.select(dbIndex);
+      String result = jedis.set(key, String.valueOf(value), SetParams.setParams().nx().ex(ttlSeconds));
+      return "OK".equals(result);
+    } catch (Exception e) {
+      log.error("Error while seeding key in Redis cache: {} ", e.getMessage());
+      throw new RuntimeException("Failed to seed Redis key " + key, e);
+    }
+  }
+
+  /**
+   * Atomic decrement (Redis DECRBY) - concurrent callers are serialized by Redis itself, so
+   * each sees the post-decrement result of every caller ahead of it, never a stale
+   * pre-decrement value. Used to enforce a balance under concurrent requests: the caller
+   * must check the returned value and undo (incrementBy) if it went negative.
+   */
+  public long decrementBy(String key, int dbIndex, long amount) {
+    try (Jedis jedis = jedisPool.getResource()) {
+      jedis.select(dbIndex);
+      return jedis.decrBy(key, amount);
+    } catch (Exception e) {
+      log.error("Error while decrementing key in Redis cache: {} ", e.getMessage());
+      throw new RuntimeException("Failed to decrement Redis key " + key, e);
     }
   }
 }

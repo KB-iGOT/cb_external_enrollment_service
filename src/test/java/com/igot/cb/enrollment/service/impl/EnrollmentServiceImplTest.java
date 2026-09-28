@@ -1569,6 +1569,9 @@ class EnrollmentServiceImplTest {
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
         when(transformUtility.readUserKarmaCoins(userId)).thenReturn(50L);
+        // Redis balance reservation: 50 - 100 required goes negative, so the debit is rejected
+        // synchronously here rather than being forwarded to flink.
+        when(cacheService.decrementBy(anyString(), anyInt(), anyLong())).thenReturn(-50L);
 
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
                 enrollmentService, "validatePartnerEnrollmentLimits", userId, partnerId, courseId, response,
@@ -1579,6 +1582,7 @@ class EnrollmentServiceImplTest {
         assertEquals(100, karmaResult.getRedeemedKarmaPoints());
         assertEquals(HttpStatus.PAYMENT_REQUIRED, response.getResponseCode());
         assertTrue(response.getParams().getMsg().contains("100"));
+        verify(cacheService).incrementIfExists(anyString(), eq(100L), anyInt());
     }
 
     @Test
@@ -1769,6 +1773,7 @@ class EnrollmentServiceImplTest {
 
         when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
         when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s points");
+        when(cacheService.decrementBy(anyString(), anyInt(), anyLong())).thenReturn(-90L);
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
@@ -1799,6 +1804,7 @@ class EnrollmentServiceImplTest {
 
         when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
         when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s points");
+        when(cacheService.decrementBy(anyString(), anyInt(), anyLong())).thenReturn(-90L);
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
@@ -1841,6 +1847,7 @@ class EnrollmentServiceImplTest {
         providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
 
         when(transformUtility.readUserKarmaCoins("user1")).thenReturn(150L);
+        when(cacheService.decrementBy(anyString(), anyInt(), anyLong())).thenReturn(50L);
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
@@ -1850,6 +1857,7 @@ class EnrollmentServiceImplTest {
 
         assertFalse(blocked);
         assertEquals(100, karmaResult.getRedeemedKarmaPoints());
+        verify(cacheService, never()).incrementIfExists(anyString(), anyLong(), anyInt());
     }
 
     @Test
@@ -1863,6 +1871,7 @@ class EnrollmentServiceImplTest {
 
         when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
         when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s points");
+        when(cacheService.decrementBy(anyString(), anyInt(), anyLong())).thenReturn(-90L);
 
         SBApiResponse response = new SBApiResponse();
         KarmaValidationResult karmaResult = ReflectionTestUtils.invokeMethod(
@@ -1873,6 +1882,34 @@ class EnrollmentServiceImplTest {
         assertTrue(blocked);
         assertEquals(100, karmaResult.getRedeemedKarmaPoints());
         assertEquals("Need 100 points", response.getParams().getMsg());
+        verify(cacheService).incrementIfExists(anyString(), eq(100L), anyInt());
+    }
+
+    @Test
+    @DisplayName("validateAndResolveKarma: a Redis error while seeding the wallet balance fails closed instead of decrementing an unseeded key")
+    void validateAndResolveKarma_SeedFails_PropagatesAndNeverDecrements() {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 100);
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.put(Constants.KARMA_POINTS_ENABLED, true);
+
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(200L);
+        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong()))
+                .thenThrow(new RuntimeException("Redis connection reset"));
+
+        SBApiResponse response = new SBApiResponse();
+
+        // Without this, a caller that only checks setIfAbsentWithTtl's boolean return would treat
+        // the swallowed error the same as "key already existed" and go on to decrement a key that
+        // was never actually seeded - DECRBY on an absent key starts from 0 and goes negative,
+        // wrongly reporting insufficient balance regardless of the user's real balance.
+        assertThrows(RuntimeException.class, () -> ReflectionTestUtils.invokeMethod(
+                enrollmentService, "validateAndResolveKarma", "user1", contentResponse, providerResponse,
+                new HashMap<String, String>(), response));
+
+        verify(cacheService, never()).decrementBy(anyString(), anyInt(), anyLong());
+        verify(cacheService, never()).incrementIfExists(anyString(), anyLong(), anyInt());
     }
 
     @Test
@@ -2304,6 +2341,98 @@ class EnrollmentServiceImplTest {
         assertTrue(increments.stream().allMatch(i -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(i.getCompositeKey().get(Constants.SCOPE_TYPE))));
         verify(producer).push(eq("enrolment-counter-topic"), argThat(event ->
                 Constants.COURSE_TYPE_FREE.equals(((Map<?, ?>) event).get(Constants.COURSE_TYPE_COL))), eq(partnerId + "_" + userId));
+        // A free course never consumes a partner license, even though the internal
+        // totalEnrolments counter above still tracks it.
+        verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(any(), anyLong());
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType course, paid course - updates the partner license count")
+    void enrollUserInCourse_LicenseTypeCourse_Paid_UpdatesPartnerLicenseCount() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_COURSE);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_PAID);
+
+        when(cassandraOperation.insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertRecordResponse(Constants.SUCCESS));
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 9L)));
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(transformUtility).updateContentPartnerLicenseConsumedCount(partnerId, 9L);
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user, new user, free course - still updates the partner license count since courseType is irrelevant for per-user licensing")
+    void enrollUserInCourse_LicenseTypeUser_NewUser_FreeCourse_StillUpdatesPartnerLicenseCount() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+        contentResponse.put(Constants.COURSE_TYPE, Constants.COURSE_TYPE_FREE);
+
+        when(cassandraOperation.insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertRecordResponse(Constants.SUCCESS));
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        // No prior USER_ENROLMENTS row -> genuinely new/distinct user for this partner.
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(Collections.emptyList());
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_TOTAL_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 3L)));
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(transformUtility).updateContentPartnerLicenseConsumedCount(partnerId, 3L);
+    }
+
+    @Test
+    @DisplayName("enrollUserInCourse: licenseType user, existing user - never updates the partner license count regardless of courseType")
+    void enrollUserInCourse_LicenseTypeUser_ExistingUser_NeverUpdatesPartnerLicenseCount() {
+        String userId = "user123";
+        String courseId = "course456";
+        String partnerId = "partner789";
+        ObjectNode providerResponse = new ObjectMapper().createObjectNode();
+        providerResponse.put(Constants.LICENSE_TYPE, Constants.LICENSE_TYPE_USER);
+        ObjectNode contentResponse = new ObjectMapper().createObjectNode();
+
+        when(cassandraOperation.insertRecord(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS), any()))
+                .thenReturn(insertRecordResponse(Constants.SUCCESS));
+        when(cbServerProperties.getEnrolmentCounterUpdateTopic()).thenReturn("enrolment-counter-topic");
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSES), eq(Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER),
+                argThat(m -> Constants.SCOPE_TYPE_USER_ENROLMENTS.equals(((Map<?, ?>) m).get(Constants.SCOPE_TYPE))),
+                any(), any()))
+                .thenReturn(List.of(Map.of(Constants.COUNTER_VALUE, 1L)));
+
+        boolean result = (boolean) ReflectionTestUtils.invokeMethod(
+                enrollmentService, "enrollUserInCourse", userId, courseId, partnerId, providerResponse, contentResponse);
+
+        assertTrue(result);
+        verify(transformUtility, never()).updateContentPartnerLicenseConsumedCount(any(), anyLong());
     }
 
     @Test
@@ -2606,6 +2735,8 @@ class EnrollmentServiceImplTest {
 
         when(transformUtility.readUserDetails("user123")).thenReturn(Map.of(Constants.ID, "user123"));
         when(transformUtility.readUserKarmaCoins("user123")).thenReturn(200L);
+        // 200 - 60 required stays non-negative, so the Redis reservation succeeds.
+        when(cacheService.decrementBy(anyString(), anyInt(), anyLong())).thenReturn(140L);
 
         when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
@@ -2688,19 +2819,17 @@ class EnrollmentServiceImplTest {
         when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
         when(transformUtility.validateAndGetUserId(eq(token), any(SBApiResponse.class))).thenReturn("user1");
 
-        // The endpoint now resolves the amount through validateAndResolveKarma, which reads the
-        // partner from providerResponse.path(DATA) and gates on addKarmaPointEnabled - so the
-        // partner payload has to be nested under "data", the way the real read API returns it.
-        // karmaPointsExemptionEnabled is no longer consulted on this path at all; exemption is
-        // driven purely by the karmaPointsExemption node, which is absent here (user not exempt).
+        // The endpoint resolves the amount through resolveEffectiveRequiredKarmaCoins, which
+        // reads the partner from providerResponse.path(DATA) - so the partner payload has to be
+        // nested under "data", the way the real read API returns it. exemption is driven purely
+        // by the karmaPointsExemption node, which is absent here (user not exempt).
         ObjectNode providerData = realMapper.createObjectNode();
         providerData.put(Constants.KARMA_POINTS_ENABLED, true);
         ObjectNode providerResponse = realMapper.createObjectNode();
         providerResponse.set(Constants.DATA, providerData);
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
-        when(cbServerProperties.isKarmaPointsDeductionEnabled()).thenReturn(true);
-        // Balance has to cover the requirement, otherwise validateAndResolveKarma reports the
-        // enrolment blocked and resolves 0 points instead of 80.
+        // This is a preview only - the balance is only ever read directly (never reserved), so
+        // 200 >= 80 required is enough to keep the response at OK.
         when(transformUtility.readUserKarmaCoins("user1")).thenReturn(200L);
 
         SBApiResponse response = enrollmentService.karmapointsDeductionRule(userCourseEnroll, token);
@@ -2709,6 +2838,44 @@ class EnrollmentServiceImplTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) response.getResult();
         assertEquals(80, ((Number) result.get(Constants.REQUIRED_KARMA_POINTS)).intValue());
+        // The preview endpoint must never reserve/decrement the user's karma wallet - nothing
+        // here is ever actually redeemed or credited back.
+        verify(cacheService, never()).decrementBy(anyString(), anyInt(), anyLong());
+        verify(cacheService, never()).setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong());
+    }
+
+    @Test
+    @DisplayName("karmapointsDeductionRule: insufficient balance returns 402 without reserving anything")
+    void karmapointsDeductionRule_InsufficientBalance_ReturnsPaymentRequired_WithoutReserving() {
+        ObjectMapper realMapper = new ObjectMapper();
+        ObjectNode userCourseEnroll = realMapper.createObjectNode();
+        userCourseEnroll.put(Constants.COURSE_ID_RQST, "course1");
+        userCourseEnroll.put(Constants.PARTNER_ID, "partner1");
+        String token = "jwt.token";
+
+        ObjectNode contentResponse = realMapper.createObjectNode();
+        contentResponse.put(Constants.REQUIRED_KARMA_COINS, 80);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        when(transformUtility.validateAndGetUserId(eq(token), any(SBApiResponse.class))).thenReturn("user1");
+
+        ObjectNode providerData = realMapper.createObjectNode();
+        providerData.put(Constants.KARMA_POINTS_ENABLED, true);
+        ObjectNode providerResponse = realMapper.createObjectNode();
+        providerResponse.set(Constants.DATA, providerData);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(transformUtility.readUserKarmaCoins("user1")).thenReturn(10L);
+        when(cbServerProperties.getKarmaInsufficientMsg()).thenReturn("Need %s points");
+
+        SBApiResponse response = enrollmentService.karmapointsDeductionRule(userCourseEnroll, token);
+
+        assertEquals(HttpStatus.PAYMENT_REQUIRED, response.getResponseCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> result = (Map<String, Object>) response.getResult();
+        assertEquals(80, ((Number) result.get(Constants.REQUIRED_KARMA_POINTS)).intValue());
+        assertEquals("Need 80 points", response.getParams().getMsg());
+        verify(cacheService, never()).decrementBy(anyString(), anyInt(), anyLong());
+        verify(cacheService, never()).setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong());
+        verify(cacheService, never()).incrementIfExists(anyString(), anyLong(), anyInt());
     }
 
     @Test
@@ -3012,17 +3179,19 @@ class EnrollmentServiceImplTest {
     @DisplayName("triggerCoinsReaward: publishes a correctly populated reaward event to the karma points unified topic")
     void triggerCoinsReaward_PublishesEvent() {
         when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+        when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(14400L);
+        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong())).thenReturn(true);
 
         Map<String, Object> reawardData = new HashMap<>();
         reawardData.put(Constants.EVENT_USER_ID, "user1");
         reawardData.put(Constants.CONTEXT_ID, "course1");
         reawardData.put(Constants.TRANSACTION_ID, "txn-123");
         reawardData.put(Constants.CREATED_AT, 1789561308650L);
-        // NOTE: a real incoming confirmation event carries the coins figure under
-        // EVENT_COINS_REDEEMED ("coinsRedeemed"), never under COINS_TO_REAWARD
-        // ("coinsToReaward") - triggerCoinsReaward currently reads reawardData.get(COINS_TO_REAWARD),
-        // so passing a real event through unmodified always yields a null coins value below.
-        // Documented as real current behavior, not fixed here (out of scope for this change).
+        reawardData.put(Constants.REQ_ID, "orig-req-1");
+        // A real incoming confirmation event carries the coins figure under EVENT_COINS_REDEEMED
+        // ("coinsRedeemed"), never under COINS_TO_REAWARD ("coinsToReaward") - the outgoing
+        // event's COINS_TO_REAWARD field must be populated from this, not left null.
         reawardData.put(Constants.EVENT_COINS_REDEEMED, 42);
 
         enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
@@ -3041,8 +3210,8 @@ class EnrollmentServiceImplTest {
         assertEquals(Constants.KARMA_COIN_REAWARD, eventData.get(Constants.EID));
         assertEquals(Constants.CREDIT_OPERATION, eventData.get(Constants.OPERATION));
         assertEquals(Constants.COINS_REAWARD_ACTION, eventData.get(Constants.ACTION_TYPE));
-        assertNull(eventData.get(Constants.COINS_TO_REAWARD),
-                "documents current behavior: reawardData has no COINS_TO_REAWARD key (real events use EVENT_COINS_REDEEMED), so this passes through as null");
+        assertEquals(42, eventData.get(Constants.COINS_TO_REAWARD),
+                "must read the real EVENT_COINS_REDEEMED field, not the never-populated COINS_TO_REAWARD");
         assertEquals(Constants.EXT_COURSE_ENROLLMENT_CONTEXT, eventData.get(Constants.CONTEXT_TYPE));
         assertEquals("course1", eventData.get(Constants.CONTEXT_ID));
         assertEquals("refund message", eventData.get(Constants.INFO));
@@ -3052,6 +3221,86 @@ class EnrollmentServiceImplTest {
         assertEquals("user1", eventData.get(Constants.EVENT_USER_ID));
         assertEquals(1789561308650L, eventData.get(Constants.CREATED_AT),
                 "reaward event must reuse the original confirmation event's createdAt, not a freshly generated timestamp");
+        assertEquals("reaward_orig-req-1", eventData.get(Constants.REQ_ID),
+                "must be deterministically derived from the original event's reqId, not a fresh random UUID, so a "
+                        + "downstream consumer deduping by reqId sees the same key on every retriggered attempt");
+    }
+
+    @Test
+    @DisplayName("triggerCoinsReaward: claims the reqId-scoped guard before publishing, using the dedupe TTL")
+    void triggerCoinsReaward_ClaimsReqIdGuardBeforePublishing() {
+        when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+        when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(14400L);
+        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong())).thenReturn(true);
+
+        Map<String, Object> reawardData = new HashMap<>();
+        reawardData.put(Constants.EVENT_USER_ID, "user1");
+        reawardData.put(Constants.REQ_ID, "orig-req-2");
+
+        enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
+
+        verify(cacheService).setIfAbsentWithTtl(
+                eq(Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "orig-req-2"), eq(1), eq(1L), eq(14400L));
+        verify(producer).push(eq("karma-unified-topic"), any(), eq("user1"));
+    }
+
+    @Test
+    @DisplayName("triggerCoinsReaward: a second call for the same reqId finds the guard already claimed and is a no-op")
+    void triggerCoinsReaward_DuplicateReqId_SkipsPublishing() {
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+        when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(14400L);
+        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong())).thenReturn(false);
+
+        Map<String, Object> reawardData = new HashMap<>();
+        reawardData.put(Constants.EVENT_USER_ID, "user1");
+        reawardData.put(Constants.REQ_ID, "orig-req-3");
+        reawardData.put(Constants.EVENT_COINS_REDEEMED, 42);
+
+        enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
+
+        verify(producer, never()).push(any(), any(), any());
+        verify(cacheService, never()).incrementIfExists(any(), anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("triggerCoinsReaward: if the Kafka push itself fails, the claim is released and the failure propagates so a retry can resend")
+    void triggerCoinsReaward_PushFails_ReleasesClaimAndPropagates() {
+        when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+        when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(14400L);
+        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong())).thenReturn(true);
+        doThrow(new RuntimeException("kafka down"))
+                .when(producer).push(eq("karma-unified-topic"), any(), eq("user1"));
+
+        Map<String, Object> reawardData = new HashMap<>();
+        reawardData.put(Constants.EVENT_USER_ID, "user1");
+        reawardData.put(Constants.REQ_ID, "orig-req-4");
+        reawardData.put(Constants.EVENT_COINS_REDEEMED, 42);
+
+        assertThrows(RuntimeException.class,
+                () -> enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message"));
+
+        // Without this, the claim taken above would sit for the full dedupe TTL with the
+        // reaward never actually sent - silently blocking any retry/redelivery from resending it.
+        verify(cacheService).deleteCache(
+                eq(Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "orig-req-4"), eq(1));
+        verify(cacheService, never()).incrementIfExists(any(), anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("triggerCoinsReaward: with no reqId on the original event, the guard is skipped and it processes normally")
+    void triggerCoinsReaward_NoReqId_SkipsGuardAndProcessesNormally() {
+        when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
+        when(cbServerProperties.getRedisIndex()).thenReturn(1);
+
+        Map<String, Object> reawardData = new HashMap<>();
+        reawardData.put(Constants.EVENT_USER_ID, "user1");
+
+        enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
+
+        verify(cacheService, never()).setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong());
+        verify(producer).push(eq("karma-unified-topic"), any(), eq("user1"));
     }
 
     // ------------------------------------------------------------------
