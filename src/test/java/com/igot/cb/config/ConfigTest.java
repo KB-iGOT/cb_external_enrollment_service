@@ -10,12 +10,15 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.mock;
 
 class ConfigTest {
 
     @Test
     void testConsumerConfiguration() {
-        ConsumerConfiguration consumerConfiguration = new ConsumerConfiguration();
+        ConsumerConfiguration consumerConfiguration = new ConsumerConfiguration(
+                mock(com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl.class),
+                new com.fasterxml.jackson.databind.ObjectMapper());
         ReflectionTestUtils.setField(consumerConfiguration, "kafkabootstrapAddress", "localhost:9092");
         ReflectionTestUtils.setField(consumerConfiguration, "kafkaOffsetResetValue", "earliest");
         ReflectionTestUtils.setField(consumerConfiguration, "kafkaMaxPollInterval", 300000);

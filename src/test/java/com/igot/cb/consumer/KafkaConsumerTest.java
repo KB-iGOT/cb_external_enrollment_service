@@ -1110,7 +1110,7 @@ class KafkaConsumerTest {
         when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
                 contentResponse)).thenReturn(true);
 
-        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
         verify(enrollmentService).isUserEnrolled(response, "user1", "course1");
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.SUCCESS, "Course One", 50);
@@ -1132,7 +1132,7 @@ class KafkaConsumerTest {
         when(transformUtility.createDefaultResponse("")).thenReturn(response);
         when(enrollmentService.isUserEnrolled(response, "user1", "course1")).thenReturn(true);
 
-        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.SUCCESS, "Course One", 50);
         verify(transformUtility, never()).callCiosContentReadAPi(any());
@@ -1164,7 +1164,7 @@ class KafkaConsumerTest {
         when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
                 contentResponse)).thenReturn(false);
 
-        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
         Map<String, Object> expectedEventData = (Map<String, Object>) basePaidCourseEvent().get(Constants.DATA);
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED, "Course One", 50);
@@ -1191,7 +1191,7 @@ class KafkaConsumerTest {
         when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
                 providerResponse, response)).thenReturn(false);
 
-        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
         Map<String, Object> expectedEventData = (Map<String, Object>) basePaidCourseEvent().get(Constants.DATA);
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED, "Course One", 50);
@@ -1201,19 +1201,80 @@ class KafkaConsumerTest {
     }
 
     @Test
-    void validateAndEnrolPaidCourses_malformedJson_doesNotThrowAndNoDownstreamCalls() throws Exception {
+    void validateAndEnrolPaidCourses_malformedJson_propagatesAndNeverAcknowledges() throws Exception {
+        // The producer guarantees well-formed payloads on this topic, so parsing isn't
+        // special-cased - if it ever did throw, it's treated like any other failure: wrapped
+        // and rethrown so the container's retry-with-backoff and this listener's dedicated DLQ
+        // recoverer (see ConsumerConfiguration#buildPaidCourseRecoverer) handle it, instead of
+        // this method silently swallowing it.
         String invalidJson = "{invalid json}";
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("paid-course-topic", 0, 0L, "key",
                 invalidJson);
 
-        org.junit.jupiter.api.Assertions
-                .assertDoesNotThrow(() -> kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord));
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment));
 
         verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
         verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
         verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any(), any(), anyInt());
         verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
         verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
+        verify(acknowledgment, never()).acknowledge();
+    }
+
+    // ------------------------------------------------------------------
+    // validateAndEnrolPaidCourses - genuine failures propagate for retry/DLQ
+    // ------------------------------------------------------------------
+
+    @Test
+    void validateAndEnrolPaidCourses_businessLogicThrows_propagatesAndNeverAcknowledges() throws Exception {
+        // A genuine business/infra failure must propagate out of the listener uncaught, so the
+        // container's retry-with-backoff and the dedicated paid-course DLQ recoverer actually
+        // apply, instead of this method silently treating a failed attempt as done.
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        SBApiResponse response = new SBApiResponse();
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(enrollmentService.isUserEnrolled(response, "user1", "course1")).thenReturn(false);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenThrow(new RuntimeException("cios read api down"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment));
+
+        verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any(), any(), anyInt());
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
+        verify(acknowledgment, never()).acknowledge();
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_reawardPushFails_propagatesAndNeverAcknowledgesOrClaimsDedupe() throws Exception {
+        // If triggerCoinsReaward's own Kafka push fails, that failure must reach this listener
+        // uncaught too - the dedupe key must not be claimed for an event whose reaward never
+        // actually went out, and the offset must stay uncommitted so it gets retried/redelivered.
+        Map<String, Object> event = basePaidCourseEvent();
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(event);
+
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
+        SBApiResponse response = new SBApiResponse();
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(enrollmentService.isUserEnrolled(response, "user1", "course1")).thenReturn(false);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenReturn(true);
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse)).thenReturn(false);
+        org.mockito.Mockito.doThrow(new RuntimeException("kafka down"))
+                .when(enrollmentService).triggerCoinsReaward(any(), any(), any(), any());
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment));
+
+        verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
+        verify(acknowledgment, never()).acknowledge();
     }
 
     // ------------------------------------------------------------------
@@ -1227,7 +1288,7 @@ class KafkaConsumerTest {
 
         when(cacheService.getCache(paidCourseDedupeKey(), cbServerProperties.getRedisIndex())).thenReturn("true");
 
-        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
         verify(transformUtility, never()).callCiosContentReadAPi(any());
         verify(transformUtility, never()).callContentPartnerReadApi(any());
@@ -1256,7 +1317,7 @@ class KafkaConsumerTest {
         when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
                 contentResponse)).thenReturn(true);
 
-        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord);
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
         verify(enrollmentService).enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
                 contentResponse);

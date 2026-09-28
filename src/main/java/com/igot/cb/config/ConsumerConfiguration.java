@@ -1,5 +1,11 @@
 package com.igot.cb.config;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
+import com.igot.cb.util.Constants;
+import com.igot.cb.util.dto.SBApiResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,12 +17,14 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
+import org.springframework.kafka.listener.ConsumerRecordRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
 @Configuration
+@Slf4j
 public class ConsumerConfiguration {
     @Value("${spring.kafka.bootstrap.servers}")
     private String kafkabootstrapAddress;
@@ -30,6 +38,15 @@ public class ConsumerConfiguration {
     @Value("${kafka.max.poll.records}")
     private Integer kafkaMaxPollRecords;
 
+    private final EnrollmentServiceImpl enrollmentService;
+
+    private final ObjectMapper objectMapper;
+
+    public ConsumerConfiguration(EnrollmentServiceImpl enrollmentService, ObjectMapper objectMapper) {
+        this.enrollmentService = enrollmentService;
+        this.objectMapper = objectMapper;
+    }
+
     @Bean
     KafkaListenerContainerFactory<ConcurrentMessageListenerContainer<String, String>> kafkaListenerContainerFactory() {
 
@@ -37,25 +54,71 @@ public class ConsumerConfiguration {
         factory.setConsumerFactory(consumerFactory());
         factory.setConcurrency(4);
         factory.getContainerProperties().setPollTimeout(3000);
-        // Commit the offset only once a listener method has actually returned (success or a
-        // caught/logged internal failure - our listeners never rethrow), never on a background
-        // timer. With auto-commit, the offset can advance on a fixed interval regardless of
-        // whether processing has finished; a pod restart between that timer firing and the
-        // listener completing silently drops the in-flight event forever, since Kafka believes
-        // it was already committed. MANUAL_IMMEDIATE ties the commit to actual completion
-        // instead, so a restart mid-processing redelivers the event next time rather than
-        // losing it. This does still allow a message to be reprocessed if the pod dies after
-        // the listener returns but before the commit round-trip finishes - normal at-least-once
-        // behavior - so any listener whose side effects aren't naturally safe to repeat still
-        // needs its own idempotency guard rather than relying on the commit strategy alone.
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
-        // A listener that lets an exception propagate (rather than catching/logging it
-        // internally, as our other two listeners still do) gets retried up to twice, 1s apart,
-        // before the container gives up, logs, and moves past that record - this only changes
-        // behavior for a listener that actually throws; a caught-and-logged internal failure
-        // never reaches this handler at all, so the other two listeners are unaffected.
-        factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(1000L, 2)));
+        factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(1000L, 3)));
         return factory;
+    }
+
+    // Dedicated factory for the paid-course-enrolment listener only. Its retries-exhausted
+    // recovery interprets the payload as a karma-coin reward candidate - applying that same
+    // recoverer to the other listeners sharing kafkaListenerContainerFactory() above would be
+    // meaningless (different event shapes) and crash-prone, so this listener opts into its own
+    // factory instead (see KafkaConsumer#validateAndEnrolPaidCourses's containerFactory attribute).
+    @Bean
+    KafkaListenerContainerFactory<ConcurrentMessageListenerContainer<String, String>> paidCourseKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory());
+        factory.setConcurrency(4);
+        factory.getContainerProperties().setPollTimeout(3000);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        factory.setCommonErrorHandler(new DefaultErrorHandler(buildPaidCourseRecoverer(), new FixedBackOff(1000L, 3)));
+        return factory;
+    }
+
+    // Package-private (rather than folded into the lambda) so it can be unit tested directly by
+    // invoking accept(...) on the returned recoverer, without needing to dig it back out of the
+    // container factory bean.
+    ConsumerRecordRecoverer buildPaidCourseRecoverer() {
+        return (consumerRecord, exception) -> {
+            log.error("Paid course enrolment failed after exhausting retries. topic={}, partition={}, offset={}",
+                    consumerRecord.topic(), consumerRecord.partition(), consumerRecord.offset(), exception);
+
+            Map<String, Object> eventData;
+            String userId;
+            String courseId;
+            String courseName;
+            String providerName;
+            try {
+                Map<String, Object> paidCourseEvent = objectMapper.readValue(
+                        (String) consumerRecord.value(), new TypeReference<Map<String, Object>>() {});
+                eventData = (Map<String, Object>) paidCourseEvent.get(Constants.DATA);
+                userId = (String) eventData.get(Constants.EVENT_USER_ID);
+                courseId = (String) eventData.get(Constants.CONTEXT_ID);
+                courseName = (String) eventData.get(Constants.COURSE_NAME);
+                providerName = (String) eventData.get(Constants.PROVIDER_NAME);
+            } catch (Exception parseException) {
+                // Nothing to reward without knowing who/how much - there is no fallback for
+                // this case, it is surfaced as a CRITICAL log only.
+                log.error("CRITICAL: could not parse the paid course enrolment event to attempt a reaward - "
+                                + "manual intervention required, coins are NOT refunded. offset={}, payload={}",
+                        consumerRecord.offset(), consumerRecord.value(), parseException);
+                return;
+            }
+
+            try {
+                if (enrollmentService.isUserEnrolled(new SBApiResponse(), userId, courseId)) {
+                    log.warn("User {} is already enrolled in course {} despite retries being exhausted - skipping reaward",
+                            userId, courseId);
+                    return;
+                }
+                enrollmentService.triggerCoinsReaward(eventData, courseName, providerName,
+                        "Paid course enrolment failed after exhausting retries");
+            } catch (Exception e) {
+                log.error("CRITICAL: reaward attempt failed after paid course enrolment retries were exhausted - "
+                                + "manual intervention required, coins are NOT refunded. userId={}, courseId={}, offset={}",
+                        userId, courseId, consumerRecord.offset(), e);
+            }
+        };
     }
 
     @Bean

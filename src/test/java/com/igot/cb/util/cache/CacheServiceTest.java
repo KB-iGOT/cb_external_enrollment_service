@@ -252,4 +252,62 @@ class CacheServiceTest {
 
         assertNull(result);
     }
+
+    @Test
+    void setIfAbsentWithTtl_Success() {
+        String key = "karmaWalletBalance_user1";
+
+        when(jedis.set(eq(key), eq("100"), any(redis.clients.jedis.params.SetParams.class))).thenReturn("OK");
+
+        boolean result = cacheService.setIfAbsentWithTtl(key, 1, 100L, 300L);
+
+        assertTrue(result);
+        verify(jedis).select(1);
+    }
+
+    @Test
+    void setIfAbsentWithTtl_KeyAlreadyExists_ReturnsFalse() {
+        String key = "karmaWalletBalance_user1";
+
+        // NX conflict - Redis returns a null bulk reply rather than "OK", not an exception.
+        when(jedis.set(eq(key), anyString(), any(redis.clients.jedis.params.SetParams.class))).thenReturn(null);
+
+        boolean result = cacheService.setIfAbsentWithTtl(key, 1, 100L, 300L);
+
+        assertFalse(result);
+    }
+
+    @Test
+    void setIfAbsentWithTtl_Exception_Throws() {
+        String key = "karmaWalletBalance_user1";
+
+        when(jedis.set(eq(key), anyString(), any(redis.clients.jedis.params.SetParams.class)))
+                .thenThrow(new RuntimeException("Connection reset"));
+
+        // A genuine Redis error must propagate rather than be swallowed into a false that looks
+        // identical to "someone else already seeded it" - a caller that can't tell the two apart
+        // could otherwise proceed to decrement a key that was never actually seeded.
+        assertThrows(RuntimeException.class, () -> cacheService.setIfAbsentWithTtl(key, 1, 100L, 300L));
+    }
+
+    @Test
+    void decrementBy_Success() {
+        String key = "karmaWalletBalance_user1";
+
+        when(jedis.decrBy(key, 50L)).thenReturn(50L);
+
+        long result = cacheService.decrementBy(key, 1, 50L);
+
+        assertEquals(50L, result);
+        verify(jedis).select(1);
+    }
+
+    @Test
+    void decrementBy_Exception_Throws() {
+        String key = "karmaWalletBalance_user1";
+
+        when(jedis.decrBy(key, 50L)).thenThrow(new RuntimeException("Connection reset"));
+
+        assertThrows(RuntimeException.class, () -> cacheService.decrementBy(key, 1, 50L));
+    }
 }
