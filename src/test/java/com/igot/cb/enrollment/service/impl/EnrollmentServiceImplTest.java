@@ -3168,7 +3168,7 @@ class EnrollmentServiceImplTest {
         when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
         when(cbServerProperties.getRedisIndex()).thenReturn(1);
         when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(14400L);
-        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong())).thenReturn(true);
+        when(cacheService.hsetIfAbsentWithTtl(anyString(), anyInt(), anyString(), anyString(), anyLong())).thenReturn(true);
 
         Map<String, Object> reawardData = new HashMap<>();
         reawardData.put(Constants.EVENT_USER_ID, "user1");
@@ -3219,7 +3219,7 @@ class EnrollmentServiceImplTest {
         when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
         when(cbServerProperties.getRedisIndex()).thenReturn(1);
         when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(14400L);
-        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong())).thenReturn(true);
+        when(cacheService.hsetIfAbsentWithTtl(anyString(), anyInt(), anyString(), anyString(), anyLong())).thenReturn(true);
 
         Map<String, Object> reawardData = new HashMap<>();
         reawardData.put(Constants.EVENT_USER_ID, "user1");
@@ -3227,8 +3227,8 @@ class EnrollmentServiceImplTest {
 
         enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
 
-        verify(cacheService).setIfAbsentWithTtl(
-                Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "orig-req-2", 1, 1L, 14400L);
+        verify(cacheService).hsetIfAbsentWithTtl(
+                Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "user1", 1, "orig-req-2", "1", 14400L);
         verify(producer).push(eq("karma-unified-topic"), any(), eq("user1"));
     }
 
@@ -3237,7 +3237,7 @@ class EnrollmentServiceImplTest {
     void triggerCoinsReaward_DuplicateReqId_SkipsPublishing() {
         when(cbServerProperties.getRedisIndex()).thenReturn(1);
         when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(14400L);
-        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong())).thenReturn(false);
+        when(cacheService.hsetIfAbsentWithTtl(anyString(), anyInt(), anyString(), anyString(), anyLong())).thenReturn(false);
 
         Map<String, Object> reawardData = new HashMap<>();
         reawardData.put(Constants.EVENT_USER_ID, "user1");
@@ -3256,7 +3256,7 @@ class EnrollmentServiceImplTest {
         when(cbServerProperties.getKarmaPointsUnifiedEventTopic()).thenReturn("karma-unified-topic");
         when(cbServerProperties.getRedisIndex()).thenReturn(1);
         when(cbServerProperties.getDedupeTtlSeconds()).thenReturn(14400L);
-        when(cacheService.setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong())).thenReturn(true);
+        when(cacheService.hsetIfAbsentWithTtl(anyString(), anyInt(), anyString(), anyString(), anyLong())).thenReturn(true);
         doThrow(new RuntimeException("kafka down"))
                 .when(producer).push(eq("karma-unified-topic"), any(), eq("user1"));
 
@@ -3270,8 +3270,8 @@ class EnrollmentServiceImplTest {
 
         // Without this, the claim taken above would sit for the full dedupe TTL with the
         // reaward never actually sent - silently blocking any retry/redelivery from resending it.
-        verify(cacheService).deleteCache(
-                Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "orig-req-4", 1);
+        verify(cacheService).hdelWithRetry(
+                Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + "user1", 1, "orig-req-4");
         verify(cacheService, never()).incrementIfExists(any(), anyLong(), anyInt());
     }
 
@@ -3286,7 +3286,7 @@ class EnrollmentServiceImplTest {
 
         enrollmentService.triggerCoinsReaward(reawardData, "Course Name", "Provider Name", "refund message");
 
-        verify(cacheService, never()).setIfAbsentWithTtl(anyString(), anyInt(), anyLong(), anyLong());
+        verify(cacheService, never()).hsetIfAbsentWithTtl(anyString(), anyInt(), anyString(), anyString(), anyLong());
         verify(producer).push(eq("karma-unified-topic"), any(), eq("user1"));
     }
 

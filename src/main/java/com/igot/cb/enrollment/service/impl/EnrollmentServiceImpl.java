@@ -1388,8 +1388,11 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     public void triggerCoinsReaward(Map<String, Object> reawardData, String courseName, String providerName, String message) {
         Object originalReqIdRaw = reawardData.get(Constants.REQ_ID);
         String originalReqId = originalReqIdRaw != null ? originalReqIdRaw.toString() : null;
-        String claimKey = StringUtils.isNotBlank(originalReqId) ? Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + originalReqId : null;
-        if (claimKey != null && !cacheService.setIfAbsentWithTtl(claimKey, cbServerProperties.getRedisIndex(), 1, cbServerProperties.getDedupeTtlSeconds())) {
+        // Claim lives in a per-user hash (reqId as field); the hash disappears once its last field is deleted
+        Object claimUserId = reawardData.get(Constants.EVENT_USER_ID);
+        String claimKey = StringUtils.isNotBlank(originalReqId) && claimUserId != null
+                ? Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + claimUserId : null;
+        if (claimKey != null && !cacheService.hsetIfAbsentWithTtl(claimKey, cbServerProperties.getRedisIndex(), originalReqId, "1", cbServerProperties.getDedupeTtlSeconds())) {
             log.info("Karma coin reaward already triggered for reqId {}, skipping duplicate", originalReqId);
             return;
         }
@@ -1433,7 +1436,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             }
         } catch (RuntimeException e) {
             if (claimKey != null) {
-                cacheService.deleteCache(claimKey, cbServerProperties.getRedisIndex());
+                cacheService.hdelWithRetry(claimKey, cbServerProperties.getRedisIndex(), originalReqId);
             }
             throw e;
         }

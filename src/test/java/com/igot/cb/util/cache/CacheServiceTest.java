@@ -310,4 +310,51 @@ class CacheServiceTest {
 
         assertThrows(RuntimeException.class, () -> cacheService.decrementBy(key, 1, 50L));
     }
+
+    @Test
+    void hsetIfAbsentWithTtl_Claimed_SetsTtl() {
+        when(jedis.hsetnx("k", "f", "1")).thenReturn(1L);
+
+        assertTrue(cacheService.hsetIfAbsentWithTtl("k", 1, "f", "1", 300L));
+        verify(jedis).expire("k", 300L);
+    }
+
+    @Test
+    void hsetIfAbsentWithTtl_AlreadyExists_ReturnsFalse() {
+        when(jedis.hsetnx("k", "f", "1")).thenReturn(0L);
+
+        assertFalse(cacheService.hsetIfAbsentWithTtl("k", 1, "f", "1", 300L));
+        verify(jedis, never()).expire(anyString(), anyLong());
+    }
+
+    @Test
+    void hsetIfAbsentWithTtl_Exception_Throws() {
+        when(jedis.hsetnx("k", "f", "1")).thenThrow(new RuntimeException("boom"));
+
+        assertThrows(RuntimeException.class, () -> cacheService.hsetIfAbsentWithTtl("k", 1, "f", "1", 300L));
+    }
+
+    @Test
+    void hdelWithRetry_Success() {
+        when(jedis.hdel("k", "f")).thenReturn(1L);
+
+        assertTrue(cacheService.hdelWithRetry("k", 1, "f"));
+        verify(jedis, times(1)).hdel("k", "f");
+    }
+
+    @Test
+    void hdelWithRetry_FirstAttemptFails_RetriesAndSucceeds() {
+        when(jedis.hdel("k", "f")).thenThrow(new RuntimeException("conn")).thenReturn(1L);
+
+        assertTrue(cacheService.hdelWithRetry("k", 1, "f"));
+        verify(jedis, times(2)).hdel("k", "f");
+    }
+
+    @Test
+    void hdelWithRetry_BothAttemptsFail_ReturnsFalse() {
+        when(jedis.hdel("k", "f")).thenThrow(new RuntimeException("conn"));
+
+        assertFalse(cacheService.hdelWithRetry("k", 1, "f"));
+        verify(jedis, times(2)).hdel("k", "f");
+    }
 }
