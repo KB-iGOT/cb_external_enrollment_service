@@ -157,4 +157,46 @@ public class CacheService {
       throw new EnrolmentException("Failed to decrement Redis key " + key, e);
     }
   }
+
+  /**
+   * Atomically claims a hash field (HSETNX) and refreshes the hash's TTL. Returns false only
+   * when the field already exists. A genuine Redis error throws, for the same reason as
+   * setIfAbsentWithTtl: a failure must not be misread as "someone else already claimed it".
+   */
+  public boolean hsetIfAbsentWithTtl(String key, int dbIndex, String field, String value, long ttlSeconds) {
+    try (Jedis jedis = jedisPool.getResource()) {
+      jedis.select(dbIndex);
+      boolean claimed = jedis.hsetnx(key, field, value) == 1L;
+      if (claimed) {
+        jedis.expire(key, ttlSeconds);
+      }
+      return claimed;
+    } catch (Exception e) {
+      log.error("Error while claiming hash field in Redis cache: {} ", e.getMessage());
+      throw new EnrolmentException("Failed to claim Redis hash field " + key + ":" + field, e);
+    }
+  }
+
+  /**
+   * Deletes a single hash field (HDEL), retrying once on a fresh pool connection if the first
+   * attempt fails. Redis removes the hash itself once its last field is deleted. Best-effort:
+   * returns false instead of throwing if both attempts fail.
+   */
+  public boolean hdelWithRetry(String key, int dbIndex, String field) {
+    for (int attempt = 1; attempt <= 2; attempt++) {
+      try (Jedis jedis = jedisPool.getResource()) {
+        jedis.select(dbIndex);
+        long result = jedis.hdel(key, field);
+        if (result > 0) {
+          log.info("Field {} deleted from hash {} in database {}.", field, key, dbIndex);
+        } else {
+          log.warn("Field {} not found in hash {} in database {}.", field, key, dbIndex);
+        }
+        return result > 0;
+      } catch (Exception e) {
+        log.error("Error while deleting hash field from Redis cache (attempt {}): {} ", attempt, e.getMessage());
+      }
+    }
+    return false;
+  }
 }
