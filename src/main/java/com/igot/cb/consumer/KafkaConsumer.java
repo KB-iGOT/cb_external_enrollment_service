@@ -222,7 +222,7 @@ public class KafkaConsumer {
                 LocalDateTime dateTime = LocalDateTime.parse(dateString, formatter);
                 return dateTime.toInstant(ZoneOffset.UTC);
             } catch (DateTimeParseException e2) {
-                e2.printStackTrace();
+                log.error("KafkaConsumer :: convertToTimestamp :: failed to parse date {}", dateString, e2);
                 return null;
             }
         }
