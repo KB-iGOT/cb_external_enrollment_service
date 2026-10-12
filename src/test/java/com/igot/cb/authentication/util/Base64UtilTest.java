@@ -321,14 +321,6 @@ class Base64UtilTest {
     }
 
     @Test
-    void testDecoderExtraDataAfterPadding() {
-        byte[] input = "TWE===".getBytes();
-        assertThrows(IllegalArgumentException.class, () -> {
-            Base64Util.decode(input, 0, input.length, Base64Util.DEFAULT);
-        });
-    }
-
-    @Test
     void testDecoderSingleEqualsOnly() {
         byte[] input = "TWE=".getBytes();
         assertDoesNotThrow(() -> Base64Util.decode(input, 0, input.length, Base64Util.DEFAULT));
@@ -439,14 +431,6 @@ class Base64UtilTest {
 
 
     @Test
-    void testDecodeFailsOnCharAfterPadding() {
-        byte[] input = "QQ==A".getBytes();
-        assertThrows(IllegalArgumentException.class, () ->
-                Base64Util.decode(input, 0, input.length, Base64Util.DEFAULT)
-        );
-    }
-
-    @Test
     void testDecoderMaxOutputSize() {
         Base64Util.Decoder decoder = new Base64Util.Decoder(Base64Util.DEFAULT, null);
         assertEquals(10, decoder.maxOutputSize(0));
@@ -499,17 +483,15 @@ class Base64UtilTest {
         assertEquals("QQ==", result);
     }
 
-    @Test
-    void testDecoderDataCharAfterSinglePadding_throws() {
-        byte[] input = "TW=A".getBytes();
-        assertThrows(IllegalArgumentException.class, () ->
-                Base64Util.decode(input, 0, input.length, Base64Util.DEFAULT)
-        );
-    }
-
-    @Test
-    void testDecoderEndsAtStateFour_throws() {
-        byte[] input = "TW=".getBytes();
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "TWE===",
+            "QQ==A",
+            "TW=A",
+            "TW="
+    })
+    void testDecoderInvalidPaddingSequences_throws(String base64Input) {
+        byte[] input = base64Input.getBytes();
         assertThrows(IllegalArgumentException.class, () ->
                 Base64Util.decode(input, 0, input.length, Base64Util.DEFAULT)
         );
