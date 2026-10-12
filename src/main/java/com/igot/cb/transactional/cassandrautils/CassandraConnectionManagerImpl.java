@@ -59,7 +59,7 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
         createCassandraConnection();
     }
 
-    private void createCassandraConnection() {
+    private static void createCassandraConnection() {
         try {
             session = createCassandraConnectionWithKeySpaces(null);
         } catch (Exception e) {
@@ -71,7 +71,7 @@ public class CassandraConnectionManagerImpl implements CassandraConnectionManage
         }
     }
 
-    private CqlSession createCassandraConnectionWithKeySpaces(String keySpaceName) {
+    private static CqlSession createCassandraConnectionWithKeySpaces(String keySpaceName) {
         try {
             // Load the properties required for connection
             PropertiesCache cache = PropertiesCache.getInstance();

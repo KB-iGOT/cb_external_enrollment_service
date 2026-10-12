@@ -53,9 +53,9 @@ class Base64UtilTest {
      * Tests encoding with padding, non-multiple of 3 input length, and newline insertion.
      *
      * Path constraints:
-     * - encoder.do_padding is true
+     * - encoder.doPadding is true
      * - len % 3 > 0
-     * - encoder.do_newline && len > 0
+     * - encoder.doNewline && len > 0
      */
     @Test
     void testEncodeWithPaddingAndNewline() {
@@ -143,8 +143,8 @@ class Base64UtilTest {
 
     /**
      * Tests the encode method with no padding and newline insertion.
-     * This test case covers the path where padding is disabled (!encoder.do_padding)
-     * and newline insertion is enabled (encoder.do_newline && len > 0).
+     * This test case covers the path where padding is disabled (!encoder.doPadding)
+     * and newline insertion is enabled (encoder.doNewline && len > 0).
      */
     @Test
     void test_encode_3() {
@@ -271,7 +271,11 @@ class Base64UtilTest {
             "A$==",
             "QUJD$A==",
             "Q",
-            "QUJD=="
+            "QUJD==",
+            "TWE===",
+            "QQ==A",
+            "TW=A",
+            "TW="
     })
     void testDecoderWithInvalidInputs(String base64Input) {
         byte[] input = base64Input.getBytes();
@@ -481,20 +485,6 @@ class Base64UtilTest {
         encoder.process(new byte[0], 0, 0, true);
         String result = new String(output, 0, encoder.op);
         assertEquals("QQ==", result);
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "TWE===",
-            "QQ==A",
-            "TW=A",
-            "TW="
-    })
-    void testDecoderInvalidPaddingSequences_throws(String base64Input) {
-        byte[] input = base64Input.getBytes();
-        assertThrows(IllegalArgumentException.class, () ->
-                Base64Util.decode(input, 0, input.length, Base64Util.DEFAULT)
-        );
     }
 
     @Test

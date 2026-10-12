@@ -1872,7 +1872,7 @@ class EnrollmentServiceImplTest {
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
         when(transformUtility.readUserDetails("user1")).thenReturn(userProfile);
         when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
-        when(transformUtility.callCourseraInviteApi(eq(contentResponse), eq(userProfile))).thenReturn(true);
+        when(transformUtility.callCourseraInviteApi(contentResponse, userProfile)).thenReturn(true);
         when(cassandraOperation.insertRecord(any(), any(), any())).thenReturn(null);
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
@@ -1881,7 +1881,7 @@ class EnrollmentServiceImplTest {
                 enrollmentService, "processEnrolment", response, "user1", "course1", "partner1", "token");
 
         assertEquals(HttpStatus.OK, result.getResponseCode());
-        verify(transformUtility).callCourseraInviteApi(eq(contentResponse), eq(userProfile));
+        verify(transformUtility).callCourseraInviteApi(contentResponse, userProfile);
         verify(cassandraOperation, times(2)).insertRecord(any(), any(), any());
     }
 
@@ -1899,7 +1899,7 @@ class EnrollmentServiceImplTest {
         when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
         when(transformUtility.readUserDetails("user1")).thenReturn(userProfile);
         when(cbServerProperties.getCourseraPartnerCode()).thenReturn("coursera");
-        when(transformUtility.callCourseraInviteApi(eq(contentResponse), eq(userProfile))).thenReturn(false);
+        when(transformUtility.callCourseraInviteApi(contentResponse, userProfile)).thenReturn(false);
 
         SBApiResponse response = new SBApiResponse();
         SBApiResponse result = ReflectionTestUtils.invokeMethod(
