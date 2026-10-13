@@ -26,7 +26,7 @@ import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.function.Supplier;
+import java.util.function.IntSupplier;
 
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.RequiredArgsConstructor;
@@ -598,13 +598,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return false;
     }
 
-    private int getCountFromCacheOrDb(String key, Supplier<Integer> dbSupplier) {
+    private int getCountFromCacheOrDb(String key, IntSupplier dbSupplier) {
         String cached = cacheService.getCache(key,cbServerProperties.getRedisIndex());
         if (StringUtils.isNotBlank(cached)) {
             return Integer.parseInt(cached);
         }
 
-        int count = dbSupplier.get();
+        int count = dbSupplier.getAsInt();
         cacheService.putCache(key, cbServerProperties.getRedisIndex(), count);
         return count;
     }

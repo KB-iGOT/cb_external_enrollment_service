@@ -3,7 +3,10 @@ package com.igot.cb.util;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
@@ -39,14 +42,19 @@ import org.springframework.test.context.TestPropertySource;
         "coursera.service.code=SRV001",
         "coursera.org.id=ORG001"
 })
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CbServerPropertiesTest {
 
     @Autowired
     private CbServerProperties properties;
 
+    // Setter tests mutate the shared, Spring-context-cached `properties` bean, so the
+    // read-only assertions below must run first (via @Order) to see the original,
+    // property-sourced values rather than values left over by a setter test.
+
     @Test
-    void testAllPropertiesAreInjectedAndSettersWork() {
-        // Verify Injected Values
+    @Order(1)
+    void testInjectedValues_urlsAndBasics() {
         assertTrue(properties.isRedisCacheEnable());
         assertEquals("test-template", properties.getSvgTemplate());
         assertEquals("http://base.url", properties.getBaseUrl());
@@ -61,7 +69,11 @@ class CbServerPropertiesTest {
         assertEquals(500, properties.getMaximumAllowedLimit());
         assertEquals(1, properties.getRedisIndex());
         assertEquals(0, properties.getDefaultIndex());
+    }
 
+    @Test
+    @Order(2)
+    void testInjectedValues_messagesAndMisc() {
         assertEquals("http://content.read.url", properties.getCiosContentReadApiUrl());
         assertEquals("http://lms.summary.base", properties.getLmsEnrolmentSummaryBaseUrl());
         assertEquals("http://lms.summary.fixed", properties.getLmsEnrolmentSummaryFixedUrl());
@@ -79,8 +91,11 @@ class CbServerPropertiesTest {
         assertEquals("http://registry.fixed", properties.getServiceRegistryApiFixedUrl());
         assertEquals("SRV001", properties.getCourseraServiceCode());
         assertEquals("ORG001", properties.getCourseraOrgId());
+    }
 
-        // Verify Setters
+    @Test
+    @Order(3)
+    void testSetters_basicsAndTopics() {
         properties.setRedisCacheEnable(false);
         assertEquals(false, properties.isRedisCacheEnable());
 
@@ -122,7 +137,11 @@ class CbServerPropertiesTest {
 
         properties.setDefaultIndex(1);
         assertEquals(1, properties.getDefaultIndex());
+    }
 
+    @Test
+    @Order(4)
+    void testSetters_messagesAndRegistry() {
         properties.setCiosContentReadApiUrl("new-content-read");
         assertEquals("new-content-read", properties.getCiosContentReadApiUrl());
 

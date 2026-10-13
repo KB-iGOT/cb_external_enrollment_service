@@ -15,7 +15,7 @@ package com.igot.cb.authentication.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Utilities for encoding and decoding the Base64 representation of
@@ -155,12 +155,7 @@ public class Base64Util {
      *              adheres to RFC 2045.
      */
     public static String encodeToString(byte[] input, int flags) {
-        try {
-            return new String(encode(input, flags), "US-ASCII");
-        } catch (UnsupportedEncodingException e) {
-            // US-ASCII is guaranteed to be available.
-            throw new AssertionError(e);
-        }
+        return new String(encode(input, flags), StandardCharsets.US_ASCII);
     }
 
     //  --------------------------------------------------------
@@ -180,12 +175,7 @@ public class Base64Util {
      *               adheres to RFC 2045.
      */
     public static String encodeToString(byte[] input, int offset, int len, int flags) {
-        try {
-            return new String(encode(input, offset, len, flags), "US-ASCII");
-        } catch (UnsupportedEncodingException e) {
-            // US-ASCII is guaranteed to be available.
-            throw new AssertionError(e);
-        }
+        return new String(encode(input, offset, len, flags), StandardCharsets.US_ASCII);
     }
 
     /**
@@ -217,22 +207,22 @@ public class Base64Util {
         Encoder encoder = new Encoder(flags, null);
 
         // Compute the exact length of the array we will produce.
-        int output_len = len / 3 * 4;
+        int outputLen = len / 3 * 4;
 
         // Account for the tail of the data and the padding bytes, if any.
-        if (encoder.do_padding) {
+        if (encoder.doPadding) {
             if (len % 3 > 0) {
-                output_len += 4;
+                outputLen += 4;
             }
         } else {
             switch (len % 3) {
                 case 0:
                     break;
                 case 1:
-                    output_len += 2;
+                    outputLen += 2;
                     break;
                 case 2:
-                    output_len += 3;
+                    outputLen += 3;
                     break;
                 default:
                     break;
@@ -240,22 +230,22 @@ public class Base64Util {
         }
 
         // Account for the newlines, if any.
-        if (encoder.do_newline && len > 0) {
-            output_len += (((len - 1) / (3 * Encoder.LINE_GROUPS)) + 1) *
-                    (encoder.do_cr ? 2 : 1);
+        if (encoder.doNewline && len > 0) {
+            outputLen += (((len - 1) / (3 * Encoder.LINE_GROUPS)) + 1) *
+                    (encoder.doCr ? 2 : 1);
         }
 
-        encoder.output = new byte[output_len];
+        encoder.output = new byte[outputLen];
         encoder.process(input, offset, len, true);
 
-        assert encoder.op == output_len;
+        assert encoder.op == outputLen;
 
         return encoder.output;
     }
 
-    /* package */ static abstract class Coder {
-        public byte[] output;
-        public int op;
+    /* package */ abstract static class Coder {
+        byte[] output;
+        int op;
 
         /**
          * Encode/decode another block of input data.  this.output is
@@ -284,7 +274,7 @@ public class Base64Util {
          * Lookup table for turning bytes into their position in the
          * Base64 alphabet.
          */
-        private static final int DECODE[] = {
+        private static final int[] DECODE = {
                 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
                 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
                 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
@@ -307,7 +297,7 @@ public class Base64Util {
          * Decode lookup table for the "web safe" variant (RFC 3548
          * sec. 4) where - and _ replace + and /.
          */
-        private static final int DECODE_WEBSAFE[] = {
+        private static final int[] DECODE_WEBSAFE = {
                 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
                 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
                 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1,
@@ -331,7 +321,7 @@ public class Base64Util {
          */
         private static final int SKIP = -1;
         private static final int EQUALS = -2;
-        final private int[] alphabet;
+        private final int[] alphabet;
         /**
          * States 0-3 are reading through the next input tuple.
          * State 4 is having read one '=' and expecting exactly
@@ -361,164 +351,165 @@ public class Base64Util {
         }
 
         /**
-         * Decode another block of input data.
+         * Decode another block of input data. Operates on the {@code state},
+         * {@code value} and {@code op} fields directly (rather than local copies)
+         * so the per-byte transition and end-of-input handling can be split into
+         * focused helper methods.
          *
          * @return true if the state machine is still healthy.  false if
          * bad base-64 data has been detected in the input stream.
          */
         public boolean process(byte[] input, int offset, int len, boolean finish) {
-            if (this.state == 6) return false;
+            if (state == 6) return false;
 
             int p = offset;
-            len += offset;
+            int end = offset + len;
+            op = 0;
 
-            // Using local variables makes the decoder about 12%
-            // faster than if we manipulate the member variables in
-            // the loop.  (Even alphabet makes a measurable
-            // difference, which is somewhat surprising to me since
-            // the member variable is final.)
-            int state = this.state;
-            int value = this.value;
-            int op = 0;
-            final byte[] output = this.output;
-            final int[] alphabet = this.alphabet;
-
-            while (p < len) {
-                // Try the fast path:  we're starting a new tuple and the
-                // next four bytes of the input stream are all data
-                // bytes.  This corresponds to going through states
-                // 0-1-2-3-0.  We expect to use this method for most of
-                // the data.
-                //
-                // If any of the next four bytes of input are non-data
-                // (whitespace, etc.), value will end up negative.  (All
-                // the non-data values in decode are small negative
-                // numbers, so shifting any of them up and or'ing them
-                // together will result in a value with its top bit set.)
-                //
-                // You can remove this whole block and the output should
-                // be the same, just slower.
+            while (p < end) {
                 if (state == 0) {
-                    while (p + 4 <= len &&
-                            (value = ((alphabet[input[p] & 0xff] << 18) |
-                                    (alphabet[input[p + 1] & 0xff] << 12) |
-                                    (alphabet[input[p + 2] & 0xff] << 6) |
-                                    (alphabet[input[p + 3] & 0xff]))) >= 0) {
+                    p = decodeFastPath(input, p, end);
+                    if (p >= end) break;
+                }
+
+                int d = alphabet[input[p++] & 0xff];
+                if (!transition(d)) return false;
+            }
+
+            if (!finish) {
+                // We're out of input, but a future call could provide more.
+                return true;
+            }
+
+            return finishDecoding();
+        }
+
+        /**
+         * Fast path for state 0: while the next four input bytes are all data
+         * bytes, decode them directly into output without going through the
+         * slower per-byte state machine. Falls back once a non-data byte, a
+         * padding character, or the end of input is reached.
+         *
+         * @return the input position after the fast path stops advancing
+         */
+        private int decodeFastPath(byte[] input, int p, int end) {
+            while (p + 4 <= end &&
+                    (value = ((alphabet[input[p] & 0xff] << 18) |
+                            (alphabet[input[p + 1] & 0xff] << 12) |
+                            (alphabet[input[p + 2] & 0xff] << 6) |
+                            (alphabet[input[p + 3] & 0xff]))) >= 0) {
+                output[op + 2] = (byte) value;
+                output[op + 1] = (byte) (value >> 8);
+                output[op] = (byte) (value >> 16);
+                op += 3;
+                p += 4;
+            }
+            return p;
+        }
+
+        /**
+         * Advances the state machine by one decoded alphabet value {@code d}.
+         *
+         * @return false if {@code d} is invalid for the current state
+         */
+        private boolean transition(int d) {
+            switch (state) {
+                case 0:
+                    if (d >= 0) {
+                        value = d;
+                        state = 1;
+                    } else if (d != SKIP) {
+                        state = 6;
+                        return false;
+                    }
+                    break;
+
+                case 1:
+                    if (d >= 0) {
+                        value = (value << 6) | d;
+                        state = 2;
+                    } else if (d != SKIP) {
+                        state = 6;
+                        return false;
+                    }
+                    break;
+
+                case 2:
+                    if (d >= 0) {
+                        value = (value << 6) | d;
+                        state = 3;
+                    } else if (d == EQUALS) {
+                        // Emit the last (partial) output tuple,
+                        // expecting exactly one more padding character.
+                        output[op++] = (byte) (value >> 4);
+                        state = 4;
+                    } else if (d != SKIP) {
+                        state = 6;
+                        return false;
+                    }
+                    break;
+
+                case 3:
+                    if (d >= 0) {
+                        // Emit the output triple and return to state 0.
+                        value = (value << 6) | d;
                         output[op + 2] = (byte) value;
                         output[op + 1] = (byte) (value >> 8);
                         output[op] = (byte) (value >> 16);
                         op += 3;
-                        p += 4;
+                        state = 0;
+                    } else if (d == EQUALS) {
+                        // Emit the last (partial) output tuple,
+                        // expecting no further data or padding characters.
+                        output[op + 1] = (byte) (value >> 2);
+                        output[op] = (byte) (value >> 10);
+                        op += 2;
+                        state = 5;
+                    } else if (d != SKIP) {
+                        state = 6;
+                        return false;
                     }
-                    if (p >= len) break;
-                }
+                    break;
 
-                // The fast path isn't available -- either we've read a
-                // partial tuple, or the next four input bytes aren't all
-                // data, or whatever.  Fall back to the slower state
-                // machine implementation.
+                case 4:
+                    if (d == EQUALS) {
+                        state = 5;
+                    } else if (d != SKIP) {
+                        state = 6;
+                        return false;
+                    }
+                    break;
 
-                int d = alphabet[input[p++] & 0xff];
+                case 5:
+                    if (d != SKIP) {
+                        state = 6;
+                        return false;
+                    }
+                    break;
 
-                switch (state) {
-                    case 0:
-                        if (d >= 0) {
-                            value = d;
-                            ++state;
-                        } else if (d != SKIP) {
-                            this.state = 6;
-                            return false;
-                        }
-                        break;
-
-                    case 1:
-                        if (d >= 0) {
-                            value = (value << 6) | d;
-                            ++state;
-                        } else if (d != SKIP) {
-                            this.state = 6;
-                            return false;
-                        }
-                        break;
-
-                    case 2:
-                        if (d >= 0) {
-                            value = (value << 6) | d;
-                            ++state;
-                        } else if (d == EQUALS) {
-                            // Emit the last (partial) output tuple;
-                            // expect exactly one more padding character.
-                            output[op++] = (byte) (value >> 4);
-                            state = 4;
-                        } else if (d != SKIP) {
-                            this.state = 6;
-                            return false;
-                        }
-                        break;
-
-                    case 3:
-                        if (d >= 0) {
-                            // Emit the output triple and return to state 0.
-                            value = (value << 6) | d;
-                            output[op + 2] = (byte) value;
-                            output[op + 1] = (byte) (value >> 8);
-                            output[op] = (byte) (value >> 16);
-                            op += 3;
-                            state = 0;
-                        } else if (d == EQUALS) {
-                            // Emit the last (partial) output tuple;
-                            // expect no further data or padding characters.
-                            output[op + 1] = (byte) (value >> 2);
-                            output[op] = (byte) (value >> 10);
-                            op += 2;
-                            state = 5;
-                        } else if (d != SKIP) {
-                            this.state = 6;
-                            return false;
-                        }
-                        break;
-
-                    case 4:
-                        if (d == EQUALS) {
-                            ++state;
-                        } else if (d != SKIP) {
-                            this.state = 6;
-                            return false;
-                        }
-                        break;
-
-                    case 5:
-                        if (d != SKIP) {
-                            this.state = 6;
-                            return false;
-                        }
-                        break;
-
-                    default:
-                        break;
-                }
+                default:
+                    break;
             }
+            return true;
+        }
 
-            if (!finish) {
-                // We're out of input, but a future call could provide
-                // more.
-                this.state = state;
-                this.value = value;
-                this.op = op;
-                return true;
-            }
-
-            // Done reading input.  Now figure out where we are left in
-            // the state machine and finish up.
-
+        /**
+         * Resolves the final state once all input has been consumed, emitting
+         * any trailing partial-tuple bytes.
+         *
+         * @return false if the input ended in an invalid state
+         */
+        private boolean finishDecoding() {
             switch (state) {
                 case 0:
                     // Output length is a multiple of three.  Fine.
                     break;
                 case 1:
-                    // Read one extra input byte, which isn't enough to
-                    // make another output byte.  Illegal.
-                    this.state = 6;
+                case 4:
+                    // State 1: read one extra input byte, which isn't enough to
+                    // make another output byte. State 4: read one padding '='
+                    // when we expected 2. Both are illegal.
+                    state = 6;
                     return false;
                 case 2:
                     // Read two extra input bytes, enough to emit 1 more
@@ -531,10 +522,6 @@ public class Base64Util {
                     output[op++] = (byte) (value >> 10);
                     output[op++] = (byte) (value >> 2);
                     break;
-                case 4:
-                    // Read one padding '=' when we expected 2.  Illegal.
-                    this.state = 6;
-                    return false;
                 case 5:
                     // Read all the padding '='s we expected and no more.
                     // Fine.
@@ -542,9 +529,6 @@ public class Base64Util {
                 default:
                     break;
             }
-
-            this.state = state;
-            this.op = op;
             return true;
         }
     }
@@ -561,7 +545,7 @@ public class Base64Util {
          * Lookup table for turning Base64 alphabet positions (6 bits)
          * into output bytes.
          */
-        private static final byte ENCODE[] = {
+        private static final byte[] ENCODE = {
                 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
                 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
                 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
@@ -572,32 +556,32 @@ public class Base64Util {
          * Lookup table for turning Base64 alphabet positions (6 bits)
          * into output bytes.
          */
-        private static final byte ENCODE_WEBSAFE[] = {
+        private static final byte[] ENCODE_WEBSAFE = {
                 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
                 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
                 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
                 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_',
         };
-        final public boolean do_padding;
-        final public boolean do_newline;
-        final public boolean do_cr;
-        final private byte[] tail;
-        final private byte[] alphabet;
+        public final boolean doPadding;
+        public final boolean doNewline;
+        public final boolean doCr;
+        private final byte[] tail;
+        private final byte[] alphabet;
         /* package */ int tailLen;
         private int count;
 
         public Encoder(int flags, byte[] output) {
             this.output = output;
 
-            do_padding = (flags & NO_PADDING) == 0;
-            do_newline = (flags & NO_WRAP) == 0;
-            do_cr = (flags & CRLF) != 0;
+            doPadding = (flags & NO_PADDING) == 0;
+            doNewline = (flags & NO_WRAP) == 0;
+            doCr = (flags & CRLF) != 0;
             alphabet = ((flags & URL_SAFE) == 0) ? ENCODE : ENCODE_WEBSAFE;
 
             tail = new byte[2];
             tailLen = 0;
 
-            count = do_newline ? LINE_GROUPS : -1;
+            count = doNewline ? LINE_GROUPS : -1;
         }
 
         /**
@@ -608,20 +592,38 @@ public class Base64Util {
             return len * 8 / 5 + 10;
         }
 
+        /**
+         * Encodes another block of input data. Operates on the {@code op} and
+         * {@code count} fields directly (rather than local copies) so the tail
+         * handling, main loop and end-of-input handling can be split into
+         * focused helper methods.
+         */
         public boolean process(byte[] input, int offset, int len, boolean finish) {
-            // Using local variables makes the encoder about 9% faster.
-            final byte[] alphabet = this.alphabet;
-            final byte[] output = this.output;
-            int op = 0;
-            int count = this.count;
+            op = 0;
 
             int p = offset;
-            len += offset;
-            int v = -1;
+            int end = offset + len;
 
-            // First we need to concatenate the tail of the previous call
-            // with any input bytes available now and see if we can empty
-            // the tail.
+            p = consumeTail(input, p, end);
+            p = encodeFullGroups(input, p, end);
+
+            if (finish) {
+                finishEncoding(input, p, end);
+            } else {
+                saveLeftoverTail(input, p, end);
+            }
+
+            return true;
+        }
+
+        /**
+         * Concatenates the tail left over from the previous call with any input
+         * bytes available now, emitting one group if that completes a tail.
+         *
+         * @return the input position after any tail bytes were consumed
+         */
+        private int consumeTail(byte[] input, int p, int end) {
+            int v = -1;
 
             switch (tailLen) {
                 case 0:
@@ -629,7 +631,7 @@ public class Base64Util {
                     break;
 
                 case 1:
-                    if (p + 2 <= len) {
+                    if (p + 2 <= end) {
                         // A 1-byte tail with at least 2 bytes of
                         // input available now.
                         v = ((tail[0] & 0xff) << 16) |
@@ -637,11 +639,10 @@ public class Base64Util {
                                 (input[p++] & 0xff);
                         tailLen = 0;
                     }
-                    ;
                     break;
 
                 case 2:
-                    if (p + 1 <= len) {
+                    if (p + 1 <= end) {
                         // A 2-byte tail with at least 1 byte of input.
                         v = ((tail[0] & 0xff) << 16) |
                                 ((tail[1] & 0xff) << 8) |
@@ -655,97 +656,101 @@ public class Base64Util {
             }
 
             if (v != -1) {
-                output[op++] = alphabet[(v >> 18) & 0x3f];
+                emitGroup(v);
+            }
+            return p;
+        }
+
+        /**
+         * Turns 3 input bytes into 4 output bytes on each iteration, for as long
+         * as a full group is available.
+         *
+         * @return the input position after the last full group consumed
+         */
+        private int encodeFullGroups(byte[] input, int p, int end) {
+            while (p + 3 <= end) {
+                int v = ((input[p] & 0xff) << 16) |
+                        ((input[p + 1] & 0xff) << 8) |
+                        (input[p + 2] & 0xff);
+                emitGroup(v);
+                p += 3;
+            }
+            return p;
+        }
+
+        /**
+         * Writes the 4 base64 characters for one 3-byte group, inserting a line
+         * break once {@code LINE_GROUPS} groups have been written.
+         */
+        private void emitGroup(int v) {
+            output[op++] = alphabet[(v >> 18) & 0x3f];
+            output[op++] = alphabet[(v >> 12) & 0x3f];
+            output[op++] = alphabet[(v >> 6) & 0x3f];
+            output[op++] = alphabet[v & 0x3f];
+            if (--count == 0) {
+                appendNewline();
+                count = LINE_GROUPS;
+            }
+        }
+
+        /**
+         * Finishes up the tail of the input.  Note that we need to consume any
+         * bytes in tail before any bytes remaining in input; there should be at
+         * most two bytes total.
+         */
+        private void finishEncoding(byte[] input, int p, int end) {
+            if (p - tailLen == end - 1) {
+                int t = 0;
+                int v = ((tailLen > 0 ? tail[t++] : input[p++]) & 0xff) << 4;
+                tailLen -= t;
+                output[op++] = alphabet[(v >> 6) & 0x3f];
+                output[op++] = alphabet[v & 0x3f];
+                appendPaddingAndNewline(2);
+            } else if (p - tailLen == end - 2) {
+                int t = 0;
+                int v = (((tailLen > 1 ? tail[t++] : input[p++]) & 0xff) << 10) |
+                        (((tailLen > 0 ? tail[t++] : input[p++]) & 0xff) << 2);
+                tailLen -= t;
                 output[op++] = alphabet[(v >> 12) & 0x3f];
                 output[op++] = alphabet[(v >> 6) & 0x3f];
                 output[op++] = alphabet[v & 0x3f];
-                if (--count == 0) {
-                    if (do_cr) output[op++] = '\r';
-                    output[op++] = '\n';
-                    count = LINE_GROUPS;
-                }
+                appendPaddingAndNewline(1);
+            } else if (doNewline && op > 0 && count != LINE_GROUPS) {
+                appendNewline();
             }
 
-            // At this point either there is no tail, or there are fewer
-            // than 3 bytes of input available.
+            if (tailLen != 0 || p != end) {
+                throw new IllegalStateException("Base64 encoder finished with unconsumed input");
+            }
+        }
 
-            // The main loop, turning 3 input bytes into 4 output bytes on
-            // each iteration.
-            while (p + 3 <= len) {
-                v = ((input[p] & 0xff) << 16) |
-                        ((input[p + 1] & 0xff) << 8) |
-                        (input[p + 2] & 0xff);
-                output[op] = alphabet[(v >> 18) & 0x3f];
-                output[op + 1] = alphabet[(v >> 12) & 0x3f];
-                output[op + 2] = alphabet[(v >> 6) & 0x3f];
-                output[op + 3] = alphabet[v & 0x3f];
-                p += 3;
-                op += 4;
-                if (--count == 0) {
-                    if (do_cr) output[op++] = '\r';
-                    output[op++] = '\n';
-                    count = LINE_GROUPS;
+        private void appendPaddingAndNewline(int paddingChars) {
+            if (doPadding) {
+                for (int i = 0; i < paddingChars; i++) {
+                    output[op++] = '=';
                 }
             }
-
-            if (finish) {
-                // Finish up the tail of the input.  Note that we need to
-                // consume any bytes in tail before any bytes
-                // remaining in input; there should be at most two bytes
-                // total.
-
-                if (p - tailLen == len - 1) {
-                    int t = 0;
-                    v = ((tailLen > 0 ? tail[t++] : input[p++]) & 0xff) << 4;
-                    tailLen -= t;
-                    output[op++] = alphabet[(v >> 6) & 0x3f];
-                    output[op++] = alphabet[v & 0x3f];
-                    if (do_padding) {
-                        output[op++] = '=';
-                        output[op++] = '=';
-                    }
-                    if (do_newline) {
-                        if (do_cr) output[op++] = '\r';
-                        output[op++] = '\n';
-                    }
-                } else if (p - tailLen == len - 2) {
-                    int t = 0;
-                    v = (((tailLen > 1 ? tail[t++] : input[p++]) & 0xff) << 10) |
-                            (((tailLen > 0 ? tail[t++] : input[p++]) & 0xff) << 2);
-                    tailLen -= t;
-                    output[op++] = alphabet[(v >> 12) & 0x3f];
-                    output[op++] = alphabet[(v >> 6) & 0x3f];
-                    output[op++] = alphabet[v & 0x3f];
-                    if (do_padding) {
-                        output[op++] = '=';
-                    }
-                    if (do_newline) {
-                        if (do_cr) output[op++] = '\r';
-                        output[op++] = '\n';
-                    }
-                } else if (do_newline && op > 0 && count != LINE_GROUPS) {
-                    if (do_cr) output[op++] = '\r';
-                    output[op++] = '\n';
-                }
-
-                assert tailLen == 0;
-                assert p == len;
-            } else {
-                // Save the leftovers in tail to be consumed on the next
-                // call to encodeInternal.
-
-                if (p == len - 1) {
-                    tail[tailLen++] = input[p];
-                } else if (p == len - 2) {
-                    tail[tailLen++] = input[p];
-                    tail[tailLen++] = input[p + 1];
-                }
+            if (doNewline) {
+                appendNewline();
             }
+        }
 
-            this.op = op;
-            this.count = count;
+        private void appendNewline() {
+            if (doCr) output[op++] = '\r';
+            output[op++] = '\n';
+        }
 
-            return true;
+        /**
+         * Saves the leftover 1 or 2 bytes of input in {@code tail}, to be
+         * consumed on the next call to {@link #process}.
+         */
+        private void saveLeftoverTail(byte[] input, int p, int end) {
+            if (p == end - 1) {
+                tail[tailLen++] = input[p];
+            } else if (p == end - 2) {
+                tail[tailLen++] = input[p];
+                tail[tailLen++] = input[p + 1];
+            }
         }
     }
 }
