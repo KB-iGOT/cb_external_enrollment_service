@@ -409,86 +409,105 @@ public class Base64Util {
 
         /**
          * Advances the state machine by one decoded alphabet value {@code d}.
+         * Dispatches to one focused per-state helper so this method itself
+         * stays a simple, low-complexity switch.
          *
          * @return false if {@code d} is invalid for the current state
          */
         private boolean transition(int d) {
             switch (state) {
                 case 0:
-                    if (d >= 0) {
-                        value = d;
-                        state = 1;
-                    } else if (d != SKIP) {
-                        state = 6;
-                        return false;
-                    }
-                    break;
-
+                    return transitionState0(d);
                 case 1:
-                    if (d >= 0) {
-                        value = (value << 6) | d;
-                        state = 2;
-                    } else if (d != SKIP) {
-                        state = 6;
-                        return false;
-                    }
-                    break;
-
+                    return transitionState1(d);
                 case 2:
-                    if (d >= 0) {
-                        value = (value << 6) | d;
-                        state = 3;
-                    } else if (d == EQUALS) {
-                        // Emit the last (partial) output tuple,
-                        // expecting exactly one more padding character.
-                        output[op++] = (byte) (value >> 4);
-                        state = 4;
-                    } else if (d != SKIP) {
-                        state = 6;
-                        return false;
-                    }
-                    break;
-
+                    return transitionState2(d);
                 case 3:
-                    if (d >= 0) {
-                        // Emit the output triple and return to state 0.
-                        value = (value << 6) | d;
-                        output[op + 2] = (byte) value;
-                        output[op + 1] = (byte) (value >> 8);
-                        output[op] = (byte) (value >> 16);
-                        op += 3;
-                        state = 0;
-                    } else if (d == EQUALS) {
-                        // Emit the last (partial) output tuple,
-                        // expecting no further data or padding characters.
-                        output[op + 1] = (byte) (value >> 2);
-                        output[op] = (byte) (value >> 10);
-                        op += 2;
-                        state = 5;
-                    } else if (d != SKIP) {
-                        state = 6;
-                        return false;
-                    }
-                    break;
-
+                    return transitionState3(d);
                 case 4:
-                    if (d == EQUALS) {
-                        state = 5;
-                    } else if (d != SKIP) {
-                        state = 6;
-                        return false;
-                    }
-                    break;
-
+                    return transitionState4(d);
                 case 5:
-                    if (d != SKIP) {
-                        state = 6;
-                        return false;
-                    }
-                    break;
-
+                    return transitionState5(d);
                 default:
-                    break;
+                    return true;
+            }
+        }
+
+        private boolean transitionState0(int d) {
+            if (d >= 0) {
+                value = d;
+                state = 1;
+            } else if (d != SKIP) {
+                state = 6;
+                return false;
+            }
+            return true;
+        }
+
+        private boolean transitionState1(int d) {
+            if (d >= 0) {
+                value = (value << 6) | d;
+                state = 2;
+            } else if (d != SKIP) {
+                state = 6;
+                return false;
+            }
+            return true;
+        }
+
+        private boolean transitionState2(int d) {
+            if (d >= 0) {
+                value = (value << 6) | d;
+                state = 3;
+            } else if (d == EQUALS) {
+                // Emit the last (partial) output tuple,
+                // expecting exactly one more padding character.
+                output[op++] = (byte) (value >> 4);
+                state = 4;
+            } else if (d != SKIP) {
+                state = 6;
+                return false;
+            }
+            return true;
+        }
+
+        private boolean transitionState3(int d) {
+            if (d >= 0) {
+                // Emit the output triple and return to state 0.
+                value = (value << 6) | d;
+                output[op + 2] = (byte) value;
+                output[op + 1] = (byte) (value >> 8);
+                output[op] = (byte) (value >> 16);
+                op += 3;
+                state = 0;
+            } else if (d == EQUALS) {
+                // Emit the last (partial) output tuple,
+                // expecting no further data or padding characters.
+                output[op + 1] = (byte) (value >> 2);
+                output[op] = (byte) (value >> 10);
+                op += 2;
+                state = 5;
+            } else if (d != SKIP) {
+                state = 6;
+                return false;
+            }
+            return true;
+        }
+
+        private boolean transitionState4(int d) {
+            if (d == EQUALS) {
+                state = 5;
+            } else if (d != SKIP) {
+                state = 6;
+                return false;
+            }
+            return true;
+        }
+
+        private boolean transitionState5(int d) {
+            if (d != SKIP) {
+                state = 6;
+                return false;
             }
             return true;
         }
@@ -504,8 +523,7 @@ public class Base64Util {
                 case 0:
                     // Output length is a multiple of three.  Fine.
                     break;
-                case 1:
-                case 4:
+                case 1, 4:
                     // State 1: read one extra input byte, which isn't enough to
                     // make another output byte. State 4: read one padding '='
                     // when we expected 2. Both are illegal.
