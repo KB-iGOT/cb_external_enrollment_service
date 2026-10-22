@@ -53,9 +53,9 @@ class Base64UtilTest {
      * Tests encoding with padding, non-multiple of 3 input length, and newline insertion.
      *
      * Path constraints:
-     * - encoder.do_padding is true
+     * - encoder.doPadding is true
      * - len % 3 > 0
-     * - encoder.do_newline && len > 0
+     * - encoder.doNewline && len > 0
      */
     @Test
     void testEncodeWithPaddingAndNewline() {
@@ -143,8 +143,8 @@ class Base64UtilTest {
 
     /**
      * Tests the encode method with no padding and newline insertion.
-     * This test case covers the path where padding is disabled (!encoder.do_padding)
-     * and newline insertion is enabled (encoder.do_newline && len > 0).
+     * This test case covers the path where padding is disabled (!encoder.doPadding)
+     * and newline insertion is enabled (encoder.doNewline && len > 0).
      */
     @Test
     void test_encode_3() {
@@ -271,7 +271,11 @@ class Base64UtilTest {
             "A$==",
             "QUJD$A==",
             "Q",
-            "QUJD=="
+            "QUJD==",
+            "TWE===",
+            "QQ==A",
+            "TW=A",
+            "TW="
     })
     void testDecoderWithInvalidInputs(String base64Input) {
         byte[] input = base64Input.getBytes();
@@ -318,14 +322,6 @@ class Base64UtilTest {
         byte[] encoded = Base64Util.encode(input, Base64Util.CRLF);
         String output = new String(encoded);
         assertTrue(output.contains("\r\n"));
-    }
-
-    @Test
-    void testDecoderExtraDataAfterPadding() {
-        byte[] input = "TWE===".getBytes();
-        assertThrows(IllegalArgumentException.class, () -> {
-            Base64Util.decode(input, 0, input.length, Base64Util.DEFAULT);
-        });
     }
 
     @Test
@@ -439,14 +435,62 @@ class Base64UtilTest {
 
 
     @Test
-    void testDecodeFailsOnCharAfterPadding() {
-        byte[] input = "QQ==A".getBytes();
-        assertThrows(IllegalArgumentException.class, () ->
-                Base64Util.decode(input, 0, input.length, Base64Util.DEFAULT)
-        );
+    void testDecoderMaxOutputSize() {
+        Base64Util.Decoder decoder = new Base64Util.Decoder(Base64Util.DEFAULT, null);
+        assertEquals(10, decoder.maxOutputSize(0));
     }
 
+    @Test
+    void testEncoderMaxOutputSize() {
+        Base64Util.Encoder encoder = new Base64Util.Encoder(Base64Util.DEFAULT, null);
+        assertEquals(10, encoder.maxOutputSize(0));
+    }
 
+    @Test
+    void testEncodeNoPaddingExactMultipleOf3() {
+        byte[] input = {1, 2, 3};
+        byte[] result = Base64Util.encode(input, Base64Util.NO_PADDING | Base64Util.NO_WRAP);
+        assertEquals("AQID", new String(result));
+    }
 
+    @Test
+    void testEncoderTailOneByteAcrossCalls() {
+        byte[] output = new byte[20];
+        Base64Util.Encoder encoder = new Base64Util.Encoder(Base64Util.NO_WRAP, output);
+        encoder.process(new byte[]{'A'}, 0, 1, false);
+        assertEquals(1, encoder.tailLen);
 
+        encoder.process(new byte[]{'B', 'C'}, 0, 2, true);
+        String result = new String(output, 0, encoder.op);
+        assertEquals("QUJD", result);
+    }
+
+    @Test
+    void testEncoderTailTwoBytesAcrossCalls() {
+        byte[] output = new byte[20];
+        Base64Util.Encoder encoder = new Base64Util.Encoder(Base64Util.NO_WRAP, output);
+        encoder.process(new byte[]{'A', 'B'}, 0, 2, false);
+        assertEquals(2, encoder.tailLen);
+
+        encoder.process(new byte[]{'C'}, 0, 1, true);
+        String result = new String(output, 0, encoder.op);
+        assertEquals("QUJD", result);
+    }
+
+    @Test
+    void testEncoderFinishWithOnlyTailByte() {
+        byte[] output = new byte[10];
+        Base64Util.Encoder encoder = new Base64Util.Encoder(Base64Util.NO_WRAP, output);
+        encoder.process(new byte[]{'A'}, 0, 1, false);
+        encoder.process(new byte[0], 0, 0, true);
+        String result = new String(output, 0, encoder.op);
+        assertEquals("QQ==", result);
+    }
+
+    @Test
+    void testDecoderProcessAfterErrorStateReturnsFalse() {
+        Base64Util.Decoder decoder = new Base64Util.Decoder(Base64Util.DEFAULT, new byte[10]);
+        assertFalse(decoder.process("=".getBytes(), 0, 1, true));
+        assertFalse(decoder.process("A".getBytes(), 0, 1, true));
+    }
 }

@@ -26,7 +26,7 @@ import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.function.Supplier;
+import java.util.function.IntSupplier;
 
 import com.igot.cb.util.exceptions.CustomException;
 import lombok.RequiredArgsConstructor;
@@ -286,7 +286,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             try {
                return objectMapper.readValue(cachedJson, new TypeReference<Map<String, Object>>() {});
             } catch (JsonProcessingException e) {
-                throw new RuntimeException(e);
+                throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
             }
         } else {
             Optional<CiosContentEntity> optionalJsonNodeEntity = contentRepository.findByContentIdAndIsActive(contentId, true);
@@ -404,10 +404,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             log.error("Access control settings enabled but not found for courseId: {}", courseId);
             throw new CustomException(Constants.ERROR, Constants.ACCESS_RULES_ENABLED_BUT_NOT_FOUND_COURSE, HttpStatus.BAD_REQUEST);
         }
-        if (accessSettingsEnabled(userAttributes, accessControl.getUserGroups())) {
-            return true;
-        }
-        return false;
+        return accessSettingsEnabled(userAttributes, accessControl.getUserGroups());
     }
 
     private void enrollUserInCourse(String userId, String courseId, String partnerId) throws JsonProcessingException {
@@ -461,9 +458,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
         if (isConcurrentLimitExceeded(userId, partnerId, providerResponse, response)) return false;
 
-        if (isKarmaInsufficient(userId, providerResponse, token, userAttributes, response)) return false;
-
-        return true;
+        return !isKarmaInsufficient(userId, providerResponse, token, userAttributes, response);
     }
 
     private boolean isOverallLimitExceeded(
@@ -603,13 +598,13 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return false;
     }
 
-    private int getCountFromCacheOrDb(String key, Supplier<Integer> dbSupplier) {
+    private int getCountFromCacheOrDb(String key, IntSupplier dbSupplier) {
         String cached = cacheService.getCache(key,cbServerProperties.getRedisIndex());
         if (StringUtils.isNotBlank(cached)) {
             return Integer.parseInt(cached);
         }
 
-        int count = dbSupplier.get();
+        int count = dbSupplier.getAsInt();
         cacheService.putCache(key, cbServerProperties.getRedisIndex(), count);
         return count;
     }
@@ -649,10 +644,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if (!validatePartnerEnrollmentLimits(userId, partnerId, response, providerResponse.get(Constants.DATA), token, userAttributes)) {
                 return response;
             }
-            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(courseId, userAttributes)) {
-                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
-                }
+            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()
+                    && !handleAccessControlledEnrollment(courseId, userAttributes)) {
+                return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
             }
             return transformUtility.buildSuccessResponse(response, "Enrollment validation successful", HttpStatus.OK);
         } catch (Exception e) {
@@ -739,10 +733,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
             // Check access control settings enabled and validate
-            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(courseId, userAttributes)) {
-                        return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
-                }
+            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()
+                    && !handleAccessControlledEnrollment(courseId, userAttributes)) {
+                return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
             }
             // Special handling for Coursera partner to invite user
             String providerCode = providerResponse.path(Constants.DATA).path(Constants.PARTNER_CODE).asText("").toLowerCase();

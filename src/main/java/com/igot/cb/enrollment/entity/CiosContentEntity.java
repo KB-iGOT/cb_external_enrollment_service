@@ -24,7 +24,7 @@ public class CiosContentEntity implements Serializable {
     private String externalId;
     @Column(columnDefinition = "jsonb")
     @Type(JsonType.class)
-    private JsonNode ciosData;
+    private transient JsonNode ciosData;
     private boolean isActive;
     private Timestamp createdOn;
     private Timestamp lastUpdatedOn;

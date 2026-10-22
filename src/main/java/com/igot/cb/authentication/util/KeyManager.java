@@ -15,12 +15,14 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.KeyFactory;
 import java.security.PublicKey;
+import java.security.GeneralSecurityException;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static com.igot.cb.util.Constants.EMPTY_STRING;
 
 /**
  * @author Mahesh RV
@@ -30,6 +32,9 @@ public class KeyManager {
 
   private static final Logger logger = LoggerFactory.getLogger(KeyManager.class.getName());
   private static final PropertiesCache propertiesCache = PropertiesCache.getInstance();
+  private static final String PUBLIC_KEY_HEADER = "-----BEGIN PUBLIC KEY-----";
+  private static final String PUBLIC_KEY_FOOTER = "-----END PUBLIC KEY-----";
+  private static final String NEW_LINE_REGEX = "[\\r\\n]+";
 
   private static final Map<String, KeyData> keyMap = new HashMap<>();
 
@@ -39,7 +44,7 @@ public class KeyManager {
     String basePath = propertiesCache.getProperty(Constants.ACCESS_TOKEN_PUBLICKEY_BASEPATH);
     try (Stream<Path> walk = Files.walk(Paths.get(basePath))) {
       List<String> result =
-              walk.filter(Files::isRegularFile).map(Path::toString).collect(Collectors.toList());
+              walk.filter(Files::isRegularFile).map(Path::toString).toList();
       result.forEach(file -> {
         try {
           Path path = Paths.get(file);
@@ -67,16 +72,16 @@ public class KeyManager {
    *
    * @param key The string representation of the public key
    * @return The loaded public key
-   * @throws Exception If there's an error during the loading process
+   * @throws GeneralSecurityException If there's an error during the loading process
    */
-  public static PublicKey loadPublicKey(String key) throws Exception {
+  public static PublicKey loadPublicKey(String key) throws GeneralSecurityException {
     String publicKey = new String(key.getBytes(), StandardCharsets.UTF_8);
     // Remove header and footer from the key string
-    publicKey = publicKey.replaceAll("(-+BEGIN PUBLIC KEY-+)", "");
-    publicKey = publicKey.replaceAll("(-+END PUBLIC KEY-+)", "");
-    publicKey = publicKey.replaceAll("[\\r\\n]+", "");
+    publicKey = publicKey.replace(PUBLIC_KEY_HEADER, EMPTY_STRING);
+    publicKey = publicKey.replace(PUBLIC_KEY_FOOTER, EMPTY_STRING);
+    publicKey = publicKey.replaceAll(NEW_LINE_REGEX, EMPTY_STRING);
     // Decode the key string from Base64
-    byte[] keyBytes = Base64Util.decode(publicKey.getBytes("UTF-8"), Base64Util.DEFAULT);
+    byte[] keyBytes = Base64Util.decode(publicKey.getBytes(StandardCharsets.UTF_8), Base64Util.DEFAULT);
     // Convert the key bytes to a PublicKey object
     X509EncodedKeySpec x509publicKey = new X509EncodedKeySpec(keyBytes);
     KeyFactory kf = KeyFactory.getInstance("RSA");

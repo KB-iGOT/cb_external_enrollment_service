@@ -27,7 +27,7 @@ public class RedisConfig {
   @Value("${spring.redis.default.index}")
   private int defaultIndex;
 
-  private final long redisTimeout = 60000;
+  private static final long REDIS_TIMEOUT = 60000;
 
   @Bean
   @Primary
@@ -48,7 +48,7 @@ public class RedisConfig {
     configuration.setDatabase(database);
 
     LettuceClientConfiguration clientConfig = LettucePoolingClientConfiguration.builder()
-            .commandTimeout(Duration.ofMillis(redisTimeout))
+            .commandTimeout(Duration.ofMillis(REDIS_TIMEOUT))
             .poolConfig(buildPoolConfig())
             .build();
 

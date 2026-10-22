@@ -25,8 +25,10 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -832,5 +834,202 @@ class TransformUtilityTest {
 
         assertThrows(CustomException.class,
                 () -> transformUtility.getContentIdByExternalId("course1", "partner1"));
+    }
+
+    @Test
+    void callCiosContentReadAPi_fromCache() throws Exception {
+        String contentId = "cid-cache";
+        String cachedJson = "{\"content\":{\"name\":\"cached\"}}";
+        when(cbServerProperties.getDefaultIndex()).thenReturn(1);
+        when(cacheService.getCache(contentId, 1)).thenReturn(cachedJson);
+        when(mapper.readTree(cachedJson)).thenReturn(realMapper.readTree(cachedJson));
+
+        JsonNode result = transformUtility.callCiosContentReadAPi(contentId);
+
+        assertNotNull(result);
+        assertEquals("cached", result.get("name").asText());
+        verify(restTemplate, never()).exchange(anyString(), any(), any(), eq(Object.class));
+    }
+
+    @Test
+    void callCiosContentReadAPi_missingContentField_throwsException() {
+        String contentId = "cid-missing";
+        when(cbServerProperties.getDefaultIndex()).thenReturn(1);
+        when(cacheService.getCache(contentId, 1)).thenReturn(null);
+        when(cbServerProperties.getBaseUrl()).thenReturn("http://base");
+        when(cbServerProperties.getCiosContentReadApiUrl()).thenReturn("/api/");
+
+        Object body = Map.of("other", "value");
+        ResponseEntity<Object> response = new ResponseEntity<>(body, HttpStatus.OK);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(), eq(Object.class))).thenReturn(response);
+
+        JsonNode node = mock(JsonNode.class);
+        when(mapper.valueToTree(body)).thenReturn(node);
+        when(node.has("content")).thenReturn(false);
+
+        CustomException exception = assertThrows(CustomException.class,
+                () -> transformUtility.callCiosContentReadAPi(contentId));
+        assertEquals("Failed to retrieve contentId.", exception.getMessage());
+    }
+
+    @Test
+    void callCiosContentReadAPi_nonSuccessStatus_throwsException() {
+        String contentId = "cid-error";
+        when(cbServerProperties.getDefaultIndex()).thenReturn(1);
+        when(cacheService.getCache(contentId, 1)).thenReturn(null);
+        when(cbServerProperties.getBaseUrl()).thenReturn("http://base");
+        when(cbServerProperties.getCiosContentReadApiUrl()).thenReturn("/api/");
+
+        ResponseEntity<Object> response = new ResponseEntity<>(null, HttpStatus.BAD_REQUEST);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(), eq(Object.class))).thenReturn(response);
+
+        CustomException exception = assertThrows(CustomException.class,
+                () -> transformUtility.callCiosContentReadAPi(contentId));
+        assertEquals("Failed to retrieve contentId.", exception.getMessage());
+    }
+
+    @Test
+    void callContentPartnerReadApi_fromCache() throws Exception {
+        String partnerId = "pid-cache";
+        String cachedJson = "{\"id\":\"cached-partner\"}";
+        when(cbServerProperties.getDefaultIndex()).thenReturn(2);
+        when(cacheService.getCache(partnerId, 2)).thenReturn(cachedJson);
+        when(mapper.readTree(cachedJson)).thenReturn(realMapper.readTree(cachedJson));
+
+        JsonNode result = transformUtility.callContentPartnerReadApi(partnerId);
+
+        assertNotNull(result);
+        assertEquals("cached-partner", result.get("id").asText());
+        verify(restTemplate, never()).exchange(anyString(), eq(HttpMethod.GET), any(), eq(JsonNode.class));
+    }
+
+    @Test
+    void readUserDetails_fromCache() throws Exception {
+        String userId = "cachedUser";
+        String cachedJson = "{\"id\":\"cachedUser\"}";
+        when(cbServerProperties.getRedisIndex()).thenReturn(3);
+        when(cacheService.getCache(Constants.UAER_DETAILS + userId, 3)).thenReturn(cachedJson);
+
+        java.lang.reflect.Field mapperField = TransformUtility.class.getDeclaredField("mapper");
+        mapperField.setAccessible(true);
+        mapperField.set(transformUtility, realMapper);
+
+        Map<String, Object> result = transformUtility.readUserDetails(userId);
+
+        assertEquals("cachedUser", result.get("id"));
+        verify(cassandraOperation, never()).getRecordsByProperties(any(), any(), any(), any());
+    }
+
+    @Test
+    void readUserDetails_exception_returnsEmptyMap() {
+        String userId = "errUser";
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenThrow(new RuntimeException("db error"));
+
+        Map<String, Object> result = transformUtility.readUserDetails(userId);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void readAccessSettings_exception_returnsNull() throws Exception {
+        String courseId = "course3";
+        Map<String, Object> dbRecord = Map.of(Constants.CONTEXT_DATA, "{\"accessControl\":{}}");
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any()))
+                .thenReturn(List.of(dbRecord));
+
+        when(mapper.readValue(anyString(), eq(Map.class))).thenThrow(new RuntimeException("parse error"));
+
+        AccessControl result = transformUtility.readAccessSettings(courseId);
+        assertNull(result);
+    }
+
+    @Test
+    void readUserKarmaPoints_fromCache() {
+        String userId = "cacheUser";
+        String token = "tok";
+        when(cbServerProperties.getDefaultIndex()).thenReturn(5);
+        when(cacheService.getCache(Constants.USER_KARMA_POINTS + userId, 5)).thenReturn("250");
+
+        Long result = transformUtility.readUserKarmaPoints(userId, token);
+
+        assertEquals(250L, result);
+        verify(restTemplate, never()).exchange(anyString(), any(), any(), eq(JsonNode.class));
+    }
+
+    @Test
+    void callCourseraInviteApi_NonSuccessStatus_returnsFalse() {
+        JsonNode contentResponse = realMapper.createObjectNode().put(Constants.PROGRAM_ID, "prog1");
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user1");
+
+        when(cbServerProperties.getServiceRegistryApiBaseUrl()).thenReturn("http://base");
+        when(cbServerProperties.getServiceRegistryApiFixedUrl()).thenReturn("/fixed");
+        when(cbServerProperties.getCourseraOrgId()).thenReturn("org1");
+        when(cbServerProperties.getCourseraServiceCode()).thenReturn("svc1");
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(realMapper.createObjectNode(), HttpStatus.MULTIPLE_CHOICES);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        boolean result = transformUtility.callCourseraInviteApi(contentResponse, userProfile);
+        assertFalse(result);
+    }
+
+    @Test
+    void callCourseraInviteApi_ExistingInvitation_returnsTrue() {
+        JsonNode contentResponse = realMapper.createObjectNode().put(Constants.PROGRAM_ID, "prog1");
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user1");
+
+        when(cbServerProperties.getServiceRegistryApiBaseUrl()).thenReturn("http://base");
+        when(cbServerProperties.getServiceRegistryApiFixedUrl()).thenReturn("/fixed");
+        when(cbServerProperties.getCourseraOrgId()).thenReturn("org1");
+        when(cbServerProperties.getCourseraServiceCode()).thenReturn("svc1");
+
+        HttpClientErrorException ex = new HttpClientErrorException(HttpStatus.BAD_REQUEST, "Bad Request",
+                "PROGRAM_INVITEE_ERROR_EXISTING_INVITATION_FOR_EMAIL".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenThrow(ex);
+
+        boolean result = transformUtility.callCourseraInviteApi(contentResponse, userProfile);
+        assertTrue(result);
+    }
+
+    @Test
+    void callCourseraInviteApi_HttpStatusCodeException_otherError_throwsCustomException() {
+        JsonNode contentResponse = realMapper.createObjectNode().put(Constants.PROGRAM_ID, "prog1");
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put(Constants.ID, "user1");
+
+        when(cbServerProperties.getServiceRegistryApiBaseUrl()).thenReturn("http://base");
+        when(cbServerProperties.getServiceRegistryApiFixedUrl()).thenReturn("/fixed");
+        when(cbServerProperties.getCourseraOrgId()).thenReturn("org1");
+        when(cbServerProperties.getCourseraServiceCode()).thenReturn("svc1");
+
+        HttpClientErrorException ex = new HttpClientErrorException(HttpStatus.BAD_REQUEST, "Bad Request",
+                "SOME_OTHER_ERROR".getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenThrow(ex);
+
+        CustomException exception = assertThrows(CustomException.class,
+                () -> transformUtility.callCourseraInviteApi(contentResponse, userProfile));
+        assertTrue(exception.getMessage().contains("Coursera Invite API failed"));
+    }
+
+    @Test
+    void searchContentByExternalId_nullResponseBody_throwsException() {
+        when(cbServerProperties.getBaseUrl()).thenReturn("http://localhost");
+        when(cbServerProperties.getCiosSearchContentApiEndPoint()).thenReturn("/search");
+
+        when(restTemplate.exchange(
+                eq("http://localhost/search"),
+                eq(HttpMethod.POST),
+                any(HttpEntity.class),
+                eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(null, HttpStatus.OK));
+
+        assertThrows(CustomException.class,
+                () -> transformUtility.searchContentByExternalId("course1", "partner1"));
     }
 }
