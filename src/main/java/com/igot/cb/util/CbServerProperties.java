@@ -140,6 +140,9 @@ public class CbServerProperties {
     @Value("${karma.wallet.cache.ttl.seconds}")
     private long karmaWalletCacheTtlSeconds;
 
+    @Value("${content.partner.readby.partnerid.api.url}")
+    private String contentPartnerReadbyPartnerIdApiUrl;
+
     @Value("${spring.kafka.user.paid.course.enrolment.topic.name}")
     private String paidCourseEnrolmentTopic;
 

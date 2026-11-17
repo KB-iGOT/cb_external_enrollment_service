@@ -4,9 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
@@ -22,6 +25,7 @@ import org.springframework.test.context.TestPropertySource;
         "certificate.char.length=15",
         "content.partner.read.api.url=http://partner.url",
         "content.partner.readby.partnercode.api.url=http://partner.code.url",
+        "content.partner.readby.partnerid.api.url=http://partner.id.url",
         "spring.kafka.cornell.topic.name=user-progress-topic",
         "user.progress.send.from.partner.topic.name=user-partner-progress",
         "maximum.allowed.limit=500",
@@ -46,14 +50,20 @@ import org.springframework.test.context.TestPropertySource;
         "spring.kafka.provider.licence.alert.topic.name=provider.licence.alert",
         "notification.service.base.url=http://notification-service:9000"
 })
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CbServerPropertiesTest {
 
     @Autowired
     private CbServerProperties properties;
 
+    // Split from one 58-assertion method (Sonar: max 25 per method) into four. Order matters:
+    // the setter tests mutate the same Spring-managed singleton bean the injected-value tests
+    // read, so injected-value checks must run (and see the original @TestPropertySource values)
+    // before any setter test runs.
+
     @Test
-    void testAllPropertiesAreInjectedAndSettersWork() {
-        // Verify Injected Values
+    @Order(1)
+    void testCorePropertiesAreInjected() {
         assertTrue(properties.isRedisCacheEnable());
         assertEquals("test-template", properties.getSvgTemplate());
         assertEquals("http://base.url", properties.getBaseUrl());
@@ -63,6 +73,7 @@ class CbServerPropertiesTest {
         assertEquals(15, properties.getCertificateCharLength());
         assertEquals("http://partner.url", properties.getContentPartnerReadApiUrl());
         assertEquals("http://partner.code.url", properties.getContentPartnerReadbyPartnerCodeApiUrl());
+        assertEquals("http://partner.id.url", properties.getContentPartnerReadbyPartnerIdApiUrl());
         assertEquals("user-progress-topic", properties.getUserProgressUpdateTopic());
         assertEquals("user-partner-progress", properties.getUserProgressSendFromPartner());
         assertEquals(500, properties.getMaximumAllowedLimit());
@@ -72,7 +83,11 @@ class CbServerPropertiesTest {
         assertEquals("http://content.read.url", properties.getCiosContentReadApiUrl());
         assertEquals("http://lms.summary.base", properties.getLmsEnrolmentSummaryBaseUrl());
         assertEquals("http://lms.summary.fixed", properties.getLmsEnrolmentSummaryFixedUrl());
+    }
 
+    @Test
+    @Order(2)
+    void testKarmaAndMiscPropertiesAreInjected() {
         assertEquals(2, properties.getKarmaExemptGroups().size());
         assertTrue(properties.getKarmaExemptGroups().contains("group1"));
 
@@ -86,8 +101,11 @@ class CbServerPropertiesTest {
         assertEquals("http://registry.fixed", properties.getServiceRegistryApiFixedUrl());
         assertEquals("SRV001", properties.getCourseraServiceCode());
         assertEquals("ORG001", properties.getCourseraOrgId());
+    }
 
-        // Verify Setters
+    @Test
+    @Order(3)
+    void testSettersWork_Part1() {
         properties.setRedisCacheEnable(false);
         assertEquals(false, properties.isRedisCacheEnable());
 
@@ -129,7 +147,11 @@ class CbServerPropertiesTest {
 
         properties.setDefaultIndex(1);
         assertEquals(1, properties.getDefaultIndex());
+    }
 
+    @Test
+    @Order(4)
+    void testSettersWork_Part2() {
         properties.setCiosContentReadApiUrl("new-content-read");
         assertEquals("new-content-read", properties.getCiosContentReadApiUrl());
 

@@ -393,6 +393,78 @@ class TransformUtilityTest {
     }
 
     @Test
+    void callContentPartnerReadByPartnerIdApi_Success() {
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String apiUrl = "/api/partner/id/";
+        String fullUrl = baseUrl + apiUrl + partnerId;
+
+        ObjectNode resultNode = realMapper.createObjectNode();
+        resultNode.put("id", partnerId);
+
+        ObjectNode responseNode = realMapper.createObjectNode();
+        responseNode.set("result", resultNode);
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getContentPartnerReadbyPartnerIdApiUrl()).thenReturn(apiUrl);
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(responseNode, HttpStatus.OK);
+        when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        JsonNode result = transformUtility.callContentPartnerReadByPartnerIdApi(partnerId);
+
+        assertNotNull(result);
+        assertEquals(partnerId, result.get("id").asText());
+        verify(restTemplate).exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class));
+    }
+
+    @Test
+    void callContentPartnerReadByPartnerIdApi_MissingResultField_ThrowsCustomException() {
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String apiUrl = "/api/partner/id/";
+        String fullUrl = baseUrl + apiUrl + partnerId;
+
+        ObjectNode responseNode = realMapper.createObjectNode();
+        responseNode.put("somethingElse", "value");
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getContentPartnerReadbyPartnerIdApiUrl()).thenReturn(apiUrl);
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(responseNode, HttpStatus.OK);
+        when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        CustomException exception = assertThrows(CustomException.class,
+                () -> transformUtility.callContentPartnerReadByPartnerIdApi(partnerId));
+
+        assertEquals(Constants.ERROR, exception.getCode());
+        assertTrue(exception.getMessage().contains("Invalid or null response body"));
+    }
+
+    @Test
+    void callContentPartnerReadByPartnerIdApi_Error() {
+        String partnerId = "partner123";
+        String baseUrl = "http://example.com";
+        String apiUrl = "/api/partner/id/";
+        String fullUrl = baseUrl + apiUrl + partnerId;
+
+        when(cbServerProperties.getBaseUrl()).thenReturn(baseUrl);
+        when(cbServerProperties.getContentPartnerReadbyPartnerIdApiUrl()).thenReturn(apiUrl);
+
+        ResponseEntity<JsonNode> responseEntity = new ResponseEntity<>(null, HttpStatus.BAD_REQUEST);
+        when(restTemplate.exchange(eq(fullUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(responseEntity);
+
+        CustomException exception = assertThrows(CustomException.class,
+                () -> transformUtility.callContentPartnerReadByPartnerIdApi(partnerId));
+
+        assertEquals(Constants.ERROR, exception.getCode());
+        assertTrue(exception.getMessage().contains("Failed to retrieve externalId"));
+    }
+
+    @Test
     void transformData_Success() throws Exception {
         // Arrange
         JsonNode jsonNode = realMapper.createObjectNode();
