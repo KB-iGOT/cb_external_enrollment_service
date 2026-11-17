@@ -291,6 +291,30 @@ class CacheServiceTest {
     }
 
     @Test
+    void setIfAbsent_NewKey_ReturnsTrue() {
+        when(jedis.set(eq("licenceAlertFired_p1_50"), eq("2026-11-12T10:00:00Z"),
+                any(redis.clients.jedis.params.SetParams.class))).thenReturn("OK");
+
+        assertTrue(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "2026-11-12T10:00:00Z"));
+        verify(jedis).select(0);
+    }
+
+    @Test
+    void setIfAbsent_KeyAlreadyExists_ReturnsFalse() {
+        when(jedis.set(anyString(), anyString(), any(redis.clients.jedis.params.SetParams.class))).thenReturn(null);
+
+        assertFalse(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "now"));
+    }
+
+    @Test
+    void setIfAbsent_Exception_ReturnsFalse() {
+        when(jedis.set(anyString(), anyString(), any(redis.clients.jedis.params.SetParams.class)))
+                .thenThrow(new RuntimeException("Connection reset"));
+
+        assertFalse(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "now"));
+    }
+
+    @Test
     void decrementBy_Success() {
         String key = "karmaWalletBalance_user1";
 

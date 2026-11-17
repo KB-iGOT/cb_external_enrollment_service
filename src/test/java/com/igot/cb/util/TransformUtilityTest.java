@@ -1074,4 +1074,42 @@ class TransformUtilityTest {
         assertThrows(CustomException.class,
                 () -> transformUtility.getContentIdByExternalId("course1", "partner1"));
     }
+
+    @Test
+    void callProviderAccessValidateApi_Success_ReturnsResultNode() {
+        when(cbServerProperties.getExtCourseServiceBaseUrl()).thenReturn("http://ext-course");
+        when(cbServerProperties.getProviderAccessValidateApiUrl()).thenReturn("/accessSettings/provider/v1/validate");
+        ObjectNode body = realMapper.createObjectNode();
+        body.putObject(Constants.RESULT).put(Constants.ELIGIBLE, true);
+        when(restTemplate.exchange(eq("http://ext-course/accessSettings/provider/v1/validate"), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(JsonNode.class))).thenReturn(new ResponseEntity<>(body, HttpStatus.OK));
+
+        JsonNode result = transformUtility.callProviderAccessValidateApi("partner1", "user1", "course1");
+
+        assertTrue(result.path(Constants.ELIGIBLE).asBoolean());
+        verify(restTemplate).exchange(anyString(), eq(HttpMethod.POST), argThat((HttpEntity<?> entity) -> {
+            Map<?, ?> request = (Map<?, ?>) entity.getBody();
+            return "partner1".equals(request.get(Constants.PARTNER_ID))
+                    && "user1".equals(request.get(Constants.USER_ID_RQST))
+                    && "course1".equals(request.get(Constants.COURSE_ID_RQST));
+        }), eq(JsonNode.class));
+    }
+
+    @Test
+    void callProviderAccessValidateApi_MissingResult_Throws() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(realMapper.createObjectNode(), HttpStatus.OK));
+
+        assertThrows(CustomException.class,
+                () -> transformUtility.callProviderAccessValidateApi("partner1", "user1", "course1"));
+    }
+
+    @Test
+    void callProviderAccessValidateApi_Error_Throws() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+                .thenThrow(new RuntimeException("connection refused"));
+
+        assertThrows(CustomException.class,
+                () -> transformUtility.callProviderAccessValidateApi("partner1", "user1", "course1"));
+    }
 }

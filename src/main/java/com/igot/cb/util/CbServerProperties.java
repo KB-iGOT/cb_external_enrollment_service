@@ -6,6 +6,7 @@ import lombok.Setter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Component
@@ -82,6 +83,12 @@ public class CbServerProperties {
     @Value("${enrollment.error.partner.course.limit}")
     private String partnerCourseLimitMsg;
 
+    @Value("${enrollment.error.provider.group.licence.exhausted}")
+    private String providerGroupLicenceExhaustedMsg;
+
+    @Value("${enrollment.error.provider.access.denied}")
+    private String providerAccessDeniedMsg;
+
     @Value("${enrollment.error.karma.insufficient}")
     private String karmaInsufficientMsg;
 
@@ -132,4 +139,32 @@ public class CbServerProperties {
 
     @Value("${karma.wallet.cache.ttl.seconds}")
     private long karmaWalletCacheTtlSeconds;
+
+    @Value("${spring.kafka.user.paid.course.enrolment.topic.name}")
+    private String paidCourseEnrolmentTopic;
+
+    @Value("${cb.ext.course.service.base.url}")
+    private String extCourseServiceBaseUrl;
+
+    @Value("${provider.access.validate.api.url}")
+    private String providerAccessValidateApiUrl;
+
+    @Value("${provider.licence.alert.thresholds:50,75,90,100}")
+    private String providerLicenceAlertThresholds;
+
+    @Value("${spring.kafka.provider.licence.alert.topic.name}")
+    private String providerLicenceAlertTopic;
+
+    @Value("${provider.licence.alert.sender}")
+    private String providerLicenceAlertSender;
+
+    @Value("${notification.service.base.url}")
+    private String notificationServiceBaseUrl;
+
+    @Value("${notification.service.send.api.url}")
+    private String notificationServiceSendApiUrl;
+
+    public List<String> getProviderLicenceAlertThresholdsList() {
+        return Arrays.asList(providerLicenceAlertThresholds.split(",", -1));
+    }
 }
