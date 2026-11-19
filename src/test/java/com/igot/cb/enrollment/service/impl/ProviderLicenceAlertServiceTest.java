@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -282,7 +281,7 @@ class ProviderLicenceAlertServiceTest {
     @SuppressWarnings("unchecked")
     void sendAlert_ThresholdCrossed_SendsTemplateEmailInBcc() {
         stubTemplate(Constants.EMAIL_TEMPLATE_LICENCE_THRESHOLD_CROSSED,
-                "Dear Karmayogi, $partnerName used $consumedPct% crossing $threshold%: $consumed/$overAllLimit, left $remaining ($dateTime)");
+                "Dear Karmayogi, $partnerName has used $threshold% of its overall licence limit.");
         when(restTemplate.postForEntity(eq(NOTIFICATION_URL), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(new ResponseEntity<>("{}", HttpStatus.OK));
 
@@ -299,14 +298,14 @@ class ProviderLicenceAlertServiceTest {
         assertEquals("[iGOT Karmayogi] SIMPLILEARN: 75% of licences used",
                 ((Map<String, Object>) template.get(Constants.CONFIG)).get(Constants.SUBJECT));
         String body = (String) template.get(Constants.DATA);
-        assertTrue(body.startsWith("Dear Karmayogi, SIMPLILEARN used 76% crossing 75%: 30400/40000, left 9600 ("), body);
-        assertTrue(body.endsWith(" IST)"), body);
+        assertEquals("Dear Karmayogi, SIMPLILEARN has used 75% of its overall licence limit.", body);
+        assertEquals(Map.of(Constants.PARTNER_NAME, "SIMPLILEARN", Constants.THRESHOLD, 75), template.get(Constants.PARAMS));
         verify(cacheService, never()).deleteCache(anyString(), anyInt());
     }
 
     @Test
     void sendAlert_Exhausted_UsesExhaustedTemplateAndSubject() {
-        stubTemplate(Constants.EMAIL_TEMPLATE_LICENCE_EXHAUSTED, "All $overAllLimit used");
+        stubTemplate(Constants.EMAIL_TEMPLATE_LICENCE_EXHAUSTED, "All licences for $partnerName used");
         when(restTemplate.postForEntity(eq(NOTIFICATION_URL), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(new ResponseEntity<>("{}", HttpStatus.OK));
 
@@ -314,7 +313,7 @@ class ProviderLicenceAlertServiceTest {
 
         verify(restTemplate).postForEntity(eq(NOTIFICATION_URL), argThat((HttpEntity<?> entity) ->
                 entity.getBody().toString().contains("[iGOT Karmayogi] Action needed: licences exhausted for SIMPLILEARN")
-                        && entity.getBody().toString().contains("All 40000 used")), eq(String.class));
+                        && entity.getBody().toString().contains("All licences for SIMPLILEARN used")), eq(String.class));
     }
 
     @Test

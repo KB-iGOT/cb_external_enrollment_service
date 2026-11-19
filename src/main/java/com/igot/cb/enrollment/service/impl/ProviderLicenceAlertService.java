@@ -23,14 +23,10 @@ import org.springframework.web.client.RestTemplate;
 
 import java.io.StringWriter;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -50,8 +46,6 @@ import java.util.Map;
 public class ProviderLicenceAlertService {
 
     private static final int EXHAUSTED_THRESHOLD = 100;
-    private static final String IST_ZONE = "Asia/Kolkata";
-    private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a 'IST'", Locale.ENGLISH);
 
     private final CassandraOperation cassandraOperation;
     private final CacheService cacheService;
@@ -110,16 +104,9 @@ public class ProviderLicenceAlertService {
         int threshold = ((Number) event.get(Constants.THRESHOLD)).intValue();
         try {
             String partnerName = (String) event.get(Constants.PARTNER_NAME);
-            long consumed = ((Number) event.get(Constants.CONSUMED)).longValue();
-            long overAllLimit = ((Number) event.get(Constants.OVER_ALL_PROVIDER_LIMIT)).longValue();
             Map<String, Object> params = new HashMap<>();
             params.put(Constants.PARTNER_NAME, partnerName);
             params.put(Constants.THRESHOLD, threshold);
-            params.put(Constants.CONSUMED, consumed);
-            params.put(Constants.OVER_ALL_PROVIDER_LIMIT, overAllLimit);
-            params.put(Constants.REMAINING, Math.max(0L, overAllLimit - consumed));
-            params.put(Constants.CONSUMED_PCT, overAllLimit > 0 ? consumed * 100 / overAllLimit : 0L);
-            params.put(Constants.DATE_TIME, ZonedDateTime.now(ZoneId.of(IST_ZONE)).format(DATE_TIME_FORMAT));
             boolean exhausted = threshold >= EXHAUSTED_THRESHOLD;
             String templateName = exhausted
                     ? Constants.EMAIL_TEMPLATE_LICENCE_EXHAUSTED : Constants.EMAIL_TEMPLATE_LICENCE_THRESHOLD_CROSSED;

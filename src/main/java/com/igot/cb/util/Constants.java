@@ -252,9 +252,6 @@ public class Constants {
     public static final String PARTNER_NAME = "partnerName";
     public static final String THRESHOLD = "threshold";
     public static final String CONSUMED = "consumed";
-    public static final String REMAINING = "remaining";
-    public static final String CONSUMED_PCT = "consumedPct";
-    public static final String DATE_TIME = "dateTime";
     public static final String TABLE_EMAIL_TEMPLATE = "email_template";
     public static final String TEMPLATE = "template";
     public static final String EMAIL_TEMPLATE_LICENCE_THRESHOLD_CROSSED = "marketplaceLicenceThresholdCrossed";
