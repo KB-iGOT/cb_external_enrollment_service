@@ -27,6 +27,8 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -41,6 +43,7 @@ import static org.mockito.Mockito.when;
 class ProviderLicenceAlertServiceTest {
 
     private static final String TOPIC = "provider.licence.alert";
+    private static final long TTL = 300L;
     private static final String NOTIFICATION_URL = "http://notification-service:9000/v2/notification/send";
 
     @InjectMocks
@@ -63,6 +66,7 @@ class ProviderLicenceAlertServiceTest {
     void setUp() {
         lenient().when(cbServerProperties.getProviderLicenceAlertThresholdsList()).thenReturn(List.of("100", " 50", "90", "75", ""));
         lenient().when(cbServerProperties.getDefaultIndex()).thenReturn(0);
+        lenient().when(cbServerProperties.getProviderLicenceAlertLockTtlSeconds()).thenReturn(TTL);
         lenient().when(cbServerProperties.getProviderLicenceAlertTopic()).thenReturn(TOPIC);
         lenient().when(cbServerProperties.getProviderLicenceAlertSender()).thenReturn("support@igot.in");
         lenient().when(cbServerProperties.getNotificationServiceBaseUrl()).thenReturn("http://notification-service:9000");
@@ -93,7 +97,17 @@ class ProviderLicenceAlertServiceTest {
             "{\"alertsEnabled\":true,\"recipients\":[{\"name\":\"A\",\"email\":\"a@x.com\"},{\"email\":\"b@x.com\"},{\"email\":\"\"}]}";
 
     private String key(int threshold) {
-        return Constants.LICENCE_ALERT_FIRED_KEY_PREFIX + "p1_" + threshold;
+        return Constants.LICENCE_ALERT_LOCK_KEY_PREFIX + "p1_" + threshold;
+    }
+
+    private void verifySaved(Map<Integer, Boolean> sentFlags) {
+        verify(cassandraOperation).putMapEntries(eq(Constants.KEYSPACE_SUNBIRD_COURSES),
+                eq(Constants.PROVIDER_ACCESS_SETTINGS_TABLE), eq(Constants.ALERT_THRESHOLDS), eq(sentFlags),
+                eq(Map.of(Constants.PARTNER_ID_REQ, "p1")));
+    }
+
+    private void verifyNothingSaved() {
+        verify(cassandraOperation, never()).putMapEntries(anyString(), anyString(), anyString(), anyMap(), anyMap());
     }
 
     @Test
@@ -104,91 +118,57 @@ class ProviderLicenceAlertServiceTest {
     }
 
     @Test
-    void checkThresholds_BelowAllThresholds_RearmsAllDefaultThresholds() {
+    void checkThresholds_BelowAllThresholds_SavesNothing() {
         alertService.checkThresholds("p1", provider(100), 49);
 
-        for (int threshold : List.of(50, 75, 90, 100)) {
-            verify(cacheService).deleteCache(key(threshold), 0);
-        }
-        verify(cacheService, never()).setIfAbsent(anyString(), anyInt(), anyString());
-        verifyNoInteractions(producer);
-    }
-
-    @Test
-    void checkThresholds_SavedThresholds_UsedInsteadOfDefaults() {
-        stubSettings(ALERTS_ON, Map.of(80, true, 60, true));
-        when(cacheService.setIfAbsent(eq(key(60)), eq(0), anyString())).thenReturn(true);
-
-        alertService.checkThresholds("p1", provider(100), 65);
-
-        verify(cacheService).deleteCache(key(80), 0);
-        verify(cacheService, never()).deleteCache(key(50), 0);
-        verify(cacheService, never()).setIfAbsent(eq(key(50)), anyInt(), anyString());
-        verify(producer).push(eq(TOPIC), argThat(event ->
-                Integer.valueOf(60).equals(((Map<?, ?>) event).get(Constants.THRESHOLD))), eq("p1"));
+        verifyNothingSaved();
+        verifyNoInteractions(cacheService, producer);
     }
 
     @Test
     void checkThresholds_EmptySavedThresholds_UsesDefaults() {
         stubSettings(ALERTS_ON, Map.of());
+        when(cacheService.setIfAbsent(eq(key(50)), eq(0), anyString(), eq(TTL))).thenReturn(true);
 
-        alertService.checkThresholds("p1", provider(100), 10);
+        alertService.checkThresholds("p1", provider(100), 60);
 
-        for (int threshold : List.of(50, 75, 90, 100)) {
-            verify(cacheService).deleteCache(key(threshold), 0);
-        }
+        verifySaved(Map.of(50, true, 75, false, 90, false, 100, false));
+    }
+
+    @Test
+    void checkThresholds_SentThresholdAboveConsumption_MarkedNotSentAndLockReleased() {
+        stubSettings(ALERTS_ON, Map.of(50, true, 75, true, 90, false));
+
+        alertService.checkThresholds("p1", provider(100), 60);
+
+        verifySaved(Map.of(75, false));
+        verify(cacheService).deleteCache(key(75), 0);
+        verify(cacheService, never()).setIfAbsent(anyString(), anyInt(), anyString(), anyLong());
         verifyNoInteractions(producer);
     }
 
     @Test
-    void checkThresholds_ThresholdsSwitchedOff_NeverMarkedSentOrRearmed() {
-        stubSettings(ALERTS_ON, Map.of(50, true, 75, false, 90, false));
-        when(cacheService.setIfAbsent(eq(key(50)), eq(0), anyString())).thenReturn(true);
+    void checkThresholds_SavedThresholds_UsedInsteadOfDefaults() {
+        stubSettings(ALERTS_ON, Map.of(80, false, 60, false));
+        when(cacheService.setIfAbsent(eq(key(60)), eq(0), anyString(), eq(TTL))).thenReturn(true);
 
-        alertService.checkThresholds("p1", provider(100), 80);
+        alertService.checkThresholds("p1", provider(100), 65);
 
+        verifySaved(Map.of(60, true));
+        verify(cacheService, never()).setIfAbsent(eq(key(50)), anyInt(), anyString(), anyLong());
         verify(producer).push(eq(TOPIC), argThat(event ->
-                Integer.valueOf(50).equals(((Map<?, ?>) event).get(Constants.THRESHOLD))), eq("p1"));
-        for (int threshold : List.of(75, 90, 100)) {
-            verify(cacheService, never()).setIfAbsent(eq(key(threshold)), anyInt(), anyString());
-            verify(cacheService, never()).deleteCache(key(threshold), 0);
-        }
+                Integer.valueOf(60).equals(((Map<?, ?>) event).get(Constants.THRESHOLD))), eq("p1"));
     }
 
     @Test
-    void checkThresholds_EveryThresholdOff_SendsNothing() {
-        stubSettings(ALERTS_ON, Map.of(50, false, 100, false));
-
-        alertService.checkThresholds("p1", provider(100), 100);
-
-        verify(cacheService, never()).setIfAbsent(anyString(), anyInt(), anyString());
-        verify(cacheService, never()).deleteCache(anyString(), anyInt());
-        verifyNoInteractions(producer);
-    }
-
-    @Test
-    void checkThresholds_ThresholdAddedBelowOneAlreadySent_MarksWithoutPublishing() {
-        stubSettings(ALERTS_ON, Map.of(50, true, 60, true, 75, true));
-        when(cacheService.setIfAbsent(eq(key(50)), eq(0), anyString())).thenReturn(false);
-        when(cacheService.setIfAbsent(eq(key(60)), eq(0), anyString())).thenReturn(true);
-        when(cacheService.setIfAbsent(eq(key(75)), eq(0), anyString())).thenReturn(false);
-
-        alertService.checkThresholds("p1", provider(100), 80);
-
-        verify(cacheService).setIfAbsent(eq(key(60)), eq(0), anyString());
-        verifyNoInteractions(producer);
-    }
-
-    @Test
-    void checkThresholds_CrossesNewThreshold_PublishesHighestNewlySet() {
+    void checkThresholds_NothingSaved_WritesDefaultsWholeAndPublishesHighest() {
         stubNotificationData(ALERTS_ON);
-        when(cacheService.setIfAbsent(eq(key(50)), eq(0), anyString())).thenReturn(false);
-        when(cacheService.setIfAbsent(eq(key(75)), eq(0), anyString())).thenReturn(true);
+        when(cacheService.setIfAbsent(eq(key(50)), eq(0), anyString(), eq(TTL))).thenReturn(true);
+        when(cacheService.setIfAbsent(eq(key(75)), eq(0), anyString(), eq(TTL))).thenReturn(true);
 
         alertService.checkThresholds("p1", provider(1000), 760);
 
-        verify(cacheService).deleteCache(key(90), 0);
-        verify(cacheService).deleteCache(key(100), 0);
+        verifySaved(Map.of(50, true, 75, true, 90, false, 100, false));
         verify(producer).push(eq(TOPIC), argThat(event -> {
             Map<?, ?> map = (Map<?, ?>) event;
             return "p1".equals(map.get(Constants.PARTNER_ID))
@@ -201,13 +181,36 @@ class ProviderLicenceAlertServiceTest {
     }
 
     @Test
-    void checkThresholds_AllReachedAlreadySent_DoesNotPublish() {
-        stubNotificationData(ALERTS_ON);
-        when(cacheService.setIfAbsent(anyString(), anyInt(), anyString())).thenReturn(false);
+    void checkThresholds_ThresholdAddedBelowOneAlreadySent_MarksWithoutPublishing() {
+        stubSettings(ALERTS_ON, Map.of(50, true, 60, false, 75, true));
+        when(cacheService.setIfAbsent(eq(key(60)), eq(0), anyString(), eq(TTL))).thenReturn(true);
+
+        alertService.checkThresholds("p1", provider(100), 80);
+
+        verifySaved(Map.of(60, true));
+        verify(cacheService, never()).setIfAbsent(eq(key(50)), anyInt(), anyString(), anyLong());
+        verify(cacheService, never()).setIfAbsent(eq(key(75)), anyInt(), anyString(), anyLong());
+        verifyNoInteractions(producer);
+    }
+
+    @Test
+    void checkThresholds_AllReachedAlreadySent_DoesNothing() {
+        stubSettings(ALERTS_ON, Map.of(50, true, 100, true));
 
         alertService.checkThresholds("p1", provider(100), 100);
 
-        verify(cacheService, never()).deleteCache(anyString(), anyInt());
+        verifyNothingSaved();
+        verifyNoInteractions(cacheService, producer);
+    }
+
+    @Test
+    void checkThresholds_LockHeldByAnotherPod_SendsNothing() {
+        stubSettings(ALERTS_ON, Map.of(50, false));
+        when(cacheService.setIfAbsent(eq(key(50)), eq(0), anyString(), eq(TTL))).thenReturn(false);
+
+        alertService.checkThresholds("p1", provider(100), 60);
+
+        verifyNothingSaved();
         verifyNoInteractions(producer);
     }
 
@@ -217,7 +220,8 @@ class ProviderLicenceAlertServiceTest {
 
         alertService.checkThresholds("p1", provider(100), 80);
 
-        verify(cacheService, never()).setIfAbsent(anyString(), anyInt(), anyString());
+        verify(cacheService, never()).setIfAbsent(anyString(), anyInt(), anyString(), anyLong());
+        verifyNothingSaved();
         verifyNoInteractions(producer);
     }
 
@@ -230,24 +234,25 @@ class ProviderLicenceAlertServiceTest {
         alertService.checkThresholds("p1", provider(100), 80);
         alertService.checkThresholds("p1", provider(100), 80);
 
-        verify(cacheService, never()).setIfAbsent(anyString(), anyInt(), anyString());
+        verify(cacheService, never()).setIfAbsent(anyString(), anyInt(), anyString(), anyLong());
+        verifyNothingSaved();
         verifyNoInteractions(producer);
     }
 
     @Test
-    void checkThresholds_PublishFails_ClearsTheKeysItSet() {
+    void checkThresholds_PublishFails_MarksThemNotSentAgain() {
         stubNotificationData(ALERTS_ON);
-        when(cacheService.setIfAbsent(anyString(), anyInt(), anyString())).thenReturn(true);
+        when(cacheService.setIfAbsent(anyString(), anyInt(), anyString(), eq(TTL))).thenReturn(true);
         doThrow(new RuntimeException("kafka down")).when(producer).push(anyString(), any(), anyString());
 
         alertService.checkThresholds("p1", provider(100), 95);
 
-        verify(cacheService).deleteCache(key(50), 0);
-        verify(cacheService).deleteCache(key(75), 0);
-        verify(cacheService).deleteCache(key(90), 0);
-        // 100 was below the consumption: re-armed once, never set
-        verify(cacheService).deleteCache(key(100), 0);
-        verify(cacheService, never()).setIfAbsent(eq(key(100)), anyInt(), anyString());
+        verifySaved(Map.of(50, true, 75, true, 90, true, 100, false));
+        verifySaved(Map.of(50, false, 75, false, 90, false));
+        for (int threshold : List.of(50, 75, 90)) {
+            verify(cacheService).deleteCache(key(threshold), 0);
+        }
+        verify(cacheService, never()).setIfAbsent(eq(key(100)), anyInt(), anyString(), anyLong());
     }
 
     @Test
@@ -301,6 +306,7 @@ class ProviderLicenceAlertServiceTest {
         assertEquals("Dear Karmayogi, SIMPLILEARN has used 75% of its overall licence limit.", body);
         assertEquals(Map.of(Constants.PARTNER_NAME, "SIMPLILEARN", Constants.THRESHOLD, 75), template.get(Constants.PARAMS));
         verify(cacheService, never()).deleteCache(anyString(), anyInt());
+        verifyNothingSaved();
     }
 
     @Test
@@ -322,6 +328,7 @@ class ProviderLicenceAlertServiceTest {
 
         alertService.sendAlert(alertEvent(90, 36000));
 
+        verifySaved(Map.of(90, false));
         verify(cacheService).deleteCache(key(90), 0);
         verifyNoInteractions(restTemplate);
     }
@@ -334,6 +341,18 @@ class ProviderLicenceAlertServiceTest {
 
         alertService.sendAlert(alertEvent(50, 20000));
 
+        verifySaved(Map.of(50, false));
         verify(cacheService).deleteCache(key(50), 0);
+    }
+
+    @Test
+    void sendAlert_FailsAndMarkingNotSentFails_StillReleasesLock() {
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(any(), any(), any(), any(), any())).thenReturn(List.of());
+        doThrow(new RuntimeException("cassandra down")).when(cassandraOperation)
+                .putMapEntries(anyString(), anyString(), anyString(), anyMap(), anyMap());
+
+        alertService.sendAlert(alertEvent(75, 30000));
+
+        verify(cacheService).deleteCache(key(75), 0);
     }
 }

@@ -159,13 +159,13 @@ public class CacheService {
   }
 
   /**
-   * Sets a key with no expiry only if it doesn't already exist (atomic SET...NX). Returns true
+   * Sets a key with a TTL only if it doesn't already exist (atomic SET...NX EX). Returns true
    * when this call set it. A Redis error returns false (logged), so the caller just skips.
    */
-  public boolean setIfAbsent(String key, int dbIndex, String value) {
+  public boolean setIfAbsent(String key, int dbIndex, String value, long ttlSeconds) {
     try (Jedis jedis = jedisPool.getResource()) {
       jedis.select(dbIndex);
-      return "OK".equals(jedis.set(key, value, SetParams.setParams().nx()));
+      return "OK".equals(jedis.set(key, value, SetParams.setParams().nx().ex(ttlSeconds)));
     } catch (Exception e) {
       log.error("Error while setting key in Redis cache: {} ", e.getMessage());
       return false;

@@ -28,17 +28,19 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Provider licence consumption alerts (SPV Licence Notifications). The thresholds are the
- * provider's saved alertthresholds that are switched on, or the configured defaults until it saves
- * its own; a threshold that is off is never marked, sent or re-armed. After an
- * enrolment consumes a provider licence, checkThresholds marks every threshold the consumption has
- * reached in Redis (licenceAlertFired_partnerId_threshold, set only if absent, no expiry) and
- * publishes one alert for the highest reached threshold when it is newly marked; a threshold added
- * below one already sent is only marked. The alert listener emails it to the provider's
- * recipients in BCC through the notification service. A threshold above the consumption is
- * re-armed (its key deleted), e.g. after the Over All Limit is raised.
+ * provider's saved alertthresholds, each mapped to whether its alert has been sent, or the
+ * configured defaults, none sent, until it saves its own. After an enrolment consumes a provider
+ * licence, checkThresholds marks every threshold the consumption has reached as sent and
+ * publishes one alert for the highest reached threshold when it was not already sent; a
+ * threshold added below one already sent is only marked. A short-lived Redis lock
+ * (licenceAlertLock_partnerId_threshold) stops two pods that read the same flags from both
+ * sending a threshold. The alert listener emails it to the provider's recipients in BCC through
+ * the notification service. A sent threshold above the consumption is marked not sent again,
+ * e.g. after the Over All Limit is raised.
  */
 @Service
 @Slf4j
@@ -56,8 +58,8 @@ public class ProviderLicenceAlertService {
 
     /**
      * consumed: the provider's licences consumed after this enrolment. Never throws, so an alert
-     * failure never fails the enrolment. Nothing is marked when alerts are off or there are no
-     * recipients, and a failed publish clears the marks it set.
+     * failure never fails the enrolment. Nothing is marked sent when alerts are off or there are no
+     * recipients, and a failed publish marks the thresholds it marked as not sent again.
      */
     public void checkThresholds(String partnerId, JsonNode providerData, long consumed) {
         try {
@@ -66,27 +68,38 @@ public class ProviderLicenceAlertService {
                 return;
             }
             Map<String, Object> settings = readSettings(partnerId);
+            Map<Integer, Boolean> sentFlags = sentFlagsOf(settings);
+            Map<Integer, Boolean> changedFlags = new TreeMap<>();
             List<Integer> reached = new ArrayList<>();
-            for (int threshold : thresholdsOf(settings)) {
+            sentFlags.forEach((threshold, sent) -> {
                 if (consumed * 100 >= threshold * overAllLimit) {
                     reached.add(threshold);
-                } else {
-                    cacheService.deleteCache(alertKey(partnerId, threshold), cbServerProperties.getDefaultIndex());
+                } else if (Boolean.TRUE.equals(sent)) {
+                    changedFlags.put(threshold, false);
+                    cacheService.deleteCache(lockKey(partnerId, threshold), cbServerProperties.getDefaultIndex());
                 }
-            }
-            if (reached.isEmpty()) {
-                return;
-            }
-            List<String> recipients = recipientsOf(settings);
-            if (recipients.isEmpty()) {
-                return;
-            }
-            String firedOn = Instant.now().toString();
-            List<Integer> newlyReached = reached.stream()
-                    .filter(threshold -> cacheService.setIfAbsent(alertKey(partnerId, threshold),
-                            cbServerProperties.getDefaultIndex(), firedOn))
+            });
+            List<String> recipients = reached.isEmpty() ? List.of() : recipientsOf(settings);
+            String lockedOn = Instant.now().toString();
+            List<Integer> newlyReached = recipients.isEmpty() ? List.of() : reached.stream()
+                    .filter(threshold -> !sentFlags.get(threshold))
+                    .filter(threshold -> cacheService.setIfAbsent(lockKey(partnerId, threshold),
+                            cbServerProperties.getDefaultIndex(), lockedOn,
+                            cbServerProperties.getProviderLicenceAlertLockTtlSeconds()))
                     .toList();
-            if (newlyReached.contains(Collections.max(reached))) {
+            newlyReached.forEach(threshold -> changedFlags.put(threshold, true));
+            if (changedFlags.isEmpty()) {
+                return;
+            }
+            // Until the provider saves its own list, the defaults are written whole, so the saved list
+            // is never only part of them.
+            if (isSaved(settings)) {
+                saveSentFlags(partnerId, changedFlags);
+            } else {
+                sentFlags.putAll(changedFlags);
+                saveSentFlags(partnerId, sentFlags);
+            }
+            if (!newlyReached.isEmpty() && newlyReached.contains(Collections.max(reached))) {
                 publishAlert(partnerId, providerData, consumed, overAllLimit, newlyReached, recipients);
             }
         } catch (Exception e) {
@@ -96,7 +109,7 @@ public class ProviderLicenceAlertService {
 
     /**
      * Sends one alert event as an email to its recipients in BCC. On failure the threshold is
-     * re-armed, so the next licence consumed sends it again.
+     * marked not sent, so the next licence consumed sends it again.
      */
     @SuppressWarnings("unchecked")
     public void sendAlert(Map<String, Object> event) {
@@ -118,7 +131,7 @@ public class ProviderLicenceAlertService {
             log.info("Licence alert {}% sent for partnerId: {}", threshold, partnerId);
         } catch (Exception e) {
             log.error("Failed to send licence alert {}% for partnerId: {}", threshold, partnerId, e);
-            cacheService.deleteCache(alertKey(partnerId, threshold), cbServerProperties.getDefaultIndex());
+            markNotSent(partnerId, List.of(threshold));
         }
     }
 
@@ -135,8 +148,7 @@ public class ProviderLicenceAlertService {
             producer.push(cbServerProperties.getProviderLicenceAlertTopic(), event, partnerId);
         } catch (Exception e) {
             log.error("Failed to publish licence alert for partnerId: {}", partnerId, e);
-            newlyReached.forEach(threshold ->
-                    cacheService.deleteCache(alertKey(partnerId, threshold), cbServerProperties.getDefaultIndex()));
+            markNotSent(partnerId, newlyReached);
         }
     }
 
@@ -152,18 +164,46 @@ public class ProviderLicenceAlertService {
     }
 
     /**
-     * The provider's saved thresholds that are on (alertthresholds: threshold to on/off), in
-     * ascending order, or the configured defaults until it saves its own.
+     * The provider's saved thresholds, each mapped to whether its alert has been sent, in ascending
+     * order, or the configured defaults, none sent, until it saves its own.
      */
-    private List<Integer> thresholdsOf(Map<String, Object> settings) {
-        if (settings.get(Constants.ALERT_THRESHOLDS) instanceof Map<?, ?> saved && !saved.isEmpty()) {
-            return saved.entrySet().stream()
-                    .filter(threshold -> Boolean.TRUE.equals(threshold.getValue()))
-                    .map(threshold -> ((Number) threshold.getKey()).intValue())
-                    .sorted()
-                    .toList();
+    private Map<Integer, Boolean> sentFlagsOf(Map<String, Object> settings) {
+        Map<Integer, Boolean> sentFlags = new TreeMap<>();
+        if (isSaved(settings)) {
+            ((Map<?, ?>) settings.get(Constants.ALERT_THRESHOLDS)).forEach((threshold, sent) ->
+                    sentFlags.put(((Number) threshold).intValue(), Boolean.TRUE.equals(sent)));
+        } else {
+            getThresholds().forEach(threshold -> sentFlags.put(threshold, false));
         }
-        return getThresholds();
+        return sentFlags;
+    }
+
+    private boolean isSaved(Map<String, Object> settings) {
+        return settings.get(Constants.ALERT_THRESHOLDS) instanceof Map<?, ?> saved && !saved.isEmpty();
+    }
+
+    /**
+     * Writes only the given thresholds' flags, so thresholds the provider saved meanwhile are kept.
+     */
+    private void saveSentFlags(String partnerId, Map<Integer, Boolean> sentFlags) {
+        cassandraOperation.putMapEntries(Constants.KEYSPACE_SUNBIRD_COURSES, Constants.PROVIDER_ACCESS_SETTINGS_TABLE,
+                Constants.ALERT_THRESHOLDS, sentFlags, Map.of(Constants.PARTNER_ID_REQ, partnerId));
+    }
+
+    /**
+     * Marks the thresholds not sent and releases their locks, so the next licence consumed sends
+     * them again.
+     */
+    private void markNotSent(String partnerId, List<Integer> thresholds) {
+        try {
+            Map<Integer, Boolean> notSent = new TreeMap<>();
+            thresholds.forEach(threshold -> notSent.put(threshold, false));
+            saveSentFlags(partnerId, notSent);
+        } catch (Exception e) {
+            log.error("Failed to mark licence alert thresholds {} not sent for partnerId: {}", thresholds, partnerId, e);
+        }
+        thresholds.forEach(threshold ->
+                cacheService.deleteCache(lockKey(partnerId, threshold), cbServerProperties.getDefaultIndex()));
     }
 
     /**
@@ -253,7 +293,7 @@ public class ProviderLicenceAlertService {
                 .toList();
     }
 
-    private String alertKey(String partnerId, int threshold) {
-        return Constants.LICENCE_ALERT_FIRED_KEY_PREFIX + partnerId + "_" + threshold;
+    private String lockKey(String partnerId, int threshold) {
+        return Constants.LICENCE_ALERT_LOCK_KEY_PREFIX + partnerId + "_" + threshold;
     }
 }

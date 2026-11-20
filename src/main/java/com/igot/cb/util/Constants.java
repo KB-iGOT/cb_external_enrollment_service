@@ -248,7 +248,7 @@ public class Constants {
     public static final String ALERT_THRESHOLDS = "alertthresholds";
     public static final String ALERTS_ENABLED = "alertsEnabled";
     public static final String RECIPIENTS = "recipients";
-    public static final String LICENCE_ALERT_FIRED_KEY_PREFIX = "licenceAlertFired_";
+    public static final String LICENCE_ALERT_LOCK_KEY_PREFIX = "licenceAlertLock_";
     public static final String PARTNER_NAME = "partnerName";
     public static final String THRESHOLD = "threshold";
     public static final String CONSUMED = "consumed";

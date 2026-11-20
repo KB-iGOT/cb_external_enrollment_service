@@ -4,14 +4,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import redis.clients.jedis.CommandArguments;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.Protocol;
+import redis.clients.jedis.params.SetParams;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -292,18 +299,23 @@ class CacheServiceTest {
 
     @Test
     void setIfAbsent_NewKey_ReturnsTrue() {
-        when(jedis.set(eq("licenceAlertFired_p1_50"), eq("2026-11-12T10:00:00Z"),
-                any(redis.clients.jedis.params.SetParams.class))).thenReturn("OK");
+        ArgumentCaptor<SetParams> params = ArgumentCaptor.forClass(SetParams.class);
+        when(jedis.set(eq("licenceAlertFired_p1_50"), eq("2026-11-12T10:00:00Z"), params.capture())).thenReturn("OK");
 
-        assertTrue(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "2026-11-12T10:00:00Z"));
+        assertTrue(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "2026-11-12T10:00:00Z", 2592000L));
         verify(jedis).select(0);
+        CommandArguments args = new CommandArguments(Protocol.Command.SET);
+        params.getValue().addParams(args);
+        List<String> sent = new ArrayList<>();
+        args.forEach(arg -> sent.add(new String(arg.getRaw(), StandardCharsets.UTF_8)));
+        assertEquals(List.of("SET", "NX", "EX", "2592000"), sent);
     }
 
     @Test
     void setIfAbsent_KeyAlreadyExists_ReturnsFalse() {
         when(jedis.set(anyString(), anyString(), any(redis.clients.jedis.params.SetParams.class))).thenReturn(null);
 
-        assertFalse(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "now"));
+        assertFalse(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "now", 2592000L));
     }
 
     @Test
@@ -311,7 +323,7 @@ class CacheServiceTest {
         when(jedis.set(anyString(), anyString(), any(redis.clients.jedis.params.SetParams.class)))
                 .thenThrow(new RuntimeException("Connection reset"));
 
-        assertFalse(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "now"));
+        assertFalse(cacheService.setIfAbsent("licenceAlertFired_p1_50", 0, "now", 2592000L));
     }
 
     @Test

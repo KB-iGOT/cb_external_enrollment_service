@@ -161,6 +161,9 @@ public class CbServerProperties {
     @Value("${provider.licence.alert.sender}")
     private String providerLicenceAlertSender;
 
+    @Value("${provider.licence.alert.lock.ttl.seconds}")
+    private long providerLicenceAlertLockTtlSeconds;
+
     @Value("${notification.service.base.url}")
     private String notificationServiceBaseUrl;
 
