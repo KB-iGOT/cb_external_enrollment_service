@@ -29,6 +29,13 @@ public interface CassandraOperation {
         Map<String, Object> compositeKey);
 
     /**
+     * Adds or replaces the given entries of a map column (column[key] = value for each), leaving
+     * its other entries as they are.
+     */
+    void putMapEntries(String keyspaceName, String tableName, String column, Map<?, ?> entries,
+        Map<String, Object> compositeKey);
+
+    /**
      * Retrieves records from Cassandra based on specified properties and key.
      *
      * @param keyspaceName The name of the keyspace containing the table.

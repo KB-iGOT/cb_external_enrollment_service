@@ -200,4 +200,5 @@ class EnrollmentControllerTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(mockResponse, response.getBody());
     }
+
 }

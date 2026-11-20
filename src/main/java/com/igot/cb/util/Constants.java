@@ -234,6 +234,43 @@ public class Constants {
     public static final String LTI_PARAM_DEPLOYMENT_ID = "lti_deployment_id";
     public static final String LTI_PARAM_MESSAGE_HINT = "lti_message_hint";
     public static final String PROVIDER_CUSTOM_CLAIM = "providerCustomClaim";
+    public static final String USER_ID_RQST = "userId";
+    public static final String PROVIDER_PREFERENCE = "providerPreference";
+    public static final String ELIGIBLE = "eligible";
+    public static final String ERR_PROVIDER_ACCESS_VALIDATE = "Failed to validate provider access settings";
+    public static final String ENROLLMENT_OPERATION = "ENROLLMENT";
+    public static final String USER_GROUP_ID = "userGroupId";
+    public static final String LICENCE_ALLOCATION = "licenceAllocation";
+    public static final String MATCHING_GROUP_LICENCES = "matchingGroupLicences";
+    public static final String SCOPE_TYPE_USER_GROUP_ENROLMENTS = "USER_GROUP_ENROLMENTS";
+    public static final String PROVIDER_ACCESS_SETTINGS_TABLE = "provider_access_settings";
+    public static final String NOTIFICATION_DATA = "notificationdata";
+    public static final String ALERT_THRESHOLDS = "alertthresholds";
+    public static final String ALERTS_ENABLED = "alertsEnabled";
+    public static final String RECIPIENTS = "recipients";
+    public static final String LICENCE_ALERT_LOCK_KEY_PREFIX = "licenceAlertLock_";
+    public static final String PARTNER_NAME = "partnerName";
+    public static final String THRESHOLD = "threshold";
+    public static final String CONSUMED = "consumed";
+    public static final String TABLE_EMAIL_TEMPLATE = "email_template";
+    public static final String TEMPLATE = "template";
+    public static final String EMAIL_TEMPLATE_LICENCE_THRESHOLD_CROSSED = "marketplaceLicenceThresholdCrossed";
+    public static final String EMAIL_TEMPLATE_LICENCE_EXHAUSTED = "marketplaceLicenceExhausted";
+    public static final String LICENCE_ALERT_THRESHOLD_SUBJECT = "[iGOT Karmayogi] %s: %s%% of licences used";
+    public static final String LICENCE_ALERT_EXHAUSTED_SUBJECT = "[iGOT Karmayogi] Action needed: licences exhausted for %s";
+    public static final String IDS = "ids";
+    public static final String BCC_IDS = "bccIds";
+    public static final String ACTION = "action";
+    public static final String TYPE = "type";
+    public static final String PRIORITY = "priority";
+    public static final String CATEGORY = "category";
+    public static final String CREATED_BY = "createdBy";
+    public static final String CONFIG = "config";
+    public static final String SUBJECT = "subject";
+    public static final String SENDER = "sender";
+    public static final String PARAMS = "params";
+    public static final String NOTIFICATIONS = "notifications";
+    public static final String SYSTEM = "system";
 
     private Constants() {
     }

@@ -1,10 +1,13 @@
 package com.igot.cb.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,7 +44,11 @@ import org.springframework.test.context.TestPropertySource;
         "service.registry.api.base.url=http://registry.base",
         "service.registry.api.fixed.url=http://registry.fixed",
         "coursera.service.code=SRV001",
-        "coursera.org.id=ORG001"
+        "coursera.org.id=ORG001",
+        "cb.ext.course.service.base.url=http://cb-ext-course-service:7005",
+        "provider.licence.alert.thresholds=50, 75,90,100",
+        "spring.kafka.provider.licence.alert.topic.name=provider.licence.alert",
+        "notification.service.base.url=http://notification-service:9000"
 })
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CbServerPropertiesTest {
@@ -72,6 +79,7 @@ class CbServerPropertiesTest {
         assertEquals(500, properties.getMaximumAllowedLimit());
         assertEquals(1, properties.getRedisIndex());
         assertEquals(0, properties.getDefaultIndex());
+
         assertEquals("http://content.read.url", properties.getCiosContentReadApiUrl());
         assertEquals("http://lms.summary.base", properties.getLmsEnrolmentSummaryBaseUrl());
         assertEquals("http://lms.summary.fixed", properties.getLmsEnrolmentSummaryFixedUrl());
@@ -185,5 +193,23 @@ class CbServerPropertiesTest {
 
         properties.setCourseraOrgId("O1");
         assertEquals("O1", properties.getCourseraOrgId());
+    }
+
+    @Test
+    void testProviderValidationAndPaidCourseEnrolmentProperties() {
+        assertEquals("user.paid.course.enrolment", properties.getPaidCourseEnrolmentTopic());
+        assertEquals("http://cb-ext-course-service:7005", properties.getExtCourseServiceBaseUrl());
+        assertEquals("/accessSettings/provider/v1/validate", properties.getProviderAccessValidateApiUrl());
+        assertEquals("Licences for this course are exhausted.", properties.getProviderGroupLicenceExhaustedMsg());
+    }
+
+    @Test
+    void testProviderLicenceAlertProperties() {
+        assertEquals("This course isn't available to you", properties.getProviderAccessDeniedMsg());
+        assertEquals(List.of("50", " 75", "90", "100"), properties.getProviderLicenceAlertThresholdsList());
+        assertEquals("provider.licence.alert", properties.getProviderLicenceAlertTopic());
+        assertEquals("http://notification-service:9000", properties.getNotificationServiceBaseUrl());
+        assertEquals("/v2/notification/send", properties.getNotificationServiceSendApiUrl());
+        assertNotNull(properties.getProviderLicenceAlertSender());
     }
 }
