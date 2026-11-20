@@ -88,9 +88,9 @@ class ProviderLicenceAlertServiceTest {
         Map<String, Object> row = new HashMap<>();
         row.put(Constants.NOTIFICATION_DATA, json);
         row.put(Constants.ALERT_THRESHOLDS, alertThresholds);
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.PROVIDER_ACCESS_SETTINGS_TABLE), eq(Map.of(Constants.PARTNER_ID_REQ, "p1")),
-                eq(List.of(Constants.NOTIFICATION_DATA, Constants.ALERT_THRESHOLDS)), eq(1))).thenReturn(List.of(row));
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.PROVIDER_ACCESS_SETTINGS_TABLE, Map.of(Constants.PARTNER_ID_REQ, "p1"),
+                List.of(Constants.NOTIFICATION_DATA, Constants.ALERT_THRESHOLDS), 1)).thenReturn(List.of(row));
     }
 
     private static final String ALERTS_ON =
@@ -101,9 +101,9 @@ class ProviderLicenceAlertServiceTest {
     }
 
     private void verifySaved(Map<Integer, Boolean> sentFlags) {
-        verify(cassandraOperation).putMapEntries(eq(Constants.KEYSPACE_SUNBIRD_COURSES),
-                eq(Constants.PROVIDER_ACCESS_SETTINGS_TABLE), eq(Constants.ALERT_THRESHOLDS), eq(sentFlags),
-                eq(Map.of(Constants.PARTNER_ID_REQ, "p1")));
+        verify(cassandraOperation).putMapEntries(Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.PROVIDER_ACCESS_SETTINGS_TABLE, Constants.ALERT_THRESHOLDS, sentFlags,
+                Map.of(Constants.PARTNER_ID_REQ, "p1"));
     }
 
     private void verifyNothingSaved() {
@@ -277,8 +277,8 @@ class ProviderLicenceAlertServiceTest {
     }
 
     private void stubTemplate(String name, String template) {
-        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(eq(Constants.KEYSPACE_SUNBIRD),
-                eq(Constants.TABLE_EMAIL_TEMPLATE), eq(Map.of(Constants.NAME, name)), eq(List.of(Constants.TEMPLATE)), eq(1)))
+        when(cassandraOperation.getRecordsByPropertiesWithoutFiltering(Constants.KEYSPACE_SUNBIRD,
+                Constants.TABLE_EMAIL_TEMPLATE, Map.of(Constants.NAME, name), List.of(Constants.TEMPLATE), 1))
                 .thenReturn(List.of(Map.of(Constants.TEMPLATE, template)));
     }
 

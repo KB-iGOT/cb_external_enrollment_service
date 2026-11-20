@@ -3246,7 +3246,7 @@ class EnrollmentServiceImplTest {
 
     @Test
     @DisplayName("enrollUser: paid course with zero karma coins publishes the enrolment event straight to the paid-course topic, keyed by partnerId")
-    void enrollUser_PaidCourseZeroKarma_PublishesPaidCourseEnrolmentEvent() throws Exception {
+    void enrollUser_PaidCourseZeroKarma_PublishesPaidCourseEnrolmentEvent() {
         ObjectMapper realMapper = new ObjectMapper();
         when(transformUtility.validateAndGetUserId(eq("jwt.token"), any(SBApiResponse.class))).thenReturn("user123");
         ObjectNode contentResponse = realMapper.createObjectNode();
@@ -3281,7 +3281,7 @@ class EnrollmentServiceImplTest {
 
     @Test
     @DisplayName("enrollUser: karma-paid course redemption event carries the partnerId")
-    void enrollUser_PaidCourseWithKarma_RedemptionEventCarriesPartnerId() throws Exception {
+    void enrollUser_PaidCourseWithKarma_RedemptionEventCarriesPartnerId() {
         ObjectMapper realMapper = new ObjectMapper();
         when(transformUtility.validateAndGetUserId(eq("jwt.token"), any(SBApiResponse.class))).thenReturn("user123");
         ObjectNode contentResponse = realMapper.createObjectNode();
@@ -3306,7 +3306,7 @@ class EnrollmentServiceImplTest {
 
     @Test
     @DisplayName("enrollUser: provider preference Yes and learner not in any provider group is rejected without reading course access settings")
-    void enrollUser_ProviderPreferenceEnabled_NotEligible_ReturnsBadRequest() throws Exception {
+    void enrollUser_ProviderPreferenceEnabled_NotEligible_ReturnsBadRequest() {
         ObjectMapper realMapper = new ObjectMapper();
         when(transformUtility.validateAndGetUserId(eq("jwt.token"), any(SBApiResponse.class))).thenReturn("user123");
         ObjectNode contentResponse = realMapper.createObjectNode();
