@@ -59,6 +59,8 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
     private final PayloadValidation payloadValidation;
 
+    private final ProviderLicenceAlertService licenceAlertService;
+
     private final Map<String, Integer> statusMap = CiosEnrolmentStatus.toMap();
 
     @Override
@@ -547,7 +549,11 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         return false;
     }
 
-    public boolean enrollUserInCourse(String userId, String courseId, String partnerId, JsonNode providerResponse, JsonNode contentResponse) throws JsonProcessingException {
+    /**
+     * userGroupId: the provider user group charged with this enrolment's licence (provider
+     * preference Yes, see checkEnrolmentAccess), or null when no group is charged.
+     */
+    public boolean enrollUserInCourse(String userId, String courseId, String partnerId, JsonNode providerResponse, JsonNode contentResponse, String userGroupId) throws JsonProcessingException {
         log.info("Enrolling user {} to course {} for partner {}", userId, courseId, partnerId);
         ZoneId zoneId = ZoneId.of(Constants.UTC);
         Instant instant = LocalDateTime.now().atZone(zoneId).toInstant();
@@ -566,75 +572,73 @@ public class EnrollmentServiceImpl implements EnrollmentService {
         userCourseEnrollMap.put(Constants.ADDITIONAL_PROPERTIES, objectMapper.writeValueAsString(new HashMap<>()));
 
         // Authoritative insert, gated by IF NOT EXISTS - this is what makes the enrolment
-        // exactly-once. A retried/duplicate request comes back not-applied and nothing below
-        // (lookup table, counters) is touched for it.
-        ApiResponse insertResult = cassandraOperation.insertRecord(
+        // exactly-once. A retried/duplicate request (Kafka retry, redelivery after a rebalance)
+        // comes back not-applied and the counters below are not incremented for it again.
+        Map<String, Object> insertResult = cassandraOperation.insertRecordIfNotExists(
                 Constants.KEYSPACE_SUNBIRD_COURSES,
                 Constants.TABLE_USER_EXTERNAL_ENROLMENTS,
                 userCourseEnrollMap
         );
 
-        if (!Constants.SUCCESS.equals(insertResult.get(Constants.RESPONSE))) {
-            log.error("Failed to insert enrolment for user {} to course {}", userId, courseId);
-            return false;
+        if (!Boolean.TRUE.equals(insertResult.get(Constants.APPLIED))) {
+            if (insertResult.containsKey(Constants.ERROR_MESSAGE)) {
+                log.error("Failed to insert enrolment for user {} to course {}", userId, courseId);
+                return false;
+            }
+            log.info("User {} is already enrolled to course {}; counters not incremented again", userId, courseId);
+            return true;
         }
 
-        String licenseType = getLicenseType(providerResponse);
         String courseType = getCourseType(contentResponse);
-        updateEnrolmentCountersImmediately(partnerId, userId, courseId, courseType, licenseType);
-        publishCounterUpdateEvent(partnerId, userId, courseId, courseType, licenseType);
+        updateEnrolmentCountersImmediately(partnerId, userId, courseId, courseType, providerResponse, userGroupId);
         cacheService.deleteCache(Constants.USER_ENROLMENTS_PREFIX + userId, cbServerProperties.getRedisIndex());
 
         log.info("User {} successfully enrolled to course {}", userId, courseId);
         return true;
     }
 
-    private void publishCounterUpdateEvent(String partnerId, String userId, String courseId, String courseType, String licenseType) {
-        Map<String, Object> counterEvent = new HashMap<>();
-        counterEvent.put(Constants.PARTNER_ID_REQ, partnerId);
-        counterEvent.put(Constants.USER_ID, userId);
-        counterEvent.put(Constants.COURSE_ID, courseId);
-        counterEvent.put(Constants.COURSE_TYPE_COL, courseType);
-        counterEvent.put(Constants.LICENSE_TYPE, licenseType);
-        counterEvent.put(Constants.REQ_ID, UUID.randomUUID().toString());
-        // Keyed by partnerId+userId - Kafka's own partitioner then guarantees every counter
-        // update event for this pair always lands on the same partition and is consumed
-        // strictly in order, one at a time, regardless of how many concurrent HTTP requests
-        // produced them. That ordering is what lets the consumer safely decide "is this a new
-        // user" for itself instead of trusting a value read earlier in a racy request thread.
-        producer.push(cbServerProperties.getEnrolmentCounterUpdateTopic(), counterEvent, partnerId + "_" + userId);
-    }
-
-    private void updateEnrolmentCountersImmediately(String partnerId, String userId, String courseId, String courseType, String licenseType) {
+    /**
+     * All counters of one enrolment, in one QUORUM counter batch, after the enrolment insert.
+     * The learner's paid USER_ENROLMENTS row is incremented here too (not later), and every paid
+     * enrolment reaches this point through the paid-course consumer keyed by partnerId, so the
+     * "new user" read below always sees the provider's previous enrolments.
+     */
+    private void updateEnrolmentCountersImmediately(String partnerId, String userId, String courseId, String courseType, JsonNode providerResponse, String userGroupId) {
+        String licenseType = getLicenseType(providerResponse);
         List<CounterIncrement> increments = new ArrayList<>();
         boolean countTowardTotal;
-        boolean incrementCourseAndUser;
+        boolean incrementCourse;
         boolean updatePartnerLicense;
 
-        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType)) {
-            // Per-user licensing: courseType (free/paid) is irrelevant here - a partner license
-            // is consumed exactly once, the first time a given user enrols in anything from
-            // this partner, regardless of what that first course happens to be. That's the same
-            // condition that gates the total-enrolments counter, so reuse it directly.
-            countTowardTotal = getCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType) == 0;
-            incrementCourseAndUser = true;
-            updatePartnerLicense = countTowardTotal;
-        } else if (Constants.COURSE_TYPE_FREE.equalsIgnoreCase(courseType)) {
-            // Per-course licensing, free course: internal counters still track it, but a free
+        if (Constants.COURSE_TYPE_FREE.equalsIgnoreCase(courseType)) {
+            // Free course, either licence type: internal counters still track it, but a free
             // course never consumes a paid license.
             countTowardTotal = true;
-            incrementCourseAndUser = false;
+            incrementCourse = Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType);
             updatePartnerLicense = false;
+        } else if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(licenseType)) {
+            // Per-user licensing, paid course: a partner license is consumed exactly once, the
+            // first time a given user enrols in a paid course from this partner.
+            countTowardTotal = isNewUserForPartner(partnerId, userId);
+            incrementCourse = true;
+            updatePartnerLicense = countTowardTotal;
         } else {
             // Per-course licensing, paid course: consumes a license every time.
             countTowardTotal = true;
-            incrementCourseAndUser = true;
+            incrementCourse = true;
             updatePartnerLicense = true;
         }
 
-        if (incrementCourseAndUser) {
+        if (incrementCourse) {
             increments.add(new CounterIncrement(
                     counterKey(partnerId, Constants.SCOPE_TYPE_COURSE_ENROLMENTS, courseId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)));
+        }
+
+        boolean incrementUser = Constants.COURSE_TYPE_PAID.equalsIgnoreCase(courseType);
+        if (incrementUser) {
+            increments.add(new CounterIncrement(
+                    counterKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
                     Map.of(Constants.COUNTER_VALUE, 1L)));
         }
 
@@ -644,14 +648,27 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     Map.of(Constants.COUNTER_VALUE, 1L)));
         }
 
+        if (updatePartnerLicense && StringUtils.isNotBlank(userGroupId)) {
+            // The licence is also charged to the learner's provider user group.
+            increments.add(new CounterIncrement(
+                    counterKey(partnerId, Constants.SCOPE_TYPE_USER_GROUP_ENROLMENTS, userGroupId, courseType),
+                    Map.of(Constants.COUNTER_VALUE, 1L)));
+        }
+
         cassandraOperation.incrementCounters(
                 Constants.KEYSPACE_SUNBIRD_COURSES,
                 Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
                 increments);
 
+        if (incrementUser) {
+            cacheService.deleteCache(counterCacheKey(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, courseType),
+                    cbServerProperties.getRedisIndex());
+        }
+
         if (updatePartnerLicense) {
             long licenseConsumedCount = getCounterValue(partnerId, Constants.SCOPE_TYPE_TOTAL_ENROLMENTS, partnerId, courseType);
             transformUtility.updateContentPartnerLicenseConsumedCount(partnerId, licenseConsumedCount);
+            licenceAlertService.checkThresholds(partnerId, providerResponse, licenseConsumedCount);
         }
     }
 
@@ -812,13 +829,12 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     /**
-     * True when this user has never enrolled in any course with this partner before, i.e. the
-     * USER_ENROLMENTS counter for (partnerId, userId, paid) is absent or 0. Must always be a
-     * fresh read at the point of use - never reused from an earlier validation call - since it
-     * can go stale between a TOC-page check and the actual enrol click.
+     * True when this user has never enrolled in a paid course with this partner before, i.e. the
+     * USER_ENROLMENTS counter for (partnerId, userId, paid) is absent or 0. Always read from
+     * Cassandra, not the counter cache, since it decides whether a licence is consumed.
      */
     private boolean isNewUserForPartner(String partnerId, String userId) {
-        return getCounterValue(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, Constants.COURSE_TYPE_PAID) == 0;
+        return readCounterFromCassandra(partnerId, Constants.SCOPE_TYPE_USER_ENROLMENTS, userId, Constants.COURSE_TYPE_PAID) == 0;
     }
 
     /**
@@ -848,11 +864,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     private long readCounterFromCassandra(String partnerId, String scopeType, String scopeId, String courseType) {
-        Map<String, Object> keyMap = new HashMap<>();
-        keyMap.put(Constants.PARTNER_ID_REQ, partnerId);
-        keyMap.put(Constants.SCOPE_TYPE, scopeType);
-        keyMap.put(Constants.SCOPE_ID, scopeId);
-        keyMap.put(Constants.COURSE_TYPE_COL, courseType);
+        Map<String, Object> keyMap = counterKey(partnerId, scopeType, scopeId, courseType);
         List<Map<String, Object>> rows = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                 Constants.KEYSPACE_SUNBIRD_COURSES,
                 Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
@@ -874,11 +886,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             return Long.parseLong(cached);
         }
 
-        Map<String, Object> keyMap = new HashMap<>();
-        keyMap.put(Constants.PARTNER_ID_REQ, partnerId);
-        keyMap.put(Constants.SCOPE_TYPE, scopeType);
-        keyMap.put(Constants.SCOPE_ID, scopeId);
-        keyMap.put(Constants.COURSE_TYPE_COL, courseType);
+        Map<String, Object> keyMap = counterKey(partnerId, scopeType, scopeId, courseType);
         List<Map<String, Object>> rows = cassandraOperation.getRecordsByPropertiesWithoutFiltering(
                 Constants.KEYSPACE_SUNBIRD_COURSES,
                 Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
@@ -1042,10 +1050,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if (!karmaValidationResult.isAllowed()) {
                 return response;
             }
-            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean()) {
-                if (!handleAccessControlledEnrollment(courseId, userAttributes)) {
-                    return transformUtility.buildFailedResponse(response, cbServerProperties.getAccessSettingsErrorMessage(), HttpStatus.BAD_REQUEST);
-                }
+            EnrolmentAccess access = checkEnrolmentAccess(userId, partnerId, courseId, contentResponse, providerResponse.get(Constants.DATA), userAttributes);
+            if (!access.allowed()) {
+                return transformUtility.buildFailedResponse(response, access.errorMessage(), HttpStatus.BAD_REQUEST);
             }
             return transformUtility.buildSuccessResponse(response, "Enrollment validation successful", HttpStatus.OK);
         } catch (Exception e) {
@@ -1140,10 +1147,11 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                 return response;
             }
 
-            if (!isAccessControlAllowed(contentResponse, courseId, userAttributes)) {
+            EnrolmentAccess access = checkEnrolmentAccess(userId, partnerId, courseId, contentResponse, providerResponse.get(Constants.DATA), userAttributes);
+            if (!access.allowed()) {
                 return transformUtility.buildFailedResponse(
                         response,
-                        cbServerProperties.getAccessSettingsErrorMessage(),
+                        access.errorMessage(),
                         HttpStatus.BAD_REQUEST
                 );
             }
@@ -1153,11 +1161,20 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             String providerName = providerResponse.path(Constants.DATA).path(Constants.CONTENT_PARTNER_NAME).asText("");
             String message = "";
             if (redeemedPoints > 0) {
-                triggerCoinsRedemption(userId, courseId, redeemedPoints, courseName, providerName);
+                triggerCoinsRedemption(userId, courseId, partnerId, redeemedPoints, courseName, providerName);
                 markEnrolmentPending(userId, courseId, Constants.PENDING_ENROLMENT_STATUS, courseName, redeemedPoints);
                 log.info("Karma points deduction event triggered for userId: {}, courseId: {}, points: {}",
                         userId, courseId, redeemedPoints);
                 message = String.format(Constants.ENROLLMENT_PROGRESS);
+                response.setResponseCode(HttpStatus.ACCEPTED);
+            } else if (!isCourseFree(contentResponse)) {
+                // Paid course with no karma coins to deduct: no coin debit, so the karma flink job
+                // is skipped and the enrolment event is published straight to the paid-course topic,
+                // to be enrolled and tracked by the same consumer as karma-paid enrolments.
+                publishPaidCourseEnrolmentEvent(userId, courseId, partnerId, courseName, providerName);
+                markEnrolmentPending(userId, courseId, Constants.PENDING_ENROLMENT_STATUS, courseName, 0);
+                log.info("Zero-karma paid course enrolment event published for userId: {}, courseId: {}", userId, courseId);
+                message = Constants.ENROLLMENT_PROGRESS;
                 response.setResponseCode(HttpStatus.ACCEPTED);
             } else {
                 // Special handling for Coursera partner to invite user
@@ -1170,7 +1187,7 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                         return transformUtility.buildFailedResponse(response, "User invitation failed on Coursera", HttpStatus.BAD_REQUEST);
                     }
                 }
-                boolean enrolled = enrollUserInCourse(userId, courseId, partnerId, providerResponse.get(Constants.DATA), contentResponse);
+                boolean enrolled = enrollUserInCourse(userId, courseId, partnerId, providerResponse.get(Constants.DATA), contentResponse, access.userGroupId());
                 if (!enrolled) {
                     return transformUtility.buildFailedResponse(response, "Failed to enroll user in course", HttpStatus.BAD_REQUEST);
                 }
@@ -1332,7 +1349,9 @@ public class EnrollmentServiceImpl implements EnrollmentService {
             if (!karmaValidationResult.isAllowed()) {
                 return false;
             }
-            if (contentResponse.has(Constants.ACCESS_SETTINGS_ENABLED) && contentResponse.get(Constants.ACCESS_SETTINGS_ENABLED).asBoolean() && !handleAccessControlledEnrollment(courseId, userAttributes)) {
+            EnrolmentAccess access = checkEnrolmentAccess(userId, partnerId, courseId, contentResponse, providerResponse.get(Constants.DATA), userAttributes);
+            if (!access.allowed()) {
+                transformUtility.buildFailedResponse(response, access.errorMessage(), HttpStatus.BAD_REQUEST);
                 return false;
             }
 
@@ -1346,6 +1365,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
                     return false;
                 }
             }
+            // Read by the paid-course consumer and passed to enrollUserInCourse, which charges the group.
+            if (access.userGroupId() != null) {
+                response.getResult().put(Constants.USER_GROUP_ID, access.userGroupId());
+            }
             return true;
         } catch (JsonProcessingException e) {
            log.error("Error processing JSON while validating paid course enrollment: {}", e.getMessage(), e);
@@ -1358,8 +1381,10 @@ public class EnrollmentServiceImpl implements EnrollmentService {
      * unified karma points ledger. Points deduction and enrolment confirmation happen
      * asynchronously once this event is processed downstream.
      */
-    private void triggerCoinsRedemption(String userId, String courseId, int pointsToConvert, String courseName, String providerName) {
+    private void triggerCoinsRedemption(String userId, String courseId, String partnerId, int pointsToConvert, String courseName, String providerName) {
         Map<String, Object> eventData = new HashMap<>();
+        // Carried through by the karma flink job onto user.paid.course.enrolment, keyed by partnerId.
+        eventData.put(Constants.PARTNER_ID, partnerId);
         eventData.put(Constants.EID, Constants.KARMA_COIN_DEBIT);
         eventData.put(Constants.ETS, System.currentTimeMillis());
         eventData.put(Constants.EVENT_USER_ID, userId);
@@ -1382,10 +1407,43 @@ public class EnrollmentServiceImpl implements EnrollmentService {
     }
 
     /**
+     * Publishes an EXT_COURSE_ENROLLMENT event to user.paid.course.enrolment for a paid course
+     * with no karma coins to deduct. Same payload shape as the karma flink job's event (with
+     * coinsRedeemed 0 and no transaction), keyed by partnerId like that event.
+     */
+    private void publishPaidCourseEnrolmentEvent(String userId, String courseId, String partnerId, String courseName, String providerName) {
+        Map<String, Object> eventData = new HashMap<>();
+        eventData.put(Constants.REQ_ID, UUID.randomUUID().toString());
+        eventData.put(Constants.EID, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);
+        eventData.put(Constants.ETS, System.currentTimeMillis());
+        eventData.put(Constants.EVENT_USER_ID, userId);
+        eventData.put(Constants.PARTNER_ID, partnerId);
+        eventData.put(Constants.OPERATION, Constants.ENROLLMENT_OPERATION);
+        eventData.put(Constants.ACTION_TYPE, Constants.ENROLLMENT_OPERATION);
+        eventData.put(Constants.EVENT_COINS_REDEEMED, 0);
+        eventData.put(Constants.CONTEXT_TYPE, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);
+        eventData.put(Constants.CONTEXT_ID, courseId);
+        eventData.put(Constants.COURSE_NAME, courseName);
+        eventData.put(Constants.PROVIDER_NAME, providerName);
+
+        Map<String, Object> event = new HashMap<>();
+        event.put(Constants.EVENT_TYPE, Constants.EXT_COURSE_ENROLLMENT_CONTEXT);
+        event.put(Constants.DATA, eventData);
+
+        producer.push(cbServerProperties.getPaidCourseEnrolmentTopic(), event, partnerId);
+    }
+
+    /**
      * Reverses a previously debited karma-coin amount for a paid course enrolment that
-     * could not be completed, so the user's balance is restored.
+     * could not be completed, so the user's balance is restored. No-op when no coins were
+     * debited (zero-karma paid course enrolments).
      */
     public void triggerCoinsReaward(Map<String, Object> reawardData, String courseName, String providerName, String message) {
+        Object redeemedRaw = reawardData.get(Constants.EVENT_COINS_REDEEMED);
+        if (redeemedRaw instanceof Number redeemed && redeemed.intValue() <= 0) {
+            log.info("No karma coins were debited for reqId {}, skipping reaward", reawardData.get(Constants.REQ_ID));
+            return;
+        }
         Object originalReqIdRaw = reawardData.get(Constants.REQ_ID);
         String originalReqId = originalReqIdRaw != null ? originalReqIdRaw.toString() : null;
         String claimKey = StringUtils.isNotBlank(originalReqId) ? Constants.KARMA_COIN_REAWARD_CLAIM_PREFIX + originalReqId : null;
@@ -1571,5 +1629,91 @@ public class EnrollmentServiceImpl implements EnrollmentService {
 
         return new KarmaValidationResult(true, 0);
     }
-}
 
+    /**
+     * userGroupId is the provider user group to charge, or null when none is charged.
+     */
+    private record EnrolmentAccess(boolean allowed, String errorMessage, String userGroupId) {
+    }
+
+    /**
+     * Provider preference Yes: only the provider's user groups decide (cb-ext-course-service owns
+     * provider_access_settings); the course's own access settings are not checked. A User-licence
+     * learner who already holds the provider's licence is not checked again. When this enrolment
+     * consumes a licence, the learner is charged to the first matching group (priority order)
+     * with licences left, and refused when every matching group is exhausted.
+     * Provider preference No / not set: the course access settings, as before.
+     */
+    private EnrolmentAccess checkEnrolmentAccess(
+            String userId,
+            String partnerId,
+            String courseId,
+            JsonNode contentResponse,
+            JsonNode providerData,
+            Map<String, String> userAttributes) throws JsonProcessingException {
+        if (providerData == null || !providerData.path(Constants.PROVIDER_PREFERENCE).asBoolean(false)) {
+            return isAccessControlAllowed(contentResponse, courseId, userAttributes)
+                    ? new EnrolmentAccess(true, null, null)
+                    : new EnrolmentAccess(false, cbServerProperties.getAccessSettingsErrorMessage(), null);
+        }
+        if (Constants.LICENSE_TYPE_USER.equalsIgnoreCase(getLicenseType(providerData))
+                && !isNewUserForPartner(partnerId, userId)) {
+            return new EnrolmentAccess(true, null, null);
+        }
+        JsonNode validateResult = transformUtility.callProviderAccessValidateApi(partnerId, userId, courseId);
+        if (!validateResult.path(Constants.ELIGIBLE).asBoolean(false)) {
+            return new EnrolmentAccess(false, cbServerProperties.getProviderAccessDeniedMsg(), null);
+        }
+        // A free course never consumes a licence; for a paid course, a course licence always
+        // does and a user licence only for a new learner (already-licensed returned above).
+        if (isCourseFree(contentResponse)) {
+            return new EnrolmentAccess(true, null, null);
+        }
+        String userGroupId = findGroupWithLicence(partnerId, validateResult.path(Constants.MATCHING_GROUP_LICENCES));
+        return userGroupId != null
+                ? new EnrolmentAccess(true, null, userGroupId)
+                : new EnrolmentAccess(false, cbServerProperties.getProviderGroupLicenceExhaustedMsg(), null);
+    }
+
+    /**
+     * The first matching group (in the given priority order) whose licenceAllocation is above
+     * its consumed count, or null when all are exhausted. Consumed counts are the paid
+     * USER_GROUP_ENROLMENTS rows of the matching groups, read in one QUORUM read.
+     */
+    private String findGroupWithLicence(String partnerId, JsonNode matchingGroupLicences) {
+        List<String> userGroupIds = new ArrayList<>();
+        for (JsonNode group : matchingGroupLicences) {
+            String userGroupId = group.path(Constants.USER_GROUP_ID).asText("");
+            if (StringUtils.isNotBlank(userGroupId)) {
+                userGroupIds.add(userGroupId);
+            }
+        }
+        if (userGroupIds.isEmpty()) {
+            return null;
+        }
+        Map<String, Long> consumedByGroup = new HashMap<>();
+        Map<String, Object> keyMap = new HashMap<>();
+        keyMap.put(Constants.PARTNER_ID_REQ, partnerId);
+        keyMap.put(Constants.SCOPE_TYPE, Constants.SCOPE_TYPE_USER_GROUP_ENROLMENTS);
+        keyMap.put(Constants.SCOPE_ID, userGroupIds);
+        keyMap.put(Constants.COURSE_TYPE_COL, Constants.COURSE_TYPE_PAID);
+        for (Map<String, Object> row : cassandraOperation.getRecordsByPropertiesWithoutFiltering(
+                Constants.KEYSPACE_SUNBIRD_COURSES,
+                Constants.TABLE_USER_EXTERNAL_ENROLMENTS_COUNTER,
+                keyMap,
+                List.of(Constants.SCOPE_ID, Constants.COUNTER_VALUE),
+                null)) {
+            if (row.get(Constants.COUNTER_VALUE) instanceof Number consumed) {
+                consumedByGroup.put((String) row.get(Constants.SCOPE_ID), consumed.longValue());
+            }
+        }
+        for (JsonNode group : matchingGroupLicences) {
+            String userGroupId = group.path(Constants.USER_GROUP_ID).asText("");
+            if (StringUtils.isNotBlank(userGroupId)
+                    && group.path(Constants.LICENCE_ALLOCATION).asLong(0) > consumedByGroup.getOrDefault(userGroupId, 0L)) {
+                return userGroupId;
+            }
+        }
+        return null;
+    }
+}

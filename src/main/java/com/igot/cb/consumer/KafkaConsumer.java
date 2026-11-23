@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
+import com.igot.cb.enrollment.service.impl.ProviderLicenceAlertService;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.util.CbServerProperties;
 import com.igot.cb.util.TransformUtility;
@@ -51,9 +52,13 @@ public class KafkaConsumer {
     private final ResourceLoader resourceLoader;
     private final CacheService cacheService;
     private final EnrollmentServiceImpl enrollmentService;
+    private final ProviderLicenceAlertService providerLicenceAlertService;
 
 
 
+    // No longer published: the learner's USER_ENROLMENTS row is now incremented in the enrolment's
+    // own counter batch (EnrollmentServiceImpl#updateEnrolmentCountersImmediately). Kept for this
+    // release only, to drain events published before it.
     @KafkaListener(topics = "${spring.kafka.enrolment.counter.update.topic.name}", groupId = "${spring.kafka.enrolment.counter.update.consumer.group.id}")
     public void enrolmentCounterUpdateConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
         log.info("KafkaConsumer::enrolmentCounterUpdateConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
@@ -422,6 +427,18 @@ public class KafkaConsumer {
         return outputFormatter.format(zonedDateTime);
     }
 
+    @KafkaListener(topics = "${spring.kafka.provider.licence.alert.topic.name}", groupId = "${spring.kafka.provider.licence.alert.consumer.group.id}")
+    public void providerLicenceAlertConsumer(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) {
+        log.info("KafkaConsumer::providerLicenceAlertConsumer:topic name: {} and recievedData: {}", data.topic(), data.value());
+        try {
+            Map<String, Object> event = mapper.readValue(data.value(), new TypeReference<Map<String, Object>>() {});
+            providerLicenceAlertService.sendAlert(event);
+        } catch (Exception e) {
+            log.error("Failed to process provider licence alert event. Message received: " + data.value(), e);
+        }
+        acknowledgment.acknowledge();
+    }
+
     @KafkaListener(topics = "${spring.kafka.user.paid.course.enrolment.topic.name}", groupId = "${spring.kafka.user.paid.course.enrolment.consumer.group.id}", containerFactory = "paidCourseKafkaListenerContainerFactory")
     public void validateAndEnrolPaidCourses(ConsumerRecord<String, String> data, Acknowledgment acknowledgment) throws JsonProcessingException {
         try {
@@ -452,7 +469,8 @@ public class KafkaConsumer {
             String partnerId = contentResponse.path(Constants.CONTENT_PARTNER).path(Constants.ID).asText("");
             JsonNode providerResponse = transformUtility.callContentPartnerReadApi(partnerId);
             if (enrollmentService.validatePaidCourseEnrollment(userId, partnerId, courseId, contentResponse, providerResponse, response)) {
-                if (!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse.path(Constants.DATA), contentResponse)) {
+                String userGroupId = (String) response.getResult().get(Constants.USER_GROUP_ID);
+                if (!enrollmentService.enrollUserInCourse(userId, courseId, partnerId, providerResponse.path(Constants.DATA), contentResponse, userGroupId)) {
                     enrollmentService.markEnrolmentPending(userId, courseId, Constants.FAILED, courseName, karmaCoins);
                     enrollmentService.triggerCoinsReaward(eventData, courseName, providerName, "Enrollment failed");
                 } else {

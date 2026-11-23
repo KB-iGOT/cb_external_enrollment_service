@@ -143,6 +143,21 @@ public class CassandraOperationImpl implements CassandraOperation {
     }
 
     @Override
+    public void putMapEntries(String keyspaceName, String tableName, String column, Map<?, ?> entries,
+                              Map<String, Object> compositeKey) {
+        CqlSession session = connectionManager.getSession(keyspaceName);
+        Update update = QueryBuilder.update(keyspaceName, tableName)
+                .set(entries.entrySet().stream()
+                        .map(entry -> Assignment.setMapValue(column, QueryBuilder.literal(entry.getKey()),
+                                QueryBuilder.literal(entry.getValue())))
+                        .toArray(Assignment[]::new))
+                .where(compositeKey.entrySet().stream()
+                        .map(entry -> Relation.column(entry.getKey()).isEqualTo(QueryBuilder.literal(entry.getValue())))
+                        .toArray(Relation[]::new));
+        session.execute(update.build());
+    }
+
+    @Override
     public Map<String, Object> insertRecordIfNotExists(String keyspaceName, String tableName, Map<String, Object> request) {
         Map<String, Object> response = new HashMap<>();
         CqlSession session = null;

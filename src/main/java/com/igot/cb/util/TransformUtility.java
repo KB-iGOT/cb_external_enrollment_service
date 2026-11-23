@@ -193,6 +193,7 @@ public class TransformUtility {
             log.error(Constants.FAILED_TO_RETRIEVE_EXTERNAL_ID_STATUS_CODE, response.getStatusCode());
             throw new CustomException(Constants.ERROR, "Failed to retrieve externalId", HttpStatus.BAD_REQUEST);
         }
+
     }
 
     /**
@@ -544,6 +545,37 @@ public class TransformUtility {
         log.info("KafkaConsumer :: callContentPartnerReadByPartnerIdApi");
         String url = cbServerProperties.getBaseUrl() + cbServerProperties.getContentPartnerReadbyPartnerIdApiUrl() + partnerId;
         return fetchContentPartnerResult(url);
+    }
+    /**
+     * Provider-level access check, owned by cb-ext-course-service (provider_access_settings).
+     * Returns the API's result node: {eligible, licenceState, userGroupId, matchingGroups}.
+     */
+    public JsonNode callProviderAccessValidateApi(String partnerId, String userId, String courseId) {
+        try {
+            log.info("TransformUtility :: callProviderAccessValidateApi");
+            String url = cbServerProperties.getExtCourseServiceBaseUrl() + cbServerProperties.getProviderAccessValidateApiUrl();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put(Constants.PARTNER_ID, partnerId);
+            requestBody.put(Constants.USER_ID_RQST, userId);
+            requestBody.put(Constants.COURSE_ID_RQST, courseId);
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    url,
+                    HttpMethod.POST,
+                    new HttpEntity<>(requestBody, headers),
+                    JsonNode.class
+            );
+            JsonNode body = response.getBody();
+            if (response.getStatusCode().is2xxSuccessful() && body != null && body.has(Constants.RESULT)) {
+                return body.path(Constants.RESULT);
+            }
+            log.error("Provider access validate API returned status {} without a result", response.getStatusCode());
+        } catch (Exception e) {
+            log.error("Error while calling provider access validate API for partnerId: {}", partnerId, e);
+        }
+        throw new CustomException(Constants.ERROR, Constants.ERR_PROVIDER_ACCESS_VALIDATE, HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
 }
