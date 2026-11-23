@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -259,6 +260,19 @@ class CassandraOperationImplTest {
 
         // Assert
         assertEquals("success", response.get(Constants.RESPONSE));
+    }
+
+    @Test
+    void putMapEntries_AddsTheEntriesToTheMapColumn() {
+        when(connectionManager.getSession(anyString())).thenReturn(mockSession);
+        ArgumentCaptor<SimpleStatement> captor = ArgumentCaptor.forClass(SimpleStatement.class);
+        when(mockSession.execute(captor.capture())).thenReturn(mockResultSet);
+
+        cassandraOperation.putMapEntries(keyspaceName, tableName, "alertthresholds", new TreeMap<>(Map.of(50, false, 75, true)),
+                Map.of("partnerid", "p1"));
+
+        assertEquals("UPDATE testkeyspace.testtable SET alertthresholds[50]=false, alertthresholds[75]=true WHERE partnerid='p1'",
+                captor.getValue().getQuery());
     }
 
     @Test

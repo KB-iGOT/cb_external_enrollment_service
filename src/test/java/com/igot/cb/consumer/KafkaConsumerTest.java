@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
@@ -44,6 +45,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.igot.cb.enrollment.service.impl.EnrollmentServiceImpl;
+import com.igot.cb.enrollment.service.impl.ProviderLicenceAlertService;
 import com.igot.cb.producer.Producer;
 import com.igot.cb.transactional.cassandrautils.CassandraOperation;
 import com.igot.cb.transactional.cassandrautils.CounterIncrement;
@@ -88,6 +90,9 @@ class KafkaConsumerTest {
 
     @Mock
     private EnrollmentServiceImpl enrollmentService;
+
+    @Mock
+    private ProviderLicenceAlertService providerLicenceAlertService;
 
     static final long DEDUPE_TTL_SECONDS = 14400L;
 
@@ -1108,7 +1113,7 @@ class KafkaConsumerTest {
         when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
                 providerResponse, response)).thenReturn(true);
         when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
-                contentResponse)).thenReturn(true);
+                contentResponse, null)).thenReturn(true);
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
@@ -1117,6 +1122,31 @@ class KafkaConsumerTest {
         verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
         verify(cacheService).putCache(eq(paidCourseDedupeKey()), anyInt(), eq(Boolean.TRUE),
                 eq(DEDUPE_TTL_SECONDS));
+    }
+
+    @Test
+    void validateAndEnrolPaidCourses_passesChargedUserGroupToEnrolment() throws Exception {
+        ConsumerRecord<String, String> consumerRecord = buildPaidCourseRecord(basePaidCourseEvent());
+        ObjectNode providerResponse = paidCourseProviderResponse();
+        ObjectNode contentResponse = paidCourseContentResponse();
+        SBApiResponse response = new SBApiResponse();
+
+        when(transformUtility.createDefaultResponse("")).thenReturn(response);
+        when(transformUtility.callCiosContentReadAPi("course1")).thenReturn(contentResponse);
+        when(transformUtility.callContentPartnerReadApi("partner1")).thenReturn(providerResponse);
+        when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
+                providerResponse, response)).thenAnswer(invocation -> {
+                    response.getResult().put(Constants.USER_GROUP_ID, "g1");
+                    return true;
+                });
+        when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse, "g1")).thenReturn(true);
+
+        kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
+
+        verify(enrollmentService).enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
+                contentResponse, "g1");
+        verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.SUCCESS, "Course One", 50);
     }
 
     // ------------------------------------------------------------------
@@ -1138,7 +1168,7 @@ class KafkaConsumerTest {
         verify(transformUtility, never()).callCiosContentReadAPi(any());
         verify(transformUtility, never()).callContentPartnerReadApi(any());
         verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
-        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any(), any());
         verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
         // The reqId dedupe key is only claimed at the very end of the normal flow, which this
         // early return skips entirely - a redelivery of the same event would hit this same
@@ -1162,7 +1192,7 @@ class KafkaConsumerTest {
         when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
                 providerResponse, response)).thenReturn(true);
         when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
-                contentResponse)).thenReturn(false);
+                contentResponse, null)).thenReturn(false);
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
@@ -1197,7 +1227,7 @@ class KafkaConsumerTest {
         verify(enrollmentService).markEnrolmentPending("user1", "course1", Constants.FAILED, "Course One", 50);
         verify(enrollmentService).triggerCoinsReaward(expectedEventData, "Course One", "Provider One",
                 "Validation failed for course");
-        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -1215,7 +1245,7 @@ class KafkaConsumerTest {
                 () -> kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment));
 
         verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
-        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any(), any());
         verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any(), any(), anyInt());
         verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
         verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
@@ -1266,7 +1296,7 @@ class KafkaConsumerTest {
         when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
                 providerResponse, response)).thenReturn(true);
         when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
-                contentResponse)).thenReturn(false);
+                contentResponse, null)).thenReturn(false);
         org.mockito.Mockito.doThrow(new RuntimeException("kafka down"))
                 .when(enrollmentService).triggerCoinsReaward(any(), any(), any(), any());
 
@@ -1293,7 +1323,7 @@ class KafkaConsumerTest {
         verify(transformUtility, never()).callCiosContentReadAPi(any());
         verify(transformUtility, never()).callContentPartnerReadApi(any());
         verify(enrollmentService, never()).validatePaidCourseEnrollment(any(), any(), any(), any(), any(), any());
-        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any());
+        verify(enrollmentService, never()).enrollUserInCourse(any(), any(), any(), any(), any(), any());
         verify(enrollmentService, never()).markEnrolmentPending(any(), any(), any(), any(), anyInt());
         verify(enrollmentService, never()).triggerCoinsReaward(any(), any(), any(), any());
         verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
@@ -1315,12 +1345,12 @@ class KafkaConsumerTest {
         when(enrollmentService.validatePaidCourseEnrollment("user1", "partner1", "course1", contentResponse,
                 providerResponse, response)).thenReturn(true);
         when(enrollmentService.enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
-                contentResponse)).thenReturn(true);
+                contentResponse, null)).thenReturn(true);
 
         kafkaConsumer.validateAndEnrolPaidCourses(consumerRecord, acknowledgment);
 
         verify(enrollmentService).enrollUserInCourse("user1", "course1", "partner1", providerResponse.path(Constants.DATA),
-                contentResponse);
+                contentResponse, null);
         verify(cacheService, never()).getCache(anyString(), anyInt());
         verify(cacheService, never()).putCache(anyString(), anyInt(), any(), anyLong());
     }
@@ -1347,5 +1377,27 @@ class KafkaConsumerTest {
                     && courseType.equals(key.get(Constants.COURSE_TYPE_COL))
                     && Map.of(Constants.COUNTER_VALUE, delta).equals(i.getCounterDeltas());
         });
+    }
+
+    @Test
+    void providerLicenceAlertConsumer_validEvent_sendsAlertAndAcknowledges() {
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("provider.licence.alert", 0, 0L, "partner1",
+                "{\"partnerId\":\"partner1\",\"threshold\":75}");
+
+        kafkaConsumer.providerLicenceAlertConsumer(consumerRecord, acknowledgment);
+
+        verify(providerLicenceAlertService).sendAlert(argThat(event ->
+                "partner1".equals(event.get(Constants.PARTNER_ID)) && Integer.valueOf(75).equals(event.get(Constants.THRESHOLD))));
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    void providerLicenceAlertConsumer_unparsableEvent_acknowledgesWithoutSending() {
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("provider.licence.alert", 0, 0L, "partner1", "not-json");
+
+        kafkaConsumer.providerLicenceAlertConsumer(consumerRecord, acknowledgment);
+
+        verify(providerLicenceAlertService, never()).sendAlert(any());
+        verify(acknowledgment).acknowledge();
     }
 }
